@@ -55,6 +55,8 @@ the selected mode and its radii.
 
 ## 4. Select the pore model
 
+<p align="center"><img src="../images/pore_methods.png" alt="The three pore models on the same channel: spherical probe, Connolly accessible surface, capsule profile" width="860"></p>
+
 The default spherical method reports the radius of the largest sphere that fits
 without overlapping atomic van der Waals spheres. Two optional cross-section
 models are available:
@@ -142,6 +144,8 @@ Select **Compute** when the tab reports that its cache is stale. Record the
 chosen source and color scheme with exported data.
 
 ### Mean Profile
+
+<p align="center"><img src="../images/mean_profile.png" alt="Mean radius profile with spread band, and the revolved trajectory-mean 3D surface" width="860"></p>
 
 Aggregates compatible profiles across analysed frames and reports their spread.
 Optional controls add a property fill or a revolved 3D mean surface. The
