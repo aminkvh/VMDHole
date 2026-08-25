@@ -61,7 +61,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update && sudo apt-get install -y gfortran
-          sh native/build-vmdhole-optimized.sh "" accel_out
+          sh native/build-vmdhole-optimized.sh "" "$PWD/accel_out"
 
       - name: Stage the artefacts with their provenance
         run: |
