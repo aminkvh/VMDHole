@@ -2,9 +2,9 @@ name: binaries
 
 # Builds the accelerated helper binaries and attaches them to a release.
 #
-# WHY -O0, when the repo also ships build-vmdhole-optimized.sh at -O2:
+# Portability note (why no -march=native anywhere):
 #
-#   that script targets the NATIVE CPU (-march=native). A binary
+#   a NATIVE-targeted binary
 #   built that way runs only on machines with at least the builder's
 #   instruction set - it SIGILLs elsewhere - so it is not distributable. A
 #   published artefact has to be portable, and portable is what this workflow
@@ -47,17 +47,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build at -O0 (portable, not native-targeted)
+      - name: Build the C tools (portable, not native-targeted)
         working-directory: native
-        run: CFLAGS="-O0" sh build.sh
+        run: sh build.sh
+
+      # Linux additionally gets the FULL acceleration: the pinned HOLE 2 source
+      # is cloned, our Fortran patches applied, and the accelerated hole +
+      # sph_process built (build-vmdhole-optimized.sh; default -O2, portable -
+      # the script itself refuses -march=native for FP-identity reasons).
+      # macOS runners have no gfortran by default, so the mac bundle stays the
+      # three C tools - stated in its README.
+      - name: Build the patched HOLE pair (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gfortran
+          sh native/build-vmdhole-optimized.sh "" accel_out
 
       - name: Stage the artefacts with their provenance
         run: |
           d="vmdhole-binaries-${{ matrix.tag }}"
           mkdir -p "$d"
-          cp native/sos_triangle_fast   "$d/"
-          cp native/mole_tunnel_engine  "$d/"
+          if [ -d accel_out ]; then
+            # full set: the fast sos_triangle under its DEPLOYED name, the
+            # patched Fortran pair, and the manifest the plugin's acceleration
+            # indicator reads.
+            cp accel_out/hole accel_out/sph_process accel_out/sos_triangle \
+               accel_out/mole_tunnel_engine "$d/"
+            cp accel_out/vmdhole_accel.manifest "$d/"
+          else
+            cp native/sos_triangle_fast "$d/sos_triangle"
+            cp native/mole_tunnel_engine "$d/"
+          fi
           cp native/hydro_project       "$d/"
+          # a working radius file so a from-zip user can run without a separate
+          # HOLE install (HOLE 2's own simple.rad, Apache-2.0)
+          mkdir -p "$d/rad"
+          cp vmdhole/tests/fixtures/simple.rad "$d/rad/"
           # sos_triangle_fast is MODIFIED Apache-2.0 HOLE code: distributing
           # the binary requires the Apache licence text and NOTICE to travel
           # with it, not only the project's own MIT licence.
@@ -67,12 +92,27 @@ jobs:
           {
             echo "VMDHole portable binaries - ${{ matrix.tag }}"
             echo
-            echo "Built from $GITHUB_SHA at -O0."
+            echo "Built from $GITHUB_SHA."
             echo
             echo "Included:"
-            echo "  sos_triangle_fast   surface processing"
-            echo "  mole_tunnel_engine  tunnel search"
-            echo "  hydro_project       hydration acceleration"
+            if [ -d accel_out ]; then
+              echo "  hole                HOLE 2 with the VMDHole acceleration patches"
+              echo "  sph_process         patched (parallel surface cull)"
+              echo "  sos_triangle        the fast triangulation (drop-in for stock)"
+              echo "  mole_tunnel_engine  tunnel search"
+              echo "  hydro_project       hydration acceleration"
+              echo "  vmdhole_accel.manifest  read by the plugin's acceleration indicator"
+              echo "  rad/simple.rad      HOLE radius file, so no separate install is needed"
+            else
+              echo "  sos_triangle        the fast triangulation (drop-in for stock)"
+              echo "  mole_tunnel_engine  tunnel search"
+              echo "  hydro_project       hydration acceleration"
+              echo "  rad/simple.rad      HOLE radius file"
+              echo
+              echo "  The accelerated Fortran pair (hole, sph_process) is not"
+              echo "  prebuilt for macOS - build locally:"
+              echo "      ./native/build-vmdhole-optimized.sh"
+            fi
             echo
             echo "Unpack this folder next to the plugin zip's install.sh (as"
             echo "./binaries/ or under its unpacked name) and the installer"
