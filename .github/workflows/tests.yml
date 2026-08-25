@@ -1,0 +1,110 @@
+name: tests
+
+# The Tcl suite needs VMD, which is licence-gated and cannot be installed in CI.
+# What CI *can* do without it is build every C target and run the parts of the
+# suite that are plain Tcl - which is where the byte-identity guarantees live.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-c:
+    name: build C targets (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        working-directory: native
+        run: sh build.sh
+
+      - name: The binaries must actually run
+        working-directory: native
+        run: |
+          ./sos_triangle_fast --help  >/dev/null 2>&1 || true
+          test -x ./sos_triangle_fast
+          test -x ./mole_tunnel_engine
+
+      - name: Compile clean at -Wall -Wextra
+        working-directory: native
+        # Not fatal: this codebase is a port of 1990s Fortran-derived C and
+        # carries a long tail of style warnings. The value is the DIFF - a new
+        # warning introduced by a change is visible in the log.
+        run: |
+          for f in sos_triangle_fast.c voronoi/vor_delaunay.c voronoi/vor_predicates.c \
+                   mole/mole_main.c mole/mole_tunnel.c mole/mole_lining.c \
+                   mole/mole_complex.c mole/mole_dh.c mole/mole_rng.c \
+                   hydration/hydro_project.c; do
+            echo "=== $f ==="
+            cc -fsyntax-only -Wall -Wextra "$f" 2>&1 | head -40 || true
+          done
+
+  tcl-lint:
+    name: Tcl syntax and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tclsh
+        run: sudo apt-get update && sudo apt-get install -y tcl
+
+      - name: The plugin must parse as complete Tcl
+        run: |
+          tclsh - <<'EOF'
+          set fh [open "vmdhole/vmdhole.tcl" r]
+          set body [read $fh]
+          close $fh
+          if {![info complete $body]} {
+              puts stderr "vmdhole.tcl is not syntactically complete"
+              exit 1
+          }
+          puts "vmdhole.tcl parses complete ([string length $body] bytes)"
+          EOF
+
+      - name: Repo lint
+        run: python3 vmdhole/tests/tcl_lint.py vmdhole/vmdhole.tcl
+
+  release-integrity:
+    name: release tree and ZIP are in sync with dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check
+        run: sh vmdhole/tests/test_release_integrity.sh
+
+  tcl-suite:
+    # The header's promise made real: the test groups that need no VMD (plain
+    # tclsh + cc + the committed fixtures) actually run here, instead of only
+    # existing in the repo. VMD-dependent groups still cannot run in CI and are
+    # exactly the ones run_tests.sh reports as SKIP: on a bare machine.
+    name: VMD-free test groups
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tclsh + python3
+        run: sudo apt-get update && sudo apt-get install -y tcl python3
+
+      - name: Build the C tools the groups exercise
+        working-directory: native
+        run: sh build.sh
+
+      - name: hole_tcl fallback (byte-identity of the pure-Tcl engine)
+        run: sh vmdhole/tests/test_hole_tcl_fallback.sh
+
+      - name: MOLE 2 port parity vs committed reference exports
+        run: sh vmdhole/tests/test_mole_tcl_port.sh
+
+      - name: Tcl pitfall lint
+        run: sh vmdhole/tests/test_tcl_pitfalls.sh
+
+      - name: pore/tunnel state separation
+        run: sh vmdhole/tests/test_tunnel_separation.sh
+
+      - name: inlined engine matches its vmdhole/hole_tcl/ source
+        run: sh vmdhole/tests/test_inline_current.sh

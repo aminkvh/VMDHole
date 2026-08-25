@@ -1,0 +1,3 @@
+pool,heuristic_threshold,heuristic_nclusters,ARI_at_heuristic,plateau_width,best_possible_ARI,best_possible_threshold
+step5_filtered_83,3.7,4,0.9120,17,1.0000,2.3
+step3_unfiltered_145,6.3,2,0.0073,28,0.9061,1.6

@@ -1,0 +1,40 @@
+# generated_by: reproduce.sh stage=pipeline-1bl8
+# utc: 2026-08-24T21:41:08Z
+# git: 9b7ce09+dirty
+# host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
+# nproc: 16  OMP_NUM_THREADS: unset
+# repeats: 3
+# loadavg_at_start: 0.08 0.41 0.57  allow_noisy: 0
+# top_cpu_at_start: anydesk(3.4%) Xorg(2.0%) claude(1.7%) 
+# bin: hole sha256:efdb110b865dffdf /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/hole
+# bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sph_process
+# bin: sos_triangle sha256:bb27e926a02ee8a3 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sos_triangle
+# bin: hole sha256:4044d7bd10cc42b6 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
+# bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sph_process
+# bin: sos_triangle sha256:b53835d20900342a /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_4121480/simple.rad
+# 1BL8 (KcsA), single structure, PROTEIN ATOMS ONLY - the same subset the
+#   plugin's default 'protein' selection feeds HOLE. The 3 K+ ions are
+#   excluded because no shipped .rad file defines a vdW radius for K, and
+#   HOLE reports that as ***ERROR*** while still exiting 0. Timing the raw
+#   file would also not be comparable to what the plugin actually runs.
+# cpoint/cvect are the values the committed case-study run recorded in its
+#   own manifest.
+# builds: stock    = HOLE 2.2 source, UNPATCHED, built at -O2
+#   NOT 'as distributed': HOLE's Makefile sets no Fortran optimisation
+#   flag, so the shipped binaries are -O0 and a plain -O2 rebuild alone is
+#   2.0-2.9x faster (results/o2_rebuild.csv). Comparing against an -O2
+#   stock is the CONSERVATIVE choice: it isolates the Fortran patches and
+#   OpenMP work instead of crediting them with the compiler flag.
+#         accel_1t = ours, ONE OpenMP thread -> the algorithmic changes alone
+#         accel_nt = ours, OpenMP enabled     -> adds parallelism
+# raseed 1 makes HOLE's Monte Carlo deterministic. bench_pipeline.sh refuses to
+#   print any ratio unless the .sph files are byte-identical across builds AND
+#   the triangle counts match, so a 'speedup' cannot be a build doing less work.
+method,build,hole_s,sph_process_s,sos_triangle_s,total_s,triangles
+circular,stock,0.0501,0.0130,0.7088,0.7719,8746
+circular,accel_1t,0.0497,0.0131,0.0811,0.1439,8746
+circular,accel_nt,0.0498,0.0119,0.0817,0.1434,8746
+connolly,stock,0.2960,0.2640,2.0238,2.5838,17809
+connolly,accel_1t,0.2870,0.2649,0.1279,0.6798,17809
+connolly,accel_nt,0.1288,0.0761,0.1291,0.3340,17809

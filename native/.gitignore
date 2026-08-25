@@ -1,0 +1,7 @@
+# build artifacts (rebuild with ./build.sh or ./setup.sh)
+sos_triangle_fast
+*.o
+*.tmp
+
+# optimised HOLE install produced by build-hole-optimized.sh
+build/

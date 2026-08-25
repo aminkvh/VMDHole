@@ -1,0 +1,10 @@
+cavity 0 surface=True nearest=0.607 MATCH pivot@[-21.591600402614, -56.5236761486788, -19.4702546809664]
+cavity 1 surface=False nearest=22.482 no match
+cavity 2 surface=False nearest=24.494 no match
+cavity 3 surface=False nearest=34.388 no match
+cavity 4 surface=False nearest=12.264 no match
+cavity 5 surface=False nearest=39.690 no match
+cavity 6 surface=False nearest=13.142 no match
+cavity 7 surface=False nearest=28.818 no match
+cavity 8 surface=False nearest=36.927 no match
+cavity 9 surface=False nearest=20.939 no match

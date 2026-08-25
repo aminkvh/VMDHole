@@ -1,0 +1,5 @@
+Reading structure... 3999 atoms, 659 residues.
+Computing complex... 25189 tetrahedrons, 50283 edges.
+  => Id User1212 A308 A
+     Cavity 1, Delta = 1.17ang, Near {ARG 212 A, GLU 308 A}
+Computing tunnels... 3 found.

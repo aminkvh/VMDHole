@@ -1,0 +1,214 @@
+# Large input data — provide separately / regenerate, don't version-control
+vmdhole/sim_1.dcd
+vmdhole/step5_assembly.hmr.psf
+
+# Generated HOLE output + plugin surface artifacts. Produced by running the plugin
+# on the (un-versioned) input data; not part of the distributable. The fork's
+# deterministic test corpus lives in native/benchmarks/fixtures/ instead.
+vmdhole/hole_output/
+vmdhole/hole_output_*/
+
+# Generated snapshots / figures (scale-bar renders, profile/heatmap exports).
+vmdhole/*.ppm
+vmdhole/*.tga
+vmdhole/*.eps
+
+# Case-study test data: input structures plus their generated runs and renders.
+# Regenerate, or provide minimal inputs separately; force-add a specific input
+# file (git add -f ...) if you deliberately want to ship it.
+vmdhole/1GRM/
+vmdhole/*GABA*/
+
+# Screenshots / pasted images dropped into vmdhole during development.
+vmdhole/*.png
+vmdhole/main.pdf
+
+# Paper case-study: generated HOLE outputs, renders, and scratch figures.
+# PDB inputs and PDFs (supp figures, scheme references) are intentionally kept.
+# ONE deliberate exception: the .sph that `reproduce.sh --stage sos-sweep` times
+# against. It is generated output, which this rule normally excludes - but the
+# benchmark's entire meaning is "how fast do two triangulators build THE SAME
+# surface", so the input must be a fixed, distributable artefact. Regenerating it
+# from 9HNR.pdb instead would make it build-dependent: a new HOLE would silently
+# move the published triangle counts and speedups. 47 KB, and it is the only file
+# standing between a clean clone and a working `--tier1`.
+# git cannot un-exclude a file inside an excluded DIRECTORY, so every level has to
+# be re-included and then re-excluded on the way down. That is why this is verbose.
+
+# Benchmark harness: keep the SCRIPTS and the RESULTS, never the bulk.
+# Sizes at the time of writing, all of it regenerable and none of it evidence:
+#   env/              772 MB  - the mdahole2 / PoreAnalyser virtualenvs
+#   scratch_bench/    114 MB  - per-run scratch
+#   fixtures/traj50_bare_inputs/
+#                     114 MB  - 50 extracted frames, derived from the Tier-2 dcd
+# `results/` (340 KB of CSVs + the figure) and `fixtures/poreanalyser_1frame/`
+# (44 KB, the raw tables behind the ellipse comparison) ARE evidence and stay.
+paper/benchmarks/env/
+paper/benchmarks/scratch_bench/
+paper/benchmarks/__pycache__/
+paper/benchmarks/*.log
+
+# Editor / tool backups
+*.bak
+*.bak2
+
+# OS cruft
+.DS_Store
+
+# ---- Large third-party trees and generated builds ---------------------------
+# None of this is our source and all of it is rebuildable from the scripts that
+# are tracked. Sizes at the time of writing.
+scratch_chap_gromacs/
+native/stock_build/
+native/sphproc_build/
+native/sos_triangle
+vmdhole/graphify-out/
+
+# ---- Published papers: DO NOT COMMIT ----------------------------------------
+# These are third-party copyrighted articles kept locally for reference while
+# writing. This repository is intended to be public; redistributing them would
+# be a licensing problem entirely separate from our own Apache-2.0 code. Cite
+# them in the reference list instead - the DOIs are all we need to ship.
+paper/refrences/
+vmdhole/papers/
+
+# ---- Per-run scratch that lands in the working tree -------------------------
+# HOLE writes these next to wherever it was invoked.
+/hole.out
+/hole000.*
+/simple2.rad
+vmdhole/*.csv
+vmdhole/images.jpeg
+vmdhole/*.jpeg
+# out so the two cannot drift into disagreement (see README.legacy.md).
+paper/benchmarks/bare_hole_calc.csv
+paper/benchmarks/calc_speed_3way.csv
+paper/benchmarks/pipelines.csv
+paper/benchmarks/pipeline_end_to_end.csv
+paper/benchmarks/scaling.csv
+paper/benchmarks/csv
+paper/benchmarks/plugin_endtoend_out*.txt
+
+# Generated per-case profile exports (the .pdb input is what we commit).
+# Reference HOLE binaries built from source for validating vmdhole/hole_tcl/ - large,
+# machine-specific, and rebuildable from native/stock_build/hole2/src.
+# Local reference-binary builds (see vmdhole/hole_tcl/README.md) - never committed.
+vmdhole/hole_tcl/reference_bin/
+
+# MkDocs build output
+/site/
+
+# ---- Bulk data that must not be in a public repository ----------------------
+# Untracked 2026-08-13. All of it is simulation input/output: large, machine-
+# specific, and either regenerable or obtainable separately. Several items were
+# tracked TWICE - the expanded tree and its own .tar.gz - so the repository
+# carried the same 3 GB in two forms.
+#
+#   04_full_trajectory/             1.5 GB CAVER reference run
+#   04_full_trajectory.tar.gz       481 MB - the same data again
+#
+# Each directory's own README.md is kept (force-added) so the tree still says
+# what belonged there and how to obtain it.
+#
+# NOTE: untracking removes these from future checkouts but NOT from history -
+# a fresh clone still pays for them. Shrinking the clone needs a history
+# rewrite (git filter-repo) and a force-push, which is a destructive operation
+# for anyone who has already cloned. That decision is deliberately left open.
+# TRAJECTORIES ARE NOT VERSIONED. They are published with their own DOIs and a
+# code repository is the wrong place to redistribute them. Download them and put
+# them where paper/DATA.md says - every script looks there.
+#   01_inputs/ + 04_full_trajectory/  ->  doi.org/10.5281/zenodo.7234700
+04_full_trajectory/
+04_full_trajectory.tar.gz
+
+# Generated tunnel output. 3,037 files / 351 MB of it was tracked INSIDE
+# vmdhole/ - the one directory users are told to install.
+vmdhole/tunnel_output_*/
+packaging/vmdhole/vmdhole/tunnel_output_*/
+
+# Stray HOLE outputs written into the case-study directories, named after the
+# card argument that produced them rather than after their contents.
+whole_clustering.csv
+
+# Tool output (knowledge-graph exports) - regenerable, not source.
+graphify-out/
+paper/graphify-out/
+
+# Manuscript PDFs are built artefacts of the paper, not repository source.
+updated manuscript/
+
+# Generated, not source. NOTES/ is internal development history; the three notes
+# the shipped C source actually cites live in native/NOTES/ instead.
+vmdhole/NOTES/
+packaging/vmdhole/vmdhole/NOTES/
+# The benchmark corpus is 5.7 MB reproducible from one PDB - see
+# native/benchmarks/make_fixtures.sh
+native/benchmarks/fixtures/
+packaging/vmdhole/native/benchmarks/fixtures/
+
+# Small structural inputs the benchmarks and case studies use, fetched on
+# demand by paper/benchmarks/fetch_structures.sh from RCSB rather than
+# redistributed - see paper/DATA.md.
+vmdhole/tests/fixtures/mole_reference/1BL8.pdb
+vmdhole/tests/fixtures/mole_reference/1ERI.pdb
+
+# Vendored third-party MOLE 2 binary - build from source per
+# paper/benchmarks/real_mole_build/README.md instead of redistributing it.
+paper/benchmarks/real_mole_build/*.exe
+paper/benchmarks/real_mole_build/*.dll
+
+# The release archive and its staging directory are built fresh from
+# `git ls-files` by packaging/make_zip.sh - see that script's own header for
+# why there is no checked-in copy any more.
+packaging/vmdhole.zip
+packaging/build/
+
+# --- Publication hygiene (2026-08-24): internal development material that
+# stays on this machine but must never be tracked again. See the commit that
+# added this block for what each is.
+vmdhole/HANDOFF.md
+vmdhole/Caver.pdf
+04_full_trajectory/
+native/NOTES/
+native/NOTES-hydration-accel.md
+native/experimental/
+paper/manuscript/
+paper/MANUSCRIPT_NUMBERS.md
+docs/mean-pore-volume-problem.md
+traj_per/
+RELEASE-STATUS.md
+TODO-*.md
+# Compiled binaries: rebuilt from source by native/build.sh (CI does
+# exactly this on a fresh checkout); never commit the artifacts.
+native/hydro_project
+native/mole_auto_test
+native/mole_complex_dump
+native/mole_dt_dump
+native/mole_tunnel_dump
+native/mole_tunnel_engine
+
+# --- Benchmark/case-study DATA moved to the data deposit (paper/
+# DATA.md names the DOI). Scripts and the small result CSVs stay tracked;
+# raw run dumps, generated figures and render images do not.
+
+# --- paper/ is an ALLOWLIST: the repository carries the reported numbers and
+# the two pages that explain them; every script, fixture, figure and raw dump
+# that produced them lives in the data deposit (paper/DATA.md names the DOI).
+paper/*
+!paper/README.md
+!paper/DATA.md
+!paper/benchmarks/
+paper/benchmarks/*
+!paper/benchmarks/results/
+paper/benchmarks/results/*
+!paper/benchmarks/results/*.csv
+!paper/benchmarks/results/env_manifest.txt
+
+# Dropped from the public tree in the release overhaul (stay on disk, ship in
+# the data deposit): unmodified-upstream reference copy, native-side benchmark
+# corpus, the ion-flow post-analysis helper.
+native/upstream/
+native/benchmarks/
+vmdhole/ion_flow_analysis.py
+# deliberately untracked test structure - see test_mole_tcl_port.sh
+vmdhole/tests/fixtures/9HNR.pdb
