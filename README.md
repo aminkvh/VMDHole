@@ -24,13 +24,17 @@ trajectory.
 
 ## What VMDHole adds
 
-VMDHole analyzes pores and tunnels in molecular structures and trajectories directly in VMD. It is designed for large ensembles, processing frames in parallel and using compiled acceleration to make trajectory-scale analysis practical.
+VMDHole brings pore and tunnel analysis into one trajectory-aware VMD workflow. Instead of treating structures, pathways, hydration, and visualization as separate tasks, it keeps them linked to the same molecule and simulation frame.
 
-For pores, three modes describe different channel shapes: spherical for round channels, Connolly for irregular cross-sections and lateral openings, and capsule for narrow slit-like regions. Results include pore size, area, volume, bottlenecks, lining residues, and conductance estimates.
+* **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and chemical properties.
 
-Tunnel mode finds routes from buried sites to the molecular surface, then ranks, clusters, and follows them across aligned trajectory frames. It reports route length, bottlenecks, occurrence, lining residues, and physicochemical properties.
+* **More than a single pore radius.** Choose spherical, Connolly, or capsule pore models for round, irregular, or slit-like channels. Tunnel routes can be ranked, clustered, and followed across a trajectory.
 
-VMDHole also connects geometry with chemistry and dynamics. Pores and tunnels can be annotated by properties such as hydropathy, polarity, and charge. For explicit-solvent simulations, it provides water-density and free-energy profiles, ion occupancy and flow, and bulk-to-bulk permeation measurements. Interactive plots and live 3D views help explore the results, with CSV and EPS export for further analysis and figures.
+* **Structure linked to dynamics.** Examine how geometry, hydration, free energy, and ion movement change frame by frame through synchronized plots and live 3D views.
+
+* **Built for trajectories.** Parallel frame processing and compiled acceleration make large ensemble analyses practical while retaining interactive visualization in VMD.
+
+* **Results ready to use.** Export pathway properties, plots, and figures for further analysis, publication, or reproducible workflows.
 
 ## Performance
 
