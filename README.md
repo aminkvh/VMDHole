@@ -24,40 +24,13 @@ trajectory.
 
 ## What VMDHole adds
 
-VMDHole is built for **molecular pathway characterization at trajectory
-scale**. Independent frames run concurrently across CPU cores. Native
-executables accelerate the HOLE, Connolly, Capsule, surface-processing, and
-tunnel-search stages, while OpenMP adds within-frame parallelism to Connolly
-and `sph_process`. This makes it practical to follow pore and tunnel geometry
-through large ensembles instead of analysing structures one at a time.
+VMDHole analyzes pores and tunnels in molecular structures and trajectories directly in VMD. It is designed for large ensembles, processing frames in parallel and using compiled acceleration to make trajectory-scale analysis practical.
 
-For pores, VMDHole offers three complementary descriptions. **Spherical** mode
-reports the largest fitting sphere along the channel. **Connolly** mode measures
-the solvent-accessible cross-sectional area of irregular pores and uses that
-area in its radius and conductance reports; its surface tools can trim escaped
-ends, separate the central pore from lateral openings, track those openings
-across frames, and export their occurrence and geometry. **Capsule** mode uses
-an anisotropic stadium-shaped probe for slit-like cross-sections that a circular
-radius describes poorly. Ellipse fits, pore volume, bottlenecks, lining
-residues, and geometry-based conductance estimates provide additional
-descriptions of the same pathway.
+For pores, three modes describe different channel shapes: spherical for round channels, Connolly for irregular cross-sections and lateral openings, and capsule for narrow slit-like regions. Results include pore size, area, volume, bottlenecks, lining residues, and conductance estimates.
 
-Tunnel mode searches from buried sites to the molecular surface, ranks the
-routes, clusters related routes, tracks their identities across aligned frames,
-and reports bottlenecks, lengths, lining residues, physicochemical annotations,
-and occurrence. Together, pore and tunnel modes characterize the geometry and
-dynamics of molecular transport pathways.
+Tunnel mode finds routes from buried sites to the molecular surface, then ranks, clusters, and follows them across aligned trajectory frames. It reports route length, bottlenecks, occurrence, lining residues, and physicochemical properties.
 
-Geometry, chemistry, and trajectory observations are available in one
-workspace. Pores and tunnels can be annotated by hydropathy, hydrophobicity,
-lipophilicity, polarity, charge, and other residue or atom properties. For
-explicit-solvent trajectories, VMDHole provides water-density profiles,
-CHAP-compatible `-RT ln(rho/rho_bulk)` free-energy estimates, ion occupancy and
-passage maps, and measured bulk-to-bulk permeation counts, rates, and conductance
-when time and applied voltage are defined. Complementary Pore Profile, Over
-Time, Mean Profile, Trends, Histogram, Hydration, Ion Flow, and live 3D views
-show different aspects of the same calculation. Each view can export its
-numerical data as CSV, and figures can be written directly as EPS.
+VMDHole also connects geometry with chemistry and dynamics. Pores and tunnels can be annotated by properties such as hydropathy, polarity, and charge. For explicit-solvent simulations, it provides water-density and free-energy profiles, ion occupancy and flow, and bulk-to-bulk permeation measurements. Interactive plots and live 3D views help explore the results, with CSV and EPS export for further analysis and figures.
 
 ## Performance
 
