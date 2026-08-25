@@ -1,6 +1,6 @@
 # Tunnel workflow
 
-<p align="center"><img src="../images/tunnel_3d_side.png" alt="Four tunnels found by the MOLE 2 engine, branching from a buried start point" width="480"></p>
+<p align="center"><img src="images/tunnel_3d_side.png" alt="Four tunnels found by the MOLE 2 engine, branching from a buried start point" width="480"></p>
 
 Tunnel mode searches for routes from a buried site to the molecular surface.
 Use it for internal cavities, enzyme access paths, and branched egress routes.
@@ -52,7 +52,7 @@ results.
 
 ## 4. Run and inspect routes
 
-<p align="center"><img src="../images/tunnel_panel.png" alt="Tunnel panel: per-route bottleneck, length, hydrophobicity and charge, with the selected route profile" width="860"></p>
+<p align="center"><img src="images/tunnel_panel.png" alt="Tunnel panel: per-route bottleneck, length, hydrophobicity and charge, with the selected route profile" width="860"></p>
 
 Select **Run Tunnel**. The route table reports:
 

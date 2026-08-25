@@ -1,3 +1,4 @@
+use_directory_urls: false
 site_name: VMDHole
 site_description: Pore and tunnel analysis inside VMD using HOLE and MOLE 2, with live 3D surfaces.
 repo_url: https://github.com/aminkvh/VMDHole
