@@ -1,0 +1,16 @@
+REMARK  Synthetic. GLY 10A carries an insertion code; SER 11 carries altLoc A on
+REMARK  two atoms. Exercises columns 11-12 of the VMD adapter's atom table.
+ATOM      1  N   ALA A  10       0.000   0.000   0.000  1.00 10.00           N
+ATOM      2  CA  ALA A  10       1.458   0.000   0.000  1.00 11.00           C
+ATOM      3  C   ALA A  10       2.009   1.420   0.000  1.00 12.00           C
+ATOM      4  O   ALA A  10       1.251   2.390   0.000  1.00 12.50           O
+ATOM      5  N   GLY A  10A      3.332   1.560   0.000  1.00 13.00           N
+ATOM      6  CA  GLY A  10A      3.970   2.870   0.000  1.00 14.00           C
+ATOM      7  C   GLY A  10A      5.480   2.800   0.000  1.00 14.50           C
+ATOM      8  O   GLY A  10A      6.100   1.740   0.000  1.00 14.80           O
+ATOM      9  N   SER A  11       6.070   3.990   0.000  1.00 15.00           N
+ATOM     10  CA ASER A  11       7.520   4.170   0.000  1.00 16.00           C
+ATOM     11  C   SER A  11       8.220   3.000   0.000  1.00 16.50           C
+ATOM     12  O   SER A  11       9.450   3.010   0.000  1.00 16.80           O
+ATOM     13  CB ASER A  11       7.900   5.010   1.210  1.00 17.00           C
+END

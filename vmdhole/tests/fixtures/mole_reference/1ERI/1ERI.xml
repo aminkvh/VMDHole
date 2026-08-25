@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Tunnels>
+  <Input>./tests/1ERI.pdb</Input>
+  <WorkingDirectory>./out_1ERI/</WorkingDirectory>
+  <Params>
+    <Cavity ProbeRadius="3" InteriorThreshold="1.25" />
+    <Tunnel SurfaceCoverRadius="10" OriginRadius="5" />
+  </Params>
+  <Export><Formats CSV="1" /><Types Tunnels="1" /></Export>
+  <Origins Auto="1" />
+</Tunnels>

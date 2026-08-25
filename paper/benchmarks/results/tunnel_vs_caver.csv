@@ -1,0 +1,25 @@
+# generated_by: bench_tunnel_vs_caver.sh (compare_tunnel_clustering_vs_caver.py)
+# utc: 2026-08-24T21:48:28Z
+# git: 9b7ce09
+# host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
+# loadavg_at_start: 0.46 0.60 0.62 1/2293 4150678
+# engine: /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast --tunnel-cluster
+# bin: sos_triangle_fast sha256:b8165300a80d34f5 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
+# metric: Adjusted Rand Index between CAVER's own cluster labels and tunnel_cluster_c's output, at each of our own thresholds (VMDHole's distance metric - symmetric mean nearest-point - is not the same definition as CAVER's, so thresholds are not directly comparable 1:1; swept instead of hand-picked).
+# note: time_s at this pool size (83-145 pathways) is process-startup-dominated jitter, not a scaling signal - see tunnel_clustering_scaling.csv for that.
+# ground truth: CAVER 3.0.2's own bundled guided_example (LinB, 50-frame MD trajectory), step 5 (final tutorial step), average_link, clustering_threshold 4.0 (fixtures/tunnel_vs_caver/caver_guided_example_config.txt) -> 5 clusters / 83 tunnels, POST cheapest-per-cluster-per-snapshot filter (one tunnel per cluster per frame - the easier case, no within-frame ambiguity survives). Coordinates + CAVER's own per-tunnel cluster label read verbatim from CAVER's analysis/tunnel_profiles.csv.
+threshold,time_s,our_clusters,ARI_vs_CAVER
+1.0,0.008456,13,0.426752
+1.5,0.008488,8,0.498080
+2.0,0.008303,7,0.847780
+2.5,0.007995,5,1.000000
+3.0,0.009017,4,0.912001
+3.5,0.008267,4,0.912001
+4.0,0.007798,4,0.912001
+5.0,0.008284,3,0.086054
+6.0,0.007748,2,0.085523
+8.0,0.008409,1,0.000000
+10.0,0.008732,1,0.000000
+12.0,0.007671,1,0.000000
+15.0,0.007794,1,0.000000
+20.0,0.010438,1,0.000000

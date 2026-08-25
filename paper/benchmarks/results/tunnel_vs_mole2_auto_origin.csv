@@ -1,0 +1,13 @@
+# generated_by: bench_tunnel_vs_mole2.sh (auto-origin section)
+# utc: 2026-08-24T21:46:15Z
+# git: 9b7ce09
+# host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
+# loadavg_at_start: 0.50 0.63 0.63 2/2298 4148758
+# real MOLE2 = mono /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/paper/benchmarks/real_mole_build/mole2.exe (real_mole_build); ours = /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/mole_tunnel_engine (compiled C tunnel engine)
+# bin: mole2.exe sha256:e6ff8019fb6bd942 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/paper/benchmarks/real_mole_build/mole2.exe
+# bin: mole_tunnel_engine sha256:8f06ed63f6f72a1a /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/mole_tunnel_engine
+# WHOLE-STRUCTURE AUTO-ORIGIN mode - MOLE's own Origins Auto=1 with no seed residue, every qualifying cavity scanned - a materially heavier, DIFFERENT workload from explicit single-origin above, reported separately rather than blended into one number
+# tunnel counts (8 on 1BL8, 13 on 1MXT) independently match MOLE's own official reference count for 1BL8 (commit 6ac24203) and are IDENTICAL on both engines here, confirming the wiring reproduces real MOLE behaviour rather than an approximation
+structure,tetrahedra_mole2,tetrahedra_ours,tunnels_mole2,tunnels_ours,repeats,loadavg,mole2_median_s,ours_median_s,speedup
+1BL8_auto,18394,18380,8,8,3,0.45,0.3842,0.0340,11.29
+1MXT_auto,45044,45031,13,13,3,0.45,0.6353,0.1442,4.41

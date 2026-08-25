@@ -1,0 +1,142 @@
+name: binaries
+
+# Builds the accelerated helper binaries and attaches them to a release.
+#
+# WHY -O0, when the repo also ships build-vmdhole-optimized.sh at -O2:
+#
+#   that script targets the NATIVE CPU (-march=native). A binary
+#   built that way runs only on machines with at least the builder's
+#   instruction set - it SIGILLs elsewhere - so it is not distributable. A
+#   published artefact has to be portable, and portable is what this workflow
+#   guarantees.
+#
+#   The cost is measured, not assumed, and it is stage-dependent
+#   (paper/benchmarks/results/*.csv, 1BL8, 50 frames, medians of 3):
+#     * surface stage:  -O2 is 2.04x (circular) / 2.91x (Connolly) faster
+#     * HOLE calculation stage: -O2 is 4.3% SLOWER
+#     * output is byte-identical either way (sph md5 matches)
+#
+#   So: use these to try the plugin, and run native/build.sh locally
+#   (default CFLAGS=-O2) when the surface stage is what you are waiting on.
+#   Nothing about the RESULTS changes - only how long they take.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tag: linux-x86_64
+          - os: macos-latest
+            tag: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build at -O0 (portable, not native-targeted)
+        working-directory: native
+        run: CFLAGS="-O0" sh build.sh
+
+      - name: Stage the artefacts with their provenance
+        run: |
+          d="vmdhole-binaries-${{ matrix.tag }}"
+          mkdir -p "$d"
+          cp native/sos_triangle_fast   "$d/"
+          cp native/mole_tunnel_engine  "$d/"
+          cp native/hydro_project       "$d/"
+          # sos_triangle_fast is MODIFIED Apache-2.0 HOLE code: distributing
+          # the binary requires the Apache licence text and NOTICE to travel
+          # with it, not only the project's own MIT licence.
+          cp LICENSE        "$d/LICENSE"
+          cp native/LICENSE "$d/LICENSE-Apache-2.0"
+          cp native/NOTICE  "$d/NOTICE"
+          {
+            echo "VMDHole portable binaries - ${{ matrix.tag }}"
+            echo
+            echo "Built from $GITHUB_SHA at -O0."
+            echo
+            echo "Included:"
+            echo "  sos_triangle_fast   surface processing"
+            echo "  mole_tunnel_engine  tunnel search"
+            echo "  hydro_project       hydration acceleration"
+            echo
+            echo "Unpack this folder next to the plugin zip's install.sh (as"
+            echo "./binaries/ or under its unpacked name) and the installer"
+            echo "points VMDHole at it - or select the files by hand under"
+            echo "File > Settings."
+            echo "For the complete optimized binary set, build locally from the"
+            echo "matching VMDHole source release:"
+            echo
+            echo "    ./native/build-vmdhole-optimized.sh"
+          } > "$d/README.txt"
+          tar czf "$d.tar.gz" "$d"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vmdhole-binaries-${{ matrix.tag }}
+          path: vmdhole-binaries-${{ matrix.tag }}.tar.gz
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vmdhole-binaries-${{ matrix.tag }}.tar.gz
+
+  plugin-zip:
+    # The headline downloads: ONE zip per OS containing the plugin package
+    # PLUS that OS's compiled binaries as vmdhole/binaries/ (the layout
+    # install.sh detects). The bare plugin-only zip is kept as the
+    # any-other-platform fallback - it runs everywhere on the built-in Tcl
+    # engines.
+    name: plugin zip (+ per-OS bundles)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Builds packaging/vmdhole.zip fresh from `git ls-files` at this commit -
+      # nothing checked in to rebuild from and nothing that can drift, since
+      # there is only one source tree. This also runs the release-integrity
+      # checks against what it just built (integrity always checks the
+      # plugin-only build; the bundles below add binaries/ on top of the
+      # exact staging the checks passed).
+      - name: Build and verify the plugin zip
+        run: sh vmdhole/tests/test_release_integrity.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vmdhole-binaries-*
+          path: wheels
+          merge-multiple: true
+      - name: Assemble one complete zip per OS
+        run: |
+          for tag in linux-x86_64 macos-arm64; do
+            tb="wheels/vmdhole-binaries-$tag.tar.gz"
+            [ -f "$tb" ] || { echo "no wheel for $tag (its build failed?) - skipping"; continue; }
+            rm -rf wheels/unpack && mkdir wheels/unpack
+            tar xzf "$tb" -C wheels/unpack
+            VMDHOLE_BINARIES_DIR="$(echo wheels/unpack/vmdhole-binaries-$tag)"               sh packaging/make_zip.sh
+            mv packaging/vmdhole.zip "vmdhole-$tag.zip"
+          done
+          # rebuild the bare plugin-only zip last so the artifact below is clean
+          sh packaging/make_zip.sh
+          ls -la vmdhole-*.zip packaging/vmdhole.zip
+      # Only the per-OS bundles are published - a plugin-only zip proved
+      # redundant (anyone on another platform clones the repo, and the
+      # bundles degrade gracefully: the binaries are optional at runtime).
+      # The bare build above still runs because the integrity checks
+      # validate the exact staging the bundles are layered onto.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vmdhole-plugin
+          path: vmdhole-*.zip
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vmdhole-*.zip

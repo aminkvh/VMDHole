@@ -1,0 +1,61 @@
+site_name: VMDHole
+site_description: Pore and tunnel analysis inside VMD using HOLE and MOLE 2, with live 3D surfaces.
+repo_url: https://github.com/aminkvh/VMDHole
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle: {icon: material/weather-night, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle: {icon: material/weather-sunny, name: Switch to light mode}
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight: {anchor_linenums: true}
+  - pymdownx.tabbed: {alternate_style: true}
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - First pore and tunnel analyses: quickstart.md
+      - Tutorials:
+          - Overview: tutorials.md
+          - Pore - gramicidin A: pore-tutorial.md
+          - Tunnel - cholesterol oxidase: tunnel-tutorial.md
+  - Using VMDHole:
+      - Workflows:
+          - Overview: workflows.md
+          - Pore: pore-mode.md
+          - Tunnel: tunnel-mode.md
+      - Visualization: visualization.md
+      - Properties and colour scales: properties.md
+      - Export and import: exports.md
+      - Files, settings, and execution: files-and-settings.md
+      - Parameter reference: parameters.md
+  - Going further:
+      - Tcl and headless use: scripting.md
+  - Reference:
+      - Troubleshooting: troubleshooting.md
+      - References: references.md
