@@ -90,7 +90,7 @@ chmod +x "$STAGE/install.sh"
 if [ -n "${VMDHOLE_BINARIES_DIR:-}" ]; then
     [ -d "$VMDHOLE_BINARIES_DIR" ] || { echo "VMDHOLE_BINARIES_DIR is not a directory: $VMDHOLE_BINARIES_DIR" >&2; exit 1; }
     mkdir -p "$STAGE/binaries"
-    cp "$VMDHOLE_BINARIES_DIR"/* "$STAGE/binaries/"
+    cp -r "$VMDHOLE_BINARIES_DIR"/* "$STAGE/binaries/"
     chmod +x "$STAGE/binaries"/* 2>/dev/null || true
 fi
 
