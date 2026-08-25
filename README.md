@@ -25,6 +25,10 @@ trajectory.
 
 ## What VMDHole adds
 
+<p align="center">
+  <img src="docs/images/Header.png" alt="VMDHole property coloring on GABAAR" width="900">
+</p>
+
 VMDHole brings pore and tunnel analysis into one trajectory-aware VMD workflow. Instead of treating structures, pathways, hydration, and visualization as separate tasks, it keeps them linked to the same molecule and simulation frame.
 
 * **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and chemical properties.
