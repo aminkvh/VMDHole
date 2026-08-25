@@ -8,6 +8,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="VMD plugin" src="https://img.shields.io/badge/VMD-plugin-informational">
   <a href="https://aminkvh.github.io/VMDHole/"><img alt="Documentation" src="https://img.shields.io/badge/docs-github.io-teal"></a>
+  <a href="https://doi.org/10.5281/zenodo.22089390"><img src="https://zenodo.org/badge/1284504875.svg" alt="DOI"></a>
 </p>
 
 VMDHole is a [VMD](https://www.ks.uiuc.edu/Research/vmd/) plugin for analysing
