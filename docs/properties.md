@@ -7,6 +7,8 @@ figure.
 
 ## Available properties
 
+<p align="center"><img src="../images/render_hydrophobicity.png" alt="3D pore surface colored by residue hydrophobicity" width="720"></p>
+
 | Interface label | Quantity and source | Important restriction |
 |---|---|---|
 | Kyte–Doolittle | Residue hydropathy | Residue-level average |
@@ -76,6 +78,8 @@ trajectory-average **Water G(z)** and **Water density**. The 3D surface instead
 offers current-frame **Water density** when per-frame hydration data exist.
 
 ## Unrolled map layers
+
+<p align="center"><img src="../images/unrolled_map.png" alt="Unrolled 2D pore-wall map" width="720"></p>
 
 **Unrolled** maps use wall distance, oxygen/nitrogen identity, residue number,
 chain (or segment), and polarity. They also offer Kyte–Doolittle,

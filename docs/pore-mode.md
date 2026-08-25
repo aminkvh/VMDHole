@@ -109,6 +109,8 @@ Before interpreting a result:
 
 ### Pore Profile
 
+<p align="center"><img src="../images/pore_profile_panel.png" alt="Pore Profile tab: radius along the channel with property fill" width="720"></p>
+
 Shows radius against channel coordinate for the selected frame.
 
 Property definitions, scale limits, and method citations are collected in
@@ -128,6 +130,8 @@ Swap and flip controls change presentation only. Export the figure and its CSV
 from the same tab.
 
 ### Over Time
+
+<p align="center"><img src="../images/over_time_kd.png" alt="Over Time heatmap: Kyte-Doolittle hydropathy along the pore across the trajectory" width="720"></p>
 
 Shows position by frame for either radius or a selected property. Radius can
 come from the HOLE profile or the ellipse fit. The property selector is
@@ -166,6 +170,8 @@ truncated and marked; CSV values are unchanged.
 
 ### Hydration
 
+<p align="center"><img src="../images/hydration_free_energy.png" alt="Water free-energy profile G(z) with the +/-1 sigma spread band" width="720"></p>
+
 Hydration is CHAP-compatible pore analysis for explicit-water trajectories. Set
 a VMD water-oxygen selection and select **Compute**. Views are Density, Energy,
 Hydrophobicity, and **Per-frame ρ**. Use a prepared, adequately sampled
@@ -175,6 +181,8 @@ geometry. Cite CHAP from the
 [reference list](references.md#hydration-and-pore-wall-annotations).
 
 ### Ion Flow
+
+<p align="center"><img src="../images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
 Requires ions and at least two trajectory frames. **Occupancy %** maps where
 ions are observed in the pore coordinate system. **Ion Passage** displays the
