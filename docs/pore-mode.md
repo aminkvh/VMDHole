@@ -55,7 +55,7 @@ the selected mode and its radii.
 
 ## 4. Select the pore model
 
-<p align="center"><img src="../images/pore_methods.png" alt="The three pore models on the same channel: spherical probe, Connolly accessible surface, capsule profile" width="860"></p>
+<p align="center"><img src="images/pore_methods.png" alt="The three pore models on the same channel: spherical probe, Connolly accessible surface, capsule profile" width="860"></p>
 
 The default spherical method reports the radius of the largest sphere that fits
 without overlapping atomic van der Waals spheres. Two optional cross-section
@@ -111,7 +111,7 @@ Before interpreting a result:
 
 ### Pore Profile
 
-<p align="center"><img src="../images/pore_profile_panel.png" alt="Pore Profile tab: radius along the channel with property fill" width="720"></p>
+<p align="center"><img src="images/pore_profile_panel.png" alt="Pore Profile tab: radius along the channel with property fill" width="720"></p>
 
 Shows radius against channel coordinate for the selected frame.
 
@@ -133,7 +133,7 @@ from the same tab.
 
 ### Over Time
 
-<p align="center"><img src="../images/over_time_kd.png" alt="Over Time heatmap: Kyte-Doolittle hydropathy along the pore across the trajectory" width="720"></p>
+<p align="center"><img src="images/over_time_kd.png" alt="Over Time heatmap: Kyte-Doolittle hydropathy along the pore across the trajectory" width="720"></p>
 
 Shows position by frame for either radius or a selected property. Radius can
 come from the HOLE profile or the ellipse fit. The property selector is
@@ -145,7 +145,7 @@ chosen source and color scheme with exported data.
 
 ### Mean Profile
 
-<p align="center"><img src="../images/mean_profile.png" alt="Mean radius profile with spread band, and the revolved trajectory-mean 3D surface" width="860"></p>
+<p align="center"><img src="images/mean_profile.png" alt="Mean radius profile with spread band, and the revolved trajectory-mean 3D surface" width="860"></p>
 
 Aggregates compatible profiles across analysed frames and reports their spread.
 Optional controls add a property fill or a revolved 3D mean surface. The
@@ -174,7 +174,7 @@ truncated and marked; CSV values are unchanged.
 
 ### Hydration
 
-<p align="center"><img src="../images/hydration_free_energy.png" alt="Water free-energy profile G(z) with the +/-1 sigma spread band" width="720"></p>
+<p align="center"><img src="images/hydration_free_energy.png" alt="Water free-energy profile G(z) with the +/-1 sigma spread band" width="720"></p>
 
 Hydration is CHAP-compatible pore analysis for explicit-water trajectories. Set
 a VMD water-oxygen selection and select **Compute**. Views are Density, Energy,
@@ -186,7 +186,7 @@ geometry. Cite CHAP from the
 
 ### Ion Flow
 
-<p align="center"><img src="../images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
+<p align="center"><img src="images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
 Requires ions and at least two trajectory frames. **Occupancy %** maps where
 ions are observed in the pore coordinate system. **Ion Passage** displays the
