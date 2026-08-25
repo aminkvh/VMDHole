@@ -25,6 +25,13 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Attaching assets to a release WRITES to the repo; the default GITHUB_TOKEN
+# is read-only since GitHub tightened workflow permissions, and the first
+# release run failed exactly there ("Resource not accessible by integration")
+# after both OS builds had already succeeded.
+permissions:
+  contents: write
+
 jobs:
   build:
     name: ${{ matrix.os }}
