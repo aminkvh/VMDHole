@@ -9,16 +9,18 @@ it twice is a no-op. New source files are simply copied in.
 Usage:  apply_patches.py  <hole2/src dir>
 
 What it does (see connolly-parallel-twopass-foundation memory / the .f headers):
-  * copies 6 new source files: hcapen_fast.f, coarea_fast.f, holcal_par.f,
-    holeen_par.f, sphqpu_par.f, h2dmap_par.f
+  * copies 8 new source files: hcapen_fast.f, coarea_fast.f, holcal_par.f,
+    holeen_par.f, sphqpu_par.f, h2dmap_par.f, tsatr_fast.f, concal_par.f
   * machine_dep.g77 : adds an inert RNG draw counter (COMMON /RNGCNT/ NDRAW)
   * Makefile        : swaps the object files for the fast/parallel versions,
                       defines OMPFLAGS, links with -fopenmp, and adds per-file
                       -fopenmp rules for ONLY the parallel-region files
                       (global -fopenmp would push hole.f's 24MB arrays onto the
                       stack and seg-fault every mode).
-concal.f itself is NOT modified - it is only recompiled with -fopenmp via the
-new Makefile rule so its arrays become per-thread.
+concal.f is not edited in place: concal_par.f is compiled instead of it (see
+OBJ_SWAPS), and differs from upstream in one gated WRITE. Like the other
+parallel-region files it is compiled with -fopenmp so its arrays become
+per-thread.
 """
 import sys, os, re, shutil, hashlib
 
@@ -36,6 +38,11 @@ BASE_SHA16 = {
     "holeen.f":        "def08fb82ffac6f2",
     "h2dmap.f":        "d6f0e2f40af51377",
     "machine_dep.g77": "e793bb78f9241bf0",
+    # Not edited in place - replaced at link time via OBJ_SWAPS. Pinned for the
+    # same reason as the rest: a drifted upstream would be shadowed by a stale
+    # _par copy and the mixture would never be noticed.
+    "concal.f":        "ca0e9cdf400ecf6e",
+    "sphqpu.f":        "19341d79302c9440",
     "Makefile":        "40206adfb8852861",
 }
 
@@ -77,7 +84,7 @@ def check_base_files(src):
     print("  base-file check : %d file(s) match the pinned upstream" % len(BASE_SHA16))
 
 NEW_FILES = ["hcapen_fast.f", "coarea_fast.f", "holcal_par.f", "holeen_par.f",
-             "sphqpu_par.f", "h2dmap_par.f", "tsatr_fast.f"]
+             "sphqpu_par.f", "h2dmap_par.f", "tsatr_fast.f", "concal_par.f"]
 # object-file swaps in the Makefile FILES list: stock -> patched
 OBJ_SWAPS = [("coarea.o", "coarea_fast.o"),
              ("hcapen.o", "hcapen_fast.o"),
@@ -87,14 +94,26 @@ OBJ_SWAPS = [("coarea.o", "coarea_fast.o"),
              ("h2dmap.o", "h2dmap_par.o"),
              # tsatr_fast reads VMDHole's packed binary coordinate record when the
              # coord file ends .vhb, and is byte-for-byte the stock reader otherwise.
-             ("tsatr.o", "tsatr_fast.o")]
+             ("tsatr.o", "tsatr_fast.o"),
+             # concal_par's only behavioural change from stock: the "initial
+             # point probe radius ... less than probe radius" notice can be
+             # RECORDED instead of printed. Unguarded it fires from inside
+             # holcal_par's OpenMP prepass, so its position in the .out
+             # depended on thread scheduling (measured differing between 1 and
+             # 8 threads). The prepass sets CN_REC (a threadprivate common),
+             # CONCAL then stores the radius rather than writing, and
+             # holcal_par replays the recorded notices in ascending plane
+             # order. Gating on SHORTO instead does NOT work: the value comes
+             # from a HOLEEN call inside CONCAL, and pass 2 does not re-run
+             # CONCAL for prepass-covered planes, so 6 of 13 notices were lost.
+             ("concal.o", "concal_par.o")]
 # Files compiled with -fopenmp (per-file, never globally - a global -fopenmp puts
 # hole.f's large arrays on the stack and segfaults every mode).
 # sphqpu_par MUST be here: its parallel dot-culling loop is guarded by !$OMP
 # sentinels, so without -fopenmp they are just comments and sph_process silently
 # builds SERIAL - correct output, but none of the speedup.
 # h2dmap_par: the 2DMAPS wall-distance loop, which the unrolled map waits on.
-OMP_FILES = ["holcal_par", "holeen_par", "concal", "coarea_fast", "sphqpu_par",
+OMP_FILES = ["holcal_par", "holeen_par", "concal_par", "coarea_fast", "sphqpu_par",
              "h2dmap_par"]
 
 

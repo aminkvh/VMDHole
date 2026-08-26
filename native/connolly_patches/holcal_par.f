@@ -247,6 +247,10 @@ C the original single pass unchanged.
       INTEGER			PASSNUM
       DOUBLE PRECISION		SAVESAM
       CHARACTER*200		FPSAVE
+      CHARACTER*200		SCRPAS
+C SHORTO is forced high for pass 1 so its growth log is not emitted
+C twice; the user's value is restored before pass 2 replays it.
+      INTEGER			SHOSAVE
       REAL			DUMMYR
       INTEGER			RSEED, DSKIP, ISKIP
       DOUBLE PRECISION		PVSKIP
@@ -277,6 +281,15 @@ C (holeen_par.f) and CONCAL's arrays are automatic (per-thread stack).
       CHARACTER*300		SCRLIN
       INTEGER			ILN, TNUM
       DOUBLE PRECISION		PC_REQUIV(-STRMAX:STRMAX)
+C VMDHole notice capture, see concal_par.f. CN_* in the common block are
+C threadprivate scalars written by CONCAL; the two arrays are this routine's
+C own, indexed by the plane index the prepass loop owns.
+      LOGICAL			CN_HIT(-STRMAX:STRMAX)
+      DOUBLE PRECISION		CN_RADV(-STRMAX:STRMAX)
+      LOGICAL			CN_REC, CN_FLAG
+      DOUBLE PRECISION		CN_VAL
+      COMMON /CNNOTE/		CN_VAL, CN_REC, CN_FLAG
+!$OMP THREADPRIVATE(/CNNOTE/)
       INTEGER			OMP_GET_THREAD_NUM
       EXTERNAL			OMP_GET_THREAD_NUM
 C MYPID: process id, put in scratch filenames so two HOLE processes running
@@ -314,8 +327,12 @@ C --- PERF FORK: set up the two-pass CONN driver. For CONN, Pass 1 grows
 C with CONCAL off and the .sph stream muted (FPDBSP='NONE'); Pass 2 (after
 C re-seed) restores both and runs the original path. Non-CONN: single pass.
       SAVESAM = SAMPLE
+C Set before any branch so the restore at 55555 is always defined, whether or
+C not the two-pass path was taken.
+      SHOSAVE = SHORTO
       FPSAVE  = FPDBSP
       PARMODE = .FALSE.
+      CN_REC  = .FALSE.
       HCALLNO = HCALLNO + 1
       HFGEN   = HCALLNO
       MYPID   = GETPID()
@@ -325,6 +342,12 @@ C Multi-file/trajectory subsequent calls take the original serial single pass.
         PASSNUM  = 1
         DOCONCAL = .FALSE.
         FPDBSP   = 'NONE'
+C Pass 1 grows the whole centreline only to discover the planes; every
+C IF (SHORTO.LT.1) WRITE in that loop would otherwise fire once here and again
+C in pass 2, doubling the .out growth log at shorto 0. Only the "Requiv stored
+C for" lines were gated (by DOCONCAL). Restored at the pass-2 restart below.
+        SHOSAVE  = SHORTO
+        SHORTO   = 3
 C capture the RNG position at which THIS run's growth begins, so Pass 2
 C can return to it exactly (see NDRAW note above)
         DSKIP    = NDRAW
@@ -753,7 +776,17 @@ C CONCAL itself is not re-run, so output is identical.
                   GOTO 8802
 8803            CONTINUE
                 CLOSE(RUNIT, STATUS='DELETE')
+                GOTO 8804
 8801            CONTINUE
+C A missing scratch file means this plane's dot block is absent from the .sph
+C and REQUIV came from PC_REQUIV, which is an automatic array - outside the
+C prepass range that is uninitialised. Silence here is what would make such a
+C divergence undiagnosable, so name the file and set the error flag.
+                WRITE(NOUT,'(A,A)')
+     &            ' ***ERROR*** CONNOLLY scratch missing: ',
+     &            SCRNAM(1:LEN_TRIM(SCRNAM))
+                LERR = .TRUE.
+8804            CONTINUE
               ENDIF
             ELSE
 C connolly routine returns requiv
@@ -937,6 +970,9 @@ C scratch file and returns REQUIV. Pass 2 copies these in order.
         P1NOP = STRNOP
         P1NON = STRNON
         PARMODE = .TRUE.
+        DO IDX = -P1NON, P1NOP
+          CN_HIT(IDX) = .FALSE.
+        ENDDO
 !$OMP   PARALLEL DO SCHEDULE(DYNAMIC) DEFAULT(SHARED)
 !$OMP&    PRIVATE(IDX,SCRU,TNUM,SCRNAM,REQ2)
         DO IDX = -P1NON, P1NOP
@@ -961,18 +997,49 @@ C 14 bytes after writing one short record), so the hazard is already
 C unreachable here; the Fortran standard does not guarantee that for UNKNOWN,
 C and REPLACE states the intent explicitly. Verified byte-identical (.sph and
 C .out) against the previously deployed build on a seeded CONNOLLY run.
-          OPEN(SCRU, FILE=SCRNAM, STATUS='REPLACE')
+C Only open the per-plane scratch file when a .sph is actually being written.
+C The reader that deletes these lives under IF (FPDBSP.NE.'NONE'), so with no
+C sphpdb card the prepass created one file per stored plane and nothing ever
+C removed them - stock HOLE creates no temp files at all in that mode.
+          IF (FPSAVE.NE.'NONE') THEN
+            OPEN(SCRU, FILE=SCRNAM, STATUS='REPLACE')
+            SCRPAS = SCRNAM
+          ELSE
+            SCRPAS = 'NONE'
+          ENDIF
+          CN_REC = .TRUE.
           CALL CONCAL( NIN, NOUT, LERR,
      &         CVECT, STRCEN(1,IDX),
      &         ATMAX, ATNO, ATBRK, ATRES, ATCHN, ATRNO,
      &         ATXYZ, ATVDW, ATBND,
-     &         SCRU, SCRNAM, 2,
+     &         SCRU, SCRPAS, 2,
      &         ENDRAD, CUTSIZE, CONNR, PERPVE, PERPVN, REQ2,
      &         PEG_WRITEALL, IDX, SIGN(SAVESAM, DBLE(IDX)))
-          CLOSE(SCRU)
+          CN_HIT(IDX)  = CN_FLAG
+          CN_RADV(IDX) = CN_VAL
+C leave THIS thread's copy disarmed, not just the master's after the region
+          CN_REC = .FALSE.
+          IF (FPSAVE.NE.'NONE') CLOSE(SCRU)
           PC_REQUIV(IDX) = REQ2
         ENDDO
 !$OMP   END PARALLEL DO
+
+C Replay the notices CONCAL recorded instead of printing (concal_par.f):
+C one serial pass in ascending plane order, so the text does not depend on
+C thread scheduling. Values come from CONCAL's own HOLEEN result, not from
+C STRRAD - the two are computed at different centres and do not agree, so
+C recomputing the condition here would emit a different set of planes.
+C Ungated, matching upstream, which prints this at every SHORTO level.
+        CN_REC = .FALSE.
+        DO IDX = -P1NON, P1NOP
+          IF (CN_HIT(IDX)) THEN
+            WRITE(NOUT, '(/ A/ A,F8.3,A,F8.3/ A)')
+     &' Connolly routine (s/r concal)',
+     &'   initial point probe radius=', CN_RADV(IDX),
+     &              ' less than probe radius=',CONNR(1),
+     &'   So using HOLE point for calcs........'
+          ENDIF
+        ENDDO
 
         PASSNUM  = 2
         DOCONCAL = .TRUE.
@@ -991,14 +1058,29 @@ C Pass 2's walk begins at the identical RNG position as Pass 1.
         STRNOP   = -1
         STRNON   = 0
         SAMPLE   = SAVESAM
+        SHORTO   = SHOSAVE
         LOWCEN(1) = CPOINT(1)
         LOWCEN(2) = CPOINT(2)
         LOWCEN(3) = CPOINT(3)
+C The entry initialisation seeds the capsule's SECOND centre alongside the
+C first; replaying LOWCEN without LOWLVC left pass 2 starting from pass 1's
+C final two-centre separation, so ICOUNT=1 handed HCAPEN a long capsule where
+C pass 1 had a degenerate one. The walk then diverges, and because PC_REQUIV
+C and the scratch files are keyed by PASS-1 plane index, pass-1 plane k's
+C Requiv and dot records get attached to a pass-2 plane elsewhere in space.
+        IF (LCAPS) THEN
+          LOWLVC(1) = LOWCEN(1)
+          LOWLVC(2) = LOWCEN(2)
+          LOWLVC(3) = LOWCEN(3)
+        ENDIF
         GOTO 10
       ENDIF
 
 C 15/11/95 split off HOLE calculation into seperate s/r
 C Now Calculation is finished can output results (graphical and numerical)
 55555 CONTINUE
+C SHORTO is a dummy argument: pass 1 forces it high to suppress the duplicate
+C growth log, so the caller's value must be handed back on the way out.
+      SHORTO = SHOSAVE
       RETURN
       END
