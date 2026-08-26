@@ -83,7 +83,7 @@ set t1 [clock microseconds]
 set b [ref_qco $wres $wpos $mx $my $mz $ux $uy $uz $cmin $cmax $penv $dcap]
 set t2 [clock microseconds]
 
-if {$a eq ""} { puts "  SKIP: hydro_project not found beside sos_triangle"; exit 0 }
+if {$a eq ""} { puts "SKIP: hydro_project not found beside sos_triangle"; exit 0 }
 puts "C accepted   : [llength $a]"
 puts "Tcl accepted : [llength $b]"
 set bad 0; set worst 0.0
