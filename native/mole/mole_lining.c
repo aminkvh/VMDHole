@@ -94,7 +94,18 @@ int mole_pivot_residues(const mole_atoms *A, int *pres, mole_residues *R)
                     && !strcmp(R->name[k], A->resn[i])) break;
         }
         if (k == R->n) {
-            if (R->n >= MOLE_MAXRES) { pres[np++] = -1; continue; }
+            /* REFUSE rather than truncate, matching mole_read_atoms' policy at
+               the atom cap: silently dropping residues does not fail, it
+               produces a plausible-but-wrong answer - layers lose residues from
+               their averaged charge/hydropathy/logP rows, cavity boundary sets
+               shrink, and an emptied boundary set relabels a Cavity as a Void. */
+            if (R->n >= MOLE_MAXRES) {
+                fprintf(stderr, "mole_pivot_residues: more than %d residues - "
+                        "refusing to analyse a truncated structure. Narrow the "
+                        "selection or rebuild with a larger MOLE_MAXRES.\n",
+                        MOLE_MAXRES);
+                return -1;
+            }
             strcpy(R->name[k], A->resn[i]);
             strcpy(R->chain[k], A->chain[i]);
             R->seq[k] = A->seq[i];
@@ -523,7 +534,8 @@ void mole_cavity_properties(const int *res, int nres, const mole_residues *R,
    and their three atoms' residues form BoundaryResidues. InnerResidues is every
    other residue touched by the cavity. Both sorted by chain then number. */
 int mole_cavity_residues(const mole_complex *M, int comp, const int *pres,
-                         const mole_residues *R, int *bnd, int *inner)
+                         const mole_residues *R, int *bnd, int *inner,
+                         int *out_nb, int *out_ni)
 {
     int t, k, j, nb = 0, ni = 0;
     char *isb = calloc((size_t)R->n, 1), *any = calloc((size_t)R->n, 1);
@@ -556,7 +568,14 @@ int mole_cavity_residues(const mole_complex *M, int comp, const int *pres,
         else if (any[j]) inner[ni++] = j;
     }
     free(isb); free(any);
-    return (nb << 16) | ni;   /* both counts; R->n is well under 32768 per set */
+    /* Counts go out through the caller's pointers. The old `(nb<<16)|ni`
+       assumed each set stays under 32768, which nothing enforces - R->n is
+       bounded only by MOLE_MAXRES (60000). Past 32768 boundary residues the
+       packed value reaches the sign bit, and the caller's `if (packed < 0)`
+       error test then makes the whole cavity VANISH from the output. */
+    if (out_nb) *out_nb = nb;
+    if (out_ni) *out_ni = ni;
+    return 0;
 }
 
 /* ---- Tunnel.FindHetResidues (Tunnel.cs:638) ---------------------------- */

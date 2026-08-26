@@ -60,9 +60,11 @@ int  mole_build_flow(mole_layer *L, int nl, const mole_residues *R,
                     mole_flow_entry *flow);
 /* Cavity.Create's boundary/inner residue split, both sorted by chain then
    number (the residue table is already in file order, which is that order for a
-   single-chain structure; the caller sorts). Returns (nboundary<<16)|ninner. */
+   single-chain structure; the caller sorts). Counts come back through out_nb /
+   out_ni; returns 0 on success, negative on failure. */
 int  mole_cavity_residues(const mole_complex *M, int comp, const int *pres,
-                          const mole_residues *R, int *bnd, int *inner);
+                          const mole_residues *R, int *bnd, int *inner,
+                          int *out_nb, int *out_ni);
 /* CalculateResidueProperties: the RESIDUES overload, where every residue also
    contributes the backbone constants. NOT the per-layer one. */
 void mole_cavity_properties(const int *res, int nres, const mole_residues *R,
