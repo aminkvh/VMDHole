@@ -465,8 +465,14 @@ static void grid_build(const double *axyz, int na)
 
 /* sel/nsel, when given, report WHICH five were kept - the lining stage needs the
    atoms themselves, not just the width they imply. */
+/* `mask`, when non-NULL, restricts the search to atoms with mask[i] != 0.
+   FreeRadius needs the five nearest among backbone+het only; reusing THIS grid
+   with a filter (rather than building a second grid over the subset) keeps the
+   locality win without adding a second cache to invalidate. The ring-expansion
+   stop test is geometric, so it stays correct for any subset - it just walks a
+   few more cells when the subset is sparse. */
 static double radius_at_impl(const double *p, const double *axyz, const double *arad,
-                             int na, int clamp, int *sel, int *nsel)
+                             int na, int clamp, int *sel, int *nsel, const int *mask)
 {
     /* Keep the five nearest by DISTANCE, then take the minimum of
        (distance - vdW) over exactly those five. Selecting directly by
@@ -520,7 +526,9 @@ static double radius_at_impl(const double *p, const double *axyz, const double *
                             && abs(az-cz) < ring) continue;
                         c = (az*AG.ny + ay)*AG.nx + ax;
                         for (q = AG.head[c]; q >= 0; q = AG.next[q]) {
-                            double dx = axyz[3*q]-p[0], dy = axyz[3*q+1]-p[1], dz = axyz[3*q+2]-p[2];
+                            double dx, dy, dz;
+                            if (mask && !mask[q]) continue;
+                            dx = axyz[3*q]-p[0]; dy = axyz[3*q+1]-p[1]; dz = axyz[3*q+2]-p[2];
                             double d = dx*dx + dy*dy + dz*dz;
                             if (nb < 5) {
                                 bd[nb] = d; bi[nb] = q; nb++;
@@ -546,8 +554,10 @@ static double radius_at_impl(const double *p, const double *axyz, const double *
     }
 
     for (i = 0; i < na; i++) {
-        double dx = axyz[3*i]-p[0], dy = axyz[3*i+1]-p[1], dz = axyz[3*i+2]-p[2];
-        double d = dx*dx + dy*dy + dz*dz;
+        double dx, dy, dz, d;
+        if (mask && !mask[i]) continue;
+        dx = axyz[3*i]-p[0]; dy = axyz[3*i+1]-p[1]; dz = axyz[3*i+2]-p[2];
+        d = dx*dx + dy*dy + dz*dz;
         if (nb < 5) {
             bd[nb] = d; bi[nb] = i; nb++;
             for (j = nb-1; j > 0 && (bd[j] < bd[j-1] || (bd[j] == bd[j-1] && bi[j] < bi[j-1])); j--) {
@@ -573,10 +583,10 @@ static double radius_at_impl(const double *p, const double *axyz, const double *
 }
 
 double mole_radius_at_raw(const double *p, const double *axyz, const double *arad, int na)
-{ return radius_at_impl(p, axyz, arad, na, 0, NULL, NULL); }
+{ return radius_at_impl(p, axyz, arad, na, 0, NULL, NULL, NULL); }
 
 static double radius_at(const double *p, const double *axyz, const double *arad, int na)
-{ return radius_at_impl(p, axyz, arad, na, 1, NULL, NULL); }
+{ return radius_at_impl(p, axyz, arad, na, 1, NULL, NULL, NULL); }
 
 /* The five atoms the radius at p was measured against, nearest first. Same
    query, same answer - the lining stage groups them into residues. */
@@ -584,7 +594,7 @@ int mole_nearest5(const double *p, const double *axyz, const double *arad,
                   int na, int *sel)
 {
     int nb = 0;
-    radius_at_impl(p, axyz, arad, na, 1, sel, &nb);
+    radius_at_impl(p, axyz, arad, na, 1, sel, &nb, NULL);
     return nb;
 }
 
@@ -605,30 +615,22 @@ void mole_profile_extras(const double *bfac, const int *freeatom)
    clamps the sum, not the other way round. */
 static double bradius_at(const double *p, const double *axyz, const double *arad, int na)
 {
-    double bd[5]; int bi[5], nb = 0, i, j;
+    /* PROTOTYPE: the five nearest atoms here are selected by EXACTLY the rule
+       radius_at_impl already uses (squared distance, ties by atom index), over
+       exactly the same atom set - the comment above says so ("the SAME five
+       nearest atoms"). So the grid-backed selection returns the identical five
+       in the identical order, and recomputing the squared distance from them
+       reproduces bd[] bit-for-bit. Only the SEARCH is replaced; the arithmetic
+       and its order are untouched, which is what keeps MOLE parity. */
+    int sel[5], nb, j;
     double r = 1e300, s = 0.0;
     if (!PX_BFAC) return radius_at(p, axyz, arad, na);
-    for (i = 0; i < na; i++) {
-        double dx = axyz[3*i]-p[0], dy = axyz[3*i+1]-p[1], dz = axyz[3*i+2]-p[2];
-        double d = dx*dx + dy*dy + dz*dz;
-        if (nb < 5) {
-            bd[nb] = d; bi[nb] = i; nb++;
-            for (j = nb-1; j > 0 && (bd[j] < bd[j-1] || (bd[j] == bd[j-1] && bi[j] < bi[j-1])); j--) {
-                double td = bd[j]; int ti = bi[j];
-                bd[j]=bd[j-1]; bi[j]=bi[j-1]; bd[j-1]=td; bi[j-1]=ti;
-            }
-        } else if (d < bd[4] || (d == bd[4] && i < bi[4])) {
-            bd[4] = d; bi[4] = i;
-            for (j = 4; j > 0 && (bd[j] < bd[j-1] || (bd[j] == bd[j-1] && bi[j] < bi[j-1])); j--) {
-                double td = bd[j]; int ti = bi[j];
-                bd[j]=bd[j-1]; bi[j]=bi[j-1]; bd[j-1]=td; bi[j-1]=ti;
-            }
-        }
-    }
+    nb = mole_nearest5(p, axyz, arad, na, sel);
     for (j = 0; j < nb; j++) {
-        double v = sqrt(bd[j]) - arad[bi[j]];
+        double dx = axyz[3*sel[j]]-p[0], dy = axyz[3*sel[j]+1]-p[1], dz = axyz[3*sel[j]+2]-p[2];
+        double v = sqrt(dx*dx + dy*dy + dz*dz) - arad[sel[j]];
         if (v < r) r = v;
-        s += sqrt(3.0 * PX_BFAC[bi[j]] / (8.0 * 3.14159265358979323846 * 3.14159265358979323846));
+        s += sqrt(3.0 * PX_BFAC[sel[j]] / (8.0 * 3.14159265358979323846 * 3.14159265358979323846));
     }
     if (nb) s /= nb;
     r += s;
@@ -640,31 +642,18 @@ static double bradius_at(const double *p, const double *axyz, const double *arad
    different five, not a filter applied afterwards. */
 static double free_radius_at(const double *p, const double *axyz, const double *arad, int na)
 {
-    double bd[5]; int bi[5], nb = 0, i, j;
+    /* Same query as radius_at, restricted to the FreeRadius atom set. The
+       selection rule (squared distance, ties by atom index) is a total order,
+       so routing it through the shared masked search returns the identical five
+       atoms the brute-force scan did - only the traversal changes. */
+    int sel[5], nb = 0, j;
     double r = 1e300;
     if (!PX_FREE) return radius_at(p, axyz, arad, na);
-    for (i = 0; i < na; i++) {
-        double dx, dy, dz, d;
-        if (!PX_FREE[i]) continue;
-        dx = axyz[3*i]-p[0]; dy = axyz[3*i+1]-p[1]; dz = axyz[3*i+2]-p[2];
-        d = dx*dx + dy*dy + dz*dz;
-        if (nb < 5) {
-            bd[nb] = d; bi[nb] = i; nb++;
-            for (j = nb-1; j > 0 && (bd[j] < bd[j-1] || (bd[j] == bd[j-1] && bi[j] < bi[j-1])); j--) {
-                double td = bd[j]; int ti = bi[j];
-                bd[j]=bd[j-1]; bi[j]=bi[j-1]; bd[j-1]=td; bi[j-1]=ti;
-            }
-        } else if (d < bd[4] || (d == bd[4] && i < bi[4])) {
-            bd[4] = d; bi[4] = i;
-            for (j = 4; j > 0 && (bd[j] < bd[j-1] || (bd[j] == bd[j-1] && bi[j] < bi[j-1])); j--) {
-                double td = bd[j]; int ti = bi[j];
-                bd[j]=bd[j-1]; bi[j]=bi[j-1]; bd[j-1]=td; bi[j-1]=ti;
-            }
-        }
-    }
+    radius_at_impl(p, axyz, arad, na, 1, sel, &nb, PX_FREE);
     if (!nb) return radius_at(p, axyz, arad, na);
     for (j = 0; j < nb; j++) {
-        double v = sqrt(bd[j]) - arad[bi[j]];
+        double dx = axyz[3*sel[j]]-p[0], dy = axyz[3*sel[j]+1]-p[1], dz = axyz[3*sel[j]+2]-p[2];
+        double v = sqrt(dx*dx + dy*dy + dz*dz) - arad[sel[j]];
         if (v < r) r = v;
     }
     return r < 0.01 ? 0.01 : r;
