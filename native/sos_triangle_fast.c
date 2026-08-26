@@ -1699,8 +1699,16 @@ static void hydro_compute_sphere_h(void)
           double d2 = dx*dx + dy*dy + dz*dz;
           if (d2 <= probe2) {
             if (restamp) {
+              /* restamp is sized from max_resid_val, which is only ever raised,
+                 so a NEGATIVE id writes below the block - typically over the
+                 chunk header freed at the end of this function. The sibling
+                 hydro3d_build_contributors already skips negative ids; this
+                 lookup did not. Ids come from a caller-supplied sidecar on the
+                 public --hydro-residue CLI, so they are not guaranteed dense. */
               int rid = atom_resid[a];
-              if (restamp[rid] != i) { restamp[rid] = i; sum += col[a]; cnt++; }
+              if (rid >= 0 && rid <= max_resid_val) {
+                if (restamp[rid] != i) { restamp[rid] = i; sum += col[a]; cnt++; }
+              }
             } else { sum += col[a]; cnt++; }
           }
         }
@@ -1711,8 +1719,10 @@ static void hydro_compute_sphere_h(void)
         double d2 = dx*dx + dy*dy + dz*dz;
         if (d2 <= probe2) {
           if (restamp) {
-            int rid = atom_resid[j];
-            if (restamp[rid] != i) { restamp[rid] = i; sum += col[j]; cnt++; }
+            int rid = atom_resid[j];          /* bounds: see the grid branch above */
+            if (rid >= 0 && rid <= max_resid_val) {
+              if (restamp[rid] != i) { restamp[rid] = i; sum += col[j]; cnt++; }
+            }
           } else { sum += col[j]; cnt++; }
         }
       }
@@ -2007,6 +2017,70 @@ static void accumulate_hydro3d_pass(const char *path, double **sum, int *cap, in
 
 /* Free all malloc'd edge-list nodes and reset the edge hash.  Called between
    batch jobs so heap growth does not accumulate across thousands of frames. */
+/* Free the advancing-front tree. Nothing did: struct base_line is allocated
+   once per emitted triangle (root plus both children per node) and no free of
+   one existed anywhere in the file, so a --batch worker grew by roughly one
+   node per triangle for every job it ran - measured ~190 KB/job on a
+   3119-triangle surface, and ~1.7 MB/frame at the paper's ~42k triangles.
+   reset_for_batch_job was written so "heap growth does not accumulate across
+   thousands of frames" and already frees the edge list; the tree at the same
+   allocation rate was missed.
+
+   Iterative, not recursive: the tree is as deep as the triangulation is long,
+   which is exactly why calc_tri_root runs the BUILD on a dedicated 768 MB
+   stack. A recursive teardown would overflow the ordinary stack on a surface
+   the build itself completed. Children are read before the parent is freed. */
+/* Every root allocated during the current job. See track_base_root's call site
+   for why they cannot be released as they are superseded. */
+static struct base_line **bt_roots = NULL;
+static size_t bt_nroots = 0, bt_rootcap = 0;
+
+static void track_base_root(struct base_line *r)
+{
+    if (bt_nroots == bt_rootcap) {
+        size_t nc = bt_rootcap ? bt_rootcap * 2 : 64;
+        struct base_line **g = realloc(bt_roots, nc * sizeof *g);
+        if (!g) return;            /* untracked: leaks one tree, never corrupts */
+        bt_roots = g; bt_rootcap = nc;
+    }
+    bt_roots[bt_nroots++] = r;
+}
+
+static void free_base_tree(struct base_line *n)
+{
+    struct base_line **stk;
+    size_t cap = 4096, top = 0;
+    if (!n) return;
+    stk = malloc(cap * sizeof *stk);
+    if (!stk) return;              /* teardown-time OOM: leak rather than crash */
+    stk[top++] = n;
+    while (top > 0) {
+        struct base_line *c = stk[--top];
+        struct base_line *c1 = c->base1, *c2 = c->base2;
+        if (c1 || c2) {
+            if (top + 2 > cap) {
+                struct base_line **g = realloc(stk, (cap * 2) * sizeof *g);
+                if (!g) { free(c); break; }   /* cannot grow: stop, do not corrupt */
+                stk = g; cap *= 2;
+            }
+            if (c1) stk[top++] = c1;
+            if (c2) stk[top++] = c2;
+        }
+        free(c);
+    }
+    free(stk);
+}
+
+/* Release every tree this job built. MUST run after free_edge_list_and_hash:
+   the edge nodes hold pointers into these trees and destroy() walks them. */
+static void free_all_base_trees(void)
+{
+    size_t i;
+    for (i = 0; i < bt_nroots; i++) free_base_tree(bt_roots[i]);
+    free(bt_roots);
+    bt_roots = NULL; bt_nroots = bt_rootcap = 0;
+}
+
 static void free_edge_list_and_hash(void)
 {
     struct edge_list *cur, *nx;
@@ -2069,6 +2143,13 @@ static void reset_for_batch_job(int prev_max_dots, int prev_in_dots_total,
     NCELL = 0.0; hn_count = 0; start_point = 0; flipped = 0;
 
     free_edge_list_and_hash();
+    /* The tree, and then the sentinel free_edge_list_and_hash deliberately
+       keeps alive - the replacement below allocates a fresh one, so without
+       this the old sentinel leaks one node per job. */
+    free_all_base_trees();
+    root = NULL;
+    free(start);
+    start = NULL;
     /* Re-allocate the sentinel head node for the next job's edge list. */
     start = malloc(sizeof(struct edge_list));
     if (!start) { fprintf(stderr, "\nOOM allocating edge list in batch reset\n"); exit(1); }
@@ -2637,7 +2718,23 @@ static void process_one_surface(void)
 
     if (hydro_mode) {
         hydro_load();
-        if (n_sph <= 0) hydro_mode = 0; /* disable for this surface only */
+        /* Mirror the single-job arm's TWO conditions, not just the sphere one.
+           In hydro3d mode hydro_load returns after thinning regardless of how
+           many residues were parsed, so n_res3d == 0 with n_sph > 0 is
+           reachable - and then hydro_at_point_3d's 0.0 sentinel maps through
+           norm_color_name to "white" for every centroid, emitting a uniformly
+           white mesh instead of the native radius colouring. --batch's own
+           contract is that the global hydro flags apply to every job, so this
+           is not a deliberate carve-out. Disabled per surface, as above. */
+        if (hydro3d_mode) {
+            if (n_res3d <= 0) {
+                hydro_mode = 0;
+                fprintf(stderr, "\nbatch-hydro3d: no residues parsed - "
+                                "emitting uncoloured surface for this job\n");
+            }
+        } else if (n_sph <= 0) {
+            hydro_mode = 0;             /* disable for this surface only */
+        }
     }
 
     for (current_point = 0; current_point < max_dots; current_point++) {
@@ -3706,13 +3803,24 @@ void read_cord()
          reading an uninitialised float is not an invalid access, and a carried-over
          value is perfectly valid memory.
 
-         Only the fields that are actually consumed are required. num5-num7 are
-         stored into dots[][4..6] and then UNCONDITIONALLY OVERWRITTEN with normals
-         recomputed from the triangulation (see the nx/ny/nz assignment below), so
-         they are vestigial - demanding all seven fields would discard records whose
-         geometry is perfectly usable. A point therefore needs 4 fields (type + xyz)
-         and a colour record 2. Valid .sos input always supplies seven, so this
-         changes nothing there. */
+         Only the fields that are actually consumed are required: a point needs 4
+         (type + xyz) and a colour record 2, so a record whose geometry is usable
+         is not discarded for want of a normal.
+
+         num5-num7 (the per-vertex normal, stored into dots[][4..6]) are NOT
+         vestigial, despite what this comment used to claim. The recomputation
+         that would overwrite them is unreachable: vertex_normals() returns at
+         its own line 4828, before the loop that assigns dots[][4]. So the
+         normal read here flows through to the output, and reorder_triangle()
+         sums the three vertex normals into tot_norm and swaps two corners when
+         the dot product comes out negative - a short record inheriting the
+         PREVIOUS record's normal can therefore change emitted vertex order, and
+         on the first record it would inherit an indeterminate value.
+
+         Zeroing them before the scan makes a short record read as "no normal"
+         instead of "the last one's". Valid .sos input always supplies all seven
+         fields, so nothing changes there. */
+      num5 = num6 = num7 = 0.0f;
       nfields = sscanf(line_in,"%f%f%f%f%f%f%f",&num1,&num2,&num3,&num4,&num5,&num6,&num7);
       if (nfields < 1) continue;
       
@@ -3793,6 +3901,14 @@ void polygonize()
   /* add the first baseline to the root node in the tree */
 
   root=xa_malloc(sizeof(struct base_line));
+  /* polygonize() runs once per disconnected surface piece, so `root` is
+     reassigned several times per job (8 on a 3119-triangle fixture) and every
+     previous tree would otherwise be unreachable. The trees cannot be freed
+     HERE: the edge list outlives them and its nodes point into them, so an
+     early free is a use-after-free in destroy() (confirmed with ASan). Record
+     each root instead and release them all at end of job, after the edge list
+     has gone. */
+  track_base_root(root);
   root->a=start_point;
   root->b=initb;
   root->z=initb;
