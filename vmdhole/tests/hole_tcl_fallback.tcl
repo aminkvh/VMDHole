@@ -28,7 +28,12 @@ proc chk_eq {name got want} {
 }
 
 if {![file executable $REF]} {
-    puts "  SKIP hole_tcl_fallback: no reference binary at $REF"
+    # Must start with "SKIP:" at column 0: run_tests.sh's release gate greps for
+    # ^SKIP: to tell "this group checked nothing" from a real pass. The old
+    # "  SKIP hole_tcl_fallback: ..." form matched neither, so a skipped run of
+    # this group was silently counted as PASSED - the same defect already fixed
+    # for test_gui_reachable and test_headless_smoke.
+    puts "SKIP: hole_tcl_fallback - no reference binary at $REF"
     exit 0
 }
 

@@ -29,8 +29,8 @@ ok()  { echo "  PASS  $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL  $1"; fail=$((fail+1)); }
 
 CC=${CC:-cc}
-command -v "$CC"    >/dev/null 2>&1 || { echo "  SKIP  no C compiler"; exit 0; }
-command -v tclsh    >/dev/null 2>&1 || { echo "  SKIP  no tclsh"; exit 0; }
+command -v "$CC"    >/dev/null 2>&1 || { echo "SKIP: no C compiler"; exit 0; }
+command -v tclsh    >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 [ -f "$FIX" ] || { echo "  FAIL  fixture missing: $FIX"; exit 1; }
 
 TMP=$(mktemp -d)
