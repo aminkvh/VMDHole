@@ -47,7 +47,17 @@ echo "== Part A: committed fixtures + any local hole_output surfaces =="
 # benchmarks/fixtures/*.sos is the committed corpus. hole_output/ is generated
 # dev data (git-ignored), so it's diffed too when present locally but absent on
 # a fresh clone.
-for s in benchmarks/fixtures/*.sos; do diff_one "$s"; done
+# benchmarks/fixtures/ is GITIGNORED (generated locally), so on a fresh clone
+# this glob matches nothing and expands to the literal pattern. Feeding that to
+# diff_one produced a raw shell "cannot open" error and, under `set -e`, aborted
+# the whole script - taking Parts B-E down with it even when they had every
+# input they needed. Skip and continue, the way Parts B/C/E already do.
+if [ -e benchmarks/fixtures/d15.sos ] || ls benchmarks/fixtures/*.sos >/dev/null 2>&1; then
+  for s in benchmarks/fixtures/*.sos; do [ -f "$s" ] && diff_one "$s"; done
+else
+  echo "  skipped: no local corpus in benchmarks/fixtures/ (it is gitignored)."
+  echo "           generate one, or run make_fixtures.sh, to enable Part A."
+fi
 for s in $(find ../vmdhole/hole_output -name '*.sos' 2>/dev/null); do diff_one "$s"; done
 echo "  identical: $pass   mismatched: $fail   (of which needed raised cap: $overflow)"
 

@@ -28,7 +28,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 gfortran $FF -o "$TMP/fast"  "$HERE/test_hcapen_cache.f" \
-    "$HERE/connolly_patches/hcapen_fast.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
+    "$HERE/hcapen_fast.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
 gfortran $FF -o "$TMP/stock" "$HERE/test_hcapen_cache.f" \
     "$SRC/hcapen.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
 
