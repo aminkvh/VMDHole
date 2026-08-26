@@ -841,41 +841,78 @@ static void compute_depth(mole_complex *M, int use_len)
    follows the code. A vertex is "safe" if it neighbours the MinDepth+1 shell,
    propagated inward; anything else at depth <= MinDepth whose neighbours are all
    at most as deep is a surface ridge and goes. */
+static int cmp_depth_desc(const void *a, const void *b)
+{
+    int x = *(const int *)a, y = *(const int *)b;
+    return (x < y) - (x > y);
+}
+
 static void remove_shallow(mole_complex *M, int min_depth)
 {
     char *safe = calloc((size_t)M->nt, 1);
-    int i, k, d;
+    int i, k, d, li, nlev = 0;
+    int *lev, *scratch;
     if (!safe) return;
-    for (i = 0; i < M->nt; i++) {
-        if (!M->alive[i] || M->depth[i] != min_depth + 1) continue;
-        for (k = 0; k < 4; k++) {
-            int v = M->tn[4*i+k];
-            if (v >= 0 && M->alive[v]) safe[v] = 1;
+
+    /* min_depth + 1 overflows only at INT_MAX, where it would look for a shell
+       deeper than the unreachable sentinel below - which cannot exist. */
+    if (min_depth < 0x7fffffff) {
+        for (i = 0; i < M->nt; i++) {
+            if (!M->alive[i] || M->depth[i] != min_depth + 1) continue;
+            for (k = 0; k < 4; k++) {
+                int v = M->tn[4*i+k];
+                if (v >= 0 && M->alive[v]) safe[v] = 1;
+            }
         }
     }
+
+    /* Walk the depth levels that actually occur, descending, rather than the
+       numeric range [min_depth, 0]. Both loops below select on depth[i] == d,
+       so a level no tetrahedron sits at matches nothing - but iterating to it
+       still costs a full nt scan, and this function runs twice per build.
+       min_depth arrives as an unclamped atoi() and from a GUI field with no
+       upper bound; on 1ERI, min_depth=100000 spent 2.1 s here scanning an
+       unchanged graph, and the cost is linear in the value.
+
+       This is the same sequence of levels the raw range produces, with only
+       the empty ones dropped, so the result is unchanged - including the two
+       edge cases: a negative min_depth selects nothing (the raw loop's d >= 0
+       is false immediately), and depth 0x7fffffff, which compute_depth leaves
+       on alive tetrahedra unreachable from the boundary, is selected only when
+       min_depth is exactly INT_MAX, exactly as the raw range would. */
+    lev = xa_malloc((size_t)M->nt * sizeof(int));
+    scratch = xa_malloc((size_t)M->nt * sizeof(int));
+    if (!lev || !scratch) { free(lev); free(scratch); free(safe); return; }
+    for (i = 0; i < M->nt; i++)
+        if (M->alive[i] && M->depth[i] >= 0 && M->depth[i] <= min_depth)
+            lev[nlev++] = M->depth[i];
+    qsort(lev, (size_t)nlev, sizeof(int), cmp_depth_desc);
+    {   int w = 0;
+        for (i = 0; i < nlev; i++)
+            if (i == 0 || lev[i] != lev[i-1]) lev[w++] = lev[i];
+        nlev = w;
+    }
+
     /* Their loop takes a SNAPSHOT of the safe vertices at this depth before
        expanding, so anything that becomes safe during the pass is not itself
        expanded from until a later depth. Expanding as we go marks strictly more
        vertices safe and leaves 104 tetrahedra alive that MOLE removes. */
-    {
-        int *snap = xa_malloc((size_t)M->nt * sizeof(int));
-        if (snap)
-            for (d = min_depth; d >= 0; d--) {
-                int ns = 0;
-                for (i = 0; i < M->nt; i++)
-                    if (M->alive[i] && safe[i] && M->depth[i] == d) snap[ns++] = i;
-                for (i = 0; i < ns; i++)
-                    for (k = 0; k < 4; k++) {
-                        int v = M->tn[4*snap[i]+k];
-                        if (v >= 0 && M->alive[v]) safe[v] = 1;
-                    }
+    for (li = 0; li < nlev; li++) {
+        int ns = 0;
+        d = lev[li];
+        for (i = 0; i < M->nt; i++)
+            if (M->alive[i] && safe[i] && M->depth[i] == d) scratch[ns++] = i;
+        for (i = 0; i < ns; i++)
+            for (k = 0; k < 4; k++) {
+                int v = M->tn[4*scratch[i]+k];
+                if (v >= 0 && M->alive[v]) safe[v] = 1;
             }
-        free(snap);
     }
-    for (d = min_depth; d >= 0; d--) {
-        int *kill = malloc((size_t)M->nt * sizeof(int));
+    /* One buffer for both passes; the kill list was malloc'd and freed once
+       per level inside the loop body. */
+    for (li = 0; li < nlev; li++) {
         int nk = 0;
-        if (!kill) break;
+        d = lev[li];
         for (i = 0; i < M->nt; i++) {
             int all_le = 1;
             if (!M->alive[i] || safe[i] || M->depth[i] != d) continue;
@@ -883,11 +920,12 @@ static void remove_shallow(mole_complex *M, int min_depth)
                 int v = M->tn[4*i+k];
                 if (v >= 0 && M->alive[v] && M->depth[v] > d) { all_le = 0; break; }
             }
-            if (all_le) kill[nk++] = i;
+            if (all_le) scratch[nk++] = i;
         }
-        for (i = 0; i < nk; i++) M->alive[kill[i]] = 0;
-        free(kill);
+        for (i = 0; i < nk; i++) M->alive[scratch[i]] = 0;
     }
+    free(lev);
+    free(scratch);
     free(safe);
 }
 
