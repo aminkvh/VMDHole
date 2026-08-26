@@ -555,7 +555,60 @@ base name; upstream's own modification history is preserved in the file headers.
 The parallel patches are ordered so that output does not depend on thread count
 or scheduling: work is distributed for the *computation*, but results are
 emitted in the original serial order. This is what makes the accelerated
-binaries byte-identical to stock, which `verify.sh` checks.
+binaries produce byte-identical *results* — the `.sph` file and every number —
+which `verify.sh` checks. It does not extend to the whole `.out` text; the
+next section says exactly where the line falls.
+
+**Scope of that guarantee — what is and is not preserved.** Measured on 1BL8
+protein-only at 1, 4 and 8 threads, for `conn` alone and `conn` + `capsule`, at
+`shorto` 0 and 1:
+
+| | preserved? |
+|---|---|
+| `.sph` file | **byte-identical to stock** in all four configurations |
+| every profile number (radius, Requiv, area, centre) | **byte-identical** |
+| `.out` text: dependence on thread count | **none** — 1, 4 and 8 threads give identical text |
+| `.out` text: verbose per-plane CONNOLLY log | **not preserved** — see below |
+
+The last row is a real limitation, not a rounding of the claim. The pass-1
+prepass calls `CONCAL` with `SHORTO` hard-coded to 2, which silences every
+`IF (SHORTO.LT.1)` / `IF (SHORTO.LT.2)` progress message inside `CONCAL` and
+`COAREA` — "Connolly routine for this plane", "Have stored total of *n*
+points", "Area calculation have found *n* spheres", the per-cycle "Connolly
+area calc cycle" lines. Pass 2 does not re-run `CONCAL` for those planes; it
+replays their `.sph` records from the per-plane scratch files. So that output is
+never produced anywhere. Measured on `conn`, `shorto 1`: **215 lines that stock
+prints are absent**, and only 2 lines are new. No number differs — every line
+that appears in both is identical, and the `.sph` matches byte for byte.
+
+Suppressing them is what makes the prepass parallel: emitted from worker
+threads their interleaving would depend on scheduling. Preserving them would
+mean buffering each plane's text in memory and replaying it in plane order —
+the same restructuring already suggested for the scratch-file plumbing.
+
+**One message is replayed**, because it is a result rather than progress: the
+`initial point probe radius ... less than probe radius ... So using HOLE point
+for calcs` notice, which reports that a plane fell back to the HOLE point.
+`concal_par.f` records it (`CN_REC`/`CN_FLAG`/`CN_VAL`, threadprivate) instead
+of printing when called from the prepass, and `holcal_par.f` replays the
+recorded notices serially in ascending plane order. On `conn` + `capsule`,
+`shorto 1`: 13 notices from stock and 13 from the patched build at 1, 4 and 8
+threads, with identical values.
+
+The recorded value matters. The notice reports `-NEWENG` from a `HOLEEN` call
+made *inside* `CONCAL`, which is not equal to `holcal`'s own `STRRAD` for the
+same plane — they are evaluated at different centres. Recomputing the condition
+outside `CONCAL` selects a different set of planes (measured: 6 instead of 13),
+so the value is carried out of the parallel region rather than re-derived.
+
+> **Correction.** An earlier revision of this note claimed the whole `.out`
+> text was byte-identical to stock, and described the ungated notice as a
+> *theoretical* gap that "was not observed" and was left unpatched by design.
+> All of that was wrong. It rested on a comparison made with a build whose
+> patched objects had silently failed to compile, so both sides were stock. The
+> `.out` was never byte-identical in any mode tested; the thread-ordering
+> hazard was real and is now fixed; and the verbose-log gap above went
+> unrecorded entirely.
 
 > **`verify.sh` footgun:** Part E compares `$HOLE_EXE/hole` (default
 > `~/hole2/exe`) against `$ACCEL`. Run `verify.sh` **before** installing to the
