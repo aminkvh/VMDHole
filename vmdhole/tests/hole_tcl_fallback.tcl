@@ -17,7 +17,13 @@
 
 set HERE [file dirname [file normalize [info script]]]
 set SRC  [file join $HERE .. vmdhole.tcl]
-set REF  [file join $::env(HOME) hole2 exe hole]
+# Same rule hydro_qco_parity.tcl uses: honour VMDHOLE_HOLE_EXE_DIR, fall back to
+# the ~/hole2/exe install default. Hardcoding $HOME meant a tree whose HOLE lives
+# anywhere else - a cluster module, a repo-local build - skipped this group
+# silently, and run_tests.sh then reported it as a group that passed.
+set _exedir [expr {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne ""
+                   ? $::env(VMDHOLE_HOLE_EXE_DIR) : [file join $::env(HOME) hole2 exe]}]
+set REF  [file join $_exedir hole]
 
 set pass 0
 set fail 0
@@ -201,7 +207,7 @@ set refdir [file join $HERE .. .. hole_tcl reference_bin]
 set sphbin [file join $refdir sph_process]
 set tribin [file join $refdir sos_triangle]
 foreach {v alt} [list sphbin sph_process tribin sos_triangle] {
-    if {![file executable [set $v]]} { set $v [file join $::env(HOME) hole2 exe $alt] }
+    if {![file executable [set $v]]} { set $v [file join $_exedir $alt] }
 }
 set sphin [file join $TMP hole_out.sph]
 if {![file executable $sphbin] || ![file executable $tribin]} {
