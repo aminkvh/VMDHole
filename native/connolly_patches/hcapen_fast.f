@@ -400,7 +400,12 @@ C atom can still beat the current second-best, as the original does)
 670       CONTINUE
 
           IF (USEGRID .AND. (.NOT.WHOLE)) THEN
-C can an atom outside the gathered box still be one of the two best?
+C can an atom outside the gathered box still be one of the two best? Purely
+C additive (no margin multiplied against a quantity that can go negative and
+C flip from tightening to loosening the bound, the failure mode the earlier
+C cutoff-list cache had in its own trust test) - RQ, MAXVDW, E2P and TOL are
+C all non-negative by construction, so RQ-MAXVDW cannot go negative and
+C invert this comparison's sense.
             IF (E2P.GE.BIG .OR. (RQ-MAXVDW).LE.(E2P+TOL)) THEN
               GROWCT = GROWCT+1
               IF (GROWCT.GT.40) THEN
