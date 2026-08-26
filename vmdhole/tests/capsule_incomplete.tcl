@@ -36,7 +36,12 @@ set here [expr {[info exists ::env(VMDHOLE_TEST_DIR)] && $::env(VMDHOLE_TEST_DIR
 set root [file normalize [file join $here .. ..]]
 set PDB  [file join $here fixtures capsule_incomplete_1grm.pdb]
 set RAD  [file join $root native stock_build hole2 rad amberuni.rad]
-set REF  [file join $::env(HOME) hole2 exe hole]
+# Honour VMDHOLE_HOLE_EXE_DIR like the rest of the suite; ~/hole2/exe stays the
+# install default. Hardcoding $HOME skipped this group on any tree whose HOLE
+# lives elsewhere, and run_tests.sh then counted it as a group that passed.
+set _exedir [expr {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne ""
+                   ? $::env(VMDHOLE_HOLE_EXE_DIR) : [file join $::env(HOME) hole2 exe]}]
+set REF  [file join $_exedir hole]
 
 cd [file join $here ..]
 source vmdhole.tcl
