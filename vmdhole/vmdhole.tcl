@@ -8638,7 +8638,7 @@ proc ::VMDHole::_tunnel_search_mole {molid frame seed cfg} {
     set cmd "[shell_quote $exe] [shell_quote $af] [shell_quote $of] [_mole_cfg_args $cfg]"
     if {[llength $seed] == 3} {
         lassign $seed sx sy sz
-        append cmd " $sx $sy $sz [dict get [_mole_cfg $cfg] orad]"
+        append cmd " [shell_quote $sx] [shell_quote $sy] [shell_quote $sz] [dict get [_mole_cfg $cfg] orad]"
     }
     append cmd " [_mole_cfg_flags $cfg]"
     append cmd " 2>[shell_quote $ef]"
@@ -17459,6 +17459,24 @@ proc ::VMDHole::_write_tunnel_manifest {root molid frames cfg seed auto_origin e
 }
 
 proc ::VMDHole::run_tunnel_analysis {} {
+    # H3: the body below is ~430 lines with nine hand-written `set busy 0`
+    # restore points and NO catch. Anything that throws in between - a bare
+    # `file mkdir` on an unwritable parent (resolve_output_root), `open $sh w`,
+    # write_stock_sph_file, render_tunnels_for_frame - leaves `busy` stuck at 1.
+    # `busy` is the SAME flag run_analysis guards on, and `_calc_depth` is left
+    # incremented so _begin_calc never re-clears abort_requested: every later
+    # run in that VMD session then returns 0 with "already in progress",
+    # producing no output and raising no error. The GUI is insulated because
+    # run_current_mode already wraps this call; the exposed surface is the
+    # headless entry documented in docs/scripting.md.
+    #
+    # run_analysis restores both on its own error path; the catch below gives
+    # the tunnel path the same guarantee. The body stays inline so that its
+    # nine existing exits keep working unchanged - and so that the assertions
+    # in headless_smoke.tcl which read `info body run_tunnel_analysis` still
+    # see the code they are checking.
+    variable busy
+    set _rc [catch {
     # Tunnel mode's Run. Deliberately parallel to run_analysis but sharing none
     # of its storage: separate results, separate output root, separate surface
     # track. Reuses the .sph -> sph_process -> sos_triangle -> render pipeline,
@@ -17511,6 +17529,24 @@ proc ::VMDHole::run_tunnel_analysis {} {
         set busy 0
         _end_calc
         return
+    }
+    # Every OTHER coordinate triple in this file goes through _xyz_or, which
+    # rejects a non-double. This one did not: it was guarded on element COUNT
+    # alone and then interpolated raw into run.sh and into `exec sh -c`. Two
+    # consequences, both silent - "12.3 4.5 nan_typo" is a valid 3-element list
+    # and the engine's atof turns it into 0.0, searching every frame from an
+    # origin on z=0; and `{0 0 {1; touch /tmp/x}}` is also a valid 3-element
+    # list, and lands as a command separator. Reject non-numeric here, and
+    # shell_quote each component at both interpolation sites below.
+    if {!$auto_origin} {
+        foreach _c $seed {
+            if {![string is double -strict $_c]} {
+                set state(status) "Tunnel: start point must be three numbers (got '$state(tunnel_start)')."
+                set busy 0
+                _end_calc
+                return
+            }
+        }
     }
     if {[catch {parse_frame_spec $molid $state(frame_spec)} frames] || [llength $frames] == 0} {
         set state(status) "Tunnel: no frames matched '$state(frame_spec)'."
@@ -17670,7 +17706,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
             # computed origins, which is MOLE's automatic mode.
             set _o ""
             if {[llength $seed] == 3} {
-                set _o " $sx $sy $sz [dict get [_mole_cfg $cfg] orad]"
+                set _o " [shell_quote $sx] [shell_quote $sy] [shell_quote $sz] [dict get [_mole_cfg $cfg] orad]"
             }
             # Remove any previous run's out.dat FIRST. The engine only opens
             # (and truncates) its output after it has finished computing, so a
@@ -17876,8 +17912,13 @@ proc ::VMDHole::run_tunnel_analysis {} {
         mole-tcl { set _eng_txt "MOLE (pure Tcl - SLOW, see console)" }
         default  { set _eng_txt "pure-Tcl (SLOW - see console)" }
     }
-    catch {vmdcon -info [format "VMDHole tunnel: %s engine, %d atoms | prep %.2fs  search %.2fs  render %.2fs  total %.2fs" \
-        $_eng_txt $_natoms $_t_prep $_t_search $_t_render $_t_all]}
+    # $_natoms was read here and assigned NOWHERE in the file, so [format] raised
+    # "no such variable" inside the bare catch and the entire line vanished -
+    # taking with it the only report of which engine ran. That matters most in
+    # the case the four-way switch above exists for: a pure-Tcl fallback running
+    # ~100x slower than expected left no record naming the cause.
+    catch {vmdcon -info [format "VMDHole tunnel: %s engine | prep %.2fs  search %.2fs  render %.2fs  total %.2fs" \
+        $_eng_txt $_t_prep $_t_search $_t_render $_t_all]}
     # With clustering on, $ntot (every raw route, every frame) and what the
     # landed frame's list/3D view actually show (_tunnel_candidates, one
     # representative per cluster) are legitimately different numbers - a bare
@@ -17915,6 +17956,13 @@ proc ::VMDHole::run_tunnel_analysis {} {
     catch {refresh_results_list}
     set busy 0
     _end_calc
+    } _res _opts]
+    if {$_rc == 1} {
+        set busy 0
+        _end_calc
+        return -options $_opts $_res
+    }
+    return $_res
 }
 
 proc ::VMDHole::_blank_tunnels_for_frame {frame} {
@@ -23386,7 +23434,10 @@ proc ::VMDHole::_thread_parse_initscript {} {
                     min_radius {} min_coord {} points 0 xvalues {} yvalues {} tsv_file $tsv_file]
             }
             set fh  [open $out_file r]
-            set tsv [open $tsv_file w]
+            # Same publish-by-rename as parse_profile: see the note there.
+            set _tsv_pub $tsv_file
+            set tsv_file "$tsv_file.part"
+            if {[catch {open $tsv_file w} tsv]} { close $fh; error $tsv }
             puts $tsv "coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad"
             set in_table 0; set caps_table 0; set points 0; set rows {}
             set caps_off 0.0; set caps_last ""
@@ -23515,6 +23566,8 @@ proc ::VMDHole::_thread_parse_initscript {} {
                 }
             }
             close $tsv; close $fh
+            catch {file rename -force $tsv_file $_tsv_pub}
+            set tsv_file $_tsv_pub
             if {$points == 0} {
                 if {[llength $error_lines] > 0} {
                     set errmsg [join $error_lines " "]
@@ -23539,6 +23592,7 @@ proc ::VMDHole::_thread_parse_initscript {} {
             gets $fh
             set points 0; set min_radius {}; set min_coord {}
             set xvalues {}; set yvalues {}; set caprvalues {}; set min_caprad {}
+            set clvalues {}; set rsources {}; set _rows {}; set _caprraw {}
             while {[gets $fh line] >= 0} {
                 set f [split $line "\t"]
                 if {[llength $f] < 2} continue
@@ -23552,21 +23606,44 @@ proc ::VMDHole::_thread_parse_initscript {} {
                 if {[llength $f] >= 8} { set cr [string trim [lindex $f 7]] }
                 if {![string is double -strict $cr]} { set cr "" }
                 if {$cr ne "" && ($min_caprad eq {} || $cr < $min_caprad)} { set min_caprad $cr }
-                if {$full} {
-                    lappend xvalues $coord; lappend yvalues $radius
-                    lappend caprvalues [expr {$cr eq "" ? $radius : $cr}]
-                }
-                if {$min_radius eq {} || $radius < $min_radius} {
-                    set min_radius $radius; set min_coord $coord
-                }
+                lappend _caprraw $cr
+                # Collect the SAME six fields parse_profile_from_tsv collects,
+                # so _resolve_conn_radii below can apply the CONNOLLY convention.
+                # Column 2 alone is the spherical-probe radius; under CONNOLLY the
+                # reported radius is Requiv, interpolated across HOLE's
+                # un-evaluated mid-point rows. _thread_parse_initscript copies
+                # _resolve_conn_radii into the worker for exactly this call, and
+                # this reader is the one that runs once hole_out.txt has been
+                # deleted - which is every normal run of >=8 frames.
+                set _cl [expr {[llength $f] >= 3 && [string is double -strict [lindex $f 2]] ? [lindex $f 2] : $coord}]
+                set _at [expr {[llength $f] >= 4 ? [lindex $f 3] : ""}]
+                set _rq [expr {[llength $f] >= 5 ? [lindex $f 4] : ""}]
+                set _cs [expr {[llength $f] >= 6 ? [lindex $f 5] : ""}]
+                lappend _rows [list $coord $radius $_cl $_at $_rq $_cs]
             }
             close $fh
             if {$points == 0} {
                 return [list valid 0 message {Saved profile (TSV) contained no data rows.} \
                     min_radius {} min_coord {} points 0 xvalues {} yvalues {} tsv_file $tsv_file]
             }
+            lassign [_resolve_conn_radii $_rows] _rows rsources
+            set _ri 0
+            foreach _r $_rows {
+                lassign $_r coord radius _cl
+                set cr [lindex $_caprraw $_ri]
+                incr _ri
+                if {$full} {
+                    lappend xvalues $coord; lappend yvalues $radius
+                    lappend clvalues $_cl
+                    lappend caprvalues [expr {$cr eq "" ? $radius : $cr}]
+                }
+                if {$min_radius eq {} || $radius < $min_radius} {
+                    set min_radius $radius; set min_coord $coord
+                }
+            }
             return [list valid 1 message {} min_radius $min_radius min_coord $min_coord \
                 points $points xvalues $xvalues yvalues $yvalues \
+                clvalues $clvalues rsources $rsources \
                 caprvalues $caprvalues min_caprad $min_caprad tsv_file $tsv_file]
         }
         proc thread_parse_chunk {triples {full 1}} {
@@ -23848,7 +23925,14 @@ proc ::VMDHole::parse_profile {output_file tsv_file {full 1}} {
             min_radius {} min_coord {} points 0 xvalues {} yvalues {} tsv_file $tsv_file]
     }
     set fh  [open $output_file r]
-    set tsv [open $tsv_file w]
+    # Write the parsed table to a sibling temp and publish it by rename once the
+    # parse has succeeded. Opening $tsv_file directly truncates an existing
+    # profile before the outcome is known, so a failed parse of a stale
+    # hole_out.txt destroys the good TSV beside it. The catch also closes $fh
+    # when the write side cannot be opened at all - a read-only import tree.
+    set _tsv_pub $tsv_file
+    set tsv_file "$tsv_file.part"
+    if {[catch {open $tsv_file w} tsv]} { close $fh; error $tsv }
     puts $tsv "coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad"
     set in_table 0
     set caps_table 0
@@ -24016,6 +24100,8 @@ proc ::VMDHole::parse_profile {output_file tsv_file {full 1}} {
     }
     close $tsv
     close $fh
+    catch {file rename -force $tsv_file $_tsv_pub}
+    set tsv_file $_tsv_pub
     if {$points == 0} {
         if {[llength $error_lines] > 0} {
             set errmsg [join $error_lines " "]
@@ -35569,6 +35655,7 @@ proc ::VMDHole::run_analysis {} {
             set done 0
             set _aborted_killed 0
             set hole_failures 0
+            set _empty_sel_frames {}
             set last_ui_ms [clock milliseconds]
             vmdcon -info "VMDHole: HOLE starting — $total frame(s)  parallel=$njobs  mol=$molid"
             # One-time setup: capture "now" frame + create scoped fit handles, when any
@@ -35612,7 +35699,18 @@ proc ::VMDHole::run_analysis {} {
                         $sel frame $frame
                         $sel update
                         if {[$sel num] == 0} {
-                            error "Selection '$seltext' matched 0 atoms in frame $frame."
+                            # Count it as a frame failure and carry on, the way
+                            # every other per-frame problem here is handled.
+                            # Raising instead unwound into _stream_err, which
+                            # re-raises, so Phase 3 never ran and NONE of the
+                            # frames that had already completed were parsed or
+                            # registered - a dynamic selection that empties at
+                            # frame 7412 of 10000 threw away 7411 good frames
+                            # and returned an empty result_frames.
+                            lappend _empty_sel_frames $frame
+                            incr hole_failures
+                            $sel delete
+                            continue
                         }
                         # HOLE reads the residue number with I4, four columns.
                         # Past 9999 writepdb stops writing digits and runs into
@@ -35876,6 +35974,11 @@ proc ::VMDHole::run_analysis {} {
             set state(status) "Aborted — parsing the completed profile(s)…"
         } else {
             vmdcon -info "VMDHole: HOLE complete ($total frame(s), $hole_failures failed). Parsing profiles..."
+            if {[llength $_empty_sel_frames] > 0} {
+                vmdcon -warn "VMDHole: selection '$seltext' matched 0 atoms in\
+                    [llength $_empty_sel_frames] frame(s); they were skipped:\
+                    [join [lrange $_empty_sel_frames 0 9] {, }][expr {[llength $_empty_sel_frames] > 10 ? ", ..." : ""}]"
+            }
             set state(status) "HOLE complete. Parsing [llength $frames] profile(s)..."
         }
         update
@@ -36006,6 +36109,16 @@ proc ::VMDHole::run_analysis {} {
 
         if {[llength $result_frames] == 0} {
             error "HOLE produced no readable output for any selected frame."
+        }
+        # result_frames deliberately ACCUMULATES across same-signature runs, and
+        # the signature has no frame_spec component - so the guard above passes
+        # on the strength of an EARLIER run's frames even when every frame this
+        # run asked for failed. new_frames is this run's own tally. Without
+        # this, `analyse 0:99` (ok) then `analyse 100:199` (all crash) returns 1,
+        # the documented `if {![run_analysis]} {exit 1}` passes, and the caller
+        # writes out frames 0-99 labelled as the 100-199 run.
+        if {[llength $new_frames] == 0 && [llength $to_run] > 0} {
+            error "HOLE produced no readable output for any of the [llength $to_run] frame(s) this run requested."
         }
 
         set current_frame [molinfo $molid get frame]
