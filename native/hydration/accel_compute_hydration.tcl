@@ -8,6 +8,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # Tucker 2019, J Mol Biol 431:3353; Help > References). rho(s) = <waters in
     # bin>/(pi*R(s)^2*dz) per frame; E = -kT ln(rho/rho_bulk), both averaged
     # separately across frames.
+    if {[_abort_stop "the hydration calculation"]} { return 0 }
     variable state
     variable results
     variable result_frames
@@ -68,7 +69,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     if {![string is double -strict $dcap] || $dcap < 0} { set dcap 0.0 }
     # Density probe FLOOR (Å): the symmetric MINIMUM counterpart to dcap above. At a
     # sub-Angstrom hydrophobic gate (real and expected - literature/this project's own
-    # case study report ~0.36 Å constrictions), the bin
+    # case study report ~0.36 Å constrictions, see case2-hydrophobic-gating.md), the bin
     # volume pi*R^2*dz becomes tiny, so rho = count/(N*vol) is EXTREMELY sensitive to a
     # single stray/rare water there - one incidental count can spike rho/rho_bulk past 1
     # even though the site is mostly dry, which is what makes such spikes "hard to
@@ -109,10 +110,12 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # below still uses every real water. Plugin-specific safety valve (like
     # water_dens_cap/water_radius_floor), not part of CHAP's own algorithm,
     # needed because CHAP's own "fast" O(N) approximate density-derivative
-    # method (deliberately not ported - see _amise_phi_direct) is
+    # method (which deliberately not ported - see _amise_phi_direct) is
     # what keeps THEIR per-frame cost bounded for large samples; this plugin's
     # direct method needs its own bound instead.
-    set amise_cap 100
+    set amise_cap [expr {[info exists state(water_amise_cap)] && \
+        [string is integer -strict $state(water_amise_cap)] && $state(water_amise_cap) > 1 \
+        ? $state(water_amise_cap) : 100}]
     # Channel axis for binning (see water_use_cpoint_axis in this proc's header). Off:
     # re-fits PCA independently per frame - a bin index then doesn't mean the same
     # physical location across frames on a fluctuating trajectory. On: the run's fixed
@@ -120,15 +123,31 @@ proc ::VMDHole::_accel_compute_hydration {} {
     set _want_cpaxis [expr {[info exists state(water_use_cpoint_axis)] && $state(water_use_cpoint_axis)}]
     set fixed_axis {}
     # axis_use selects HOW each frame's binning axis is derived:
+    #   frame         - THIS frame's own resolved CPOINT+CVECT, read back from the
+    #                   vmdhole_frame_axis.dat that run_analysis writes UNCONDITIONALLY
+    #                   next to every frame's results (_frame_axis_persisted). This is
+    #                   what Track/Stabilize actually produced for that frame, so it is
+    #                   correct whether the axis is static, origin-drifting or fully
+    #                   rotating - one branch instead of three. Preferred whenever the
+    #                   file is there, which is every run since it was added.
     #   manifest_full - the run's ONE static CPOINT+CVECT for every frame (axis never drifts).
     #   manifest_dir  - the run's known CVECT DIRECTION for every frame (Track CPOINT drifts
     #                   only the ORIGIN, not the direction - see _manifest_cvect_drifts_per_
     #                   frame), with each frame's own centerline centroid as the origin. This
     #                   bins on HOLE's ACTUAL search direction instead of re-deriving a noisier
     #                   per-frame PCA estimate of a direction already known exactly.
-    #   pca           - per-frame PCA of that frame's own centerline (no usable manifest, the
-    #                   DIRECTION genuinely drifts (Stabilize CVECT/rotation), or the user
-    #                   turned the CPOINT/CVECT anchor off).
+    #   pca           - per-frame PCA of that frame's own centerline. Now only for results
+    #                   dirs that predate vmdhole_frame_axis.dat AND have no manifest, or
+    #                   when the user turns the CPOINT/CVECT anchor off.
+    #
+    # There is ALWAYS a real cvect - HOLE cannot search without one, and a blank
+    # CPOINT/CVECT is resolved once per run and pinned, not re-guessed per frame.
+    # So a PCA re-estimate of that direction is never the best available answer,
+    # only a fallback for data too old to carry it. The Connolly path reached the
+    # same conclusion already (_conn_frame_axis, whose comment notes that
+    # classifying a tracked run against the single manifest axis "puts the
+    # pore/lateral boundary in the wrong place on every frame but the first");
+    # hydration reads the same file.
     set axis_use "pca"
     # Carries a note about the anchor being stood down through to the FINAL
     # status message below (an intermediate set state(status) here would just
@@ -137,7 +156,28 @@ proc ::VMDHole::_accel_compute_hydration {} {
     set _anchor_note ""
     if {$_want_cpaxis} {
         set _odrift 0; set _cdrift 0
+        # Do every frame in this run carry its own resolved axis? Checked over
+        # ALL frames, not just the first: a run assembled from several passes
+        # (Add frames) can mix dirs written before and after that file existed,
+        # and a per-frame mode that silently fell back for some frames would bin
+        # those on a different axis from the rest - the exact inconsistency this
+        # whole block exists to avoid.
+        set _perframe_axis 1
+        set _nchecked 0
         foreach frame $result_frames {
+            if {[_abort_requested]} break
+            if {![dict exists $results $frame run_dir]} continue
+            incr _nchecked
+            if {[llength [_frame_axis_persisted [dict get $results $frame run_dir]]] != 6} {
+                set _perframe_axis 0
+                break
+            }
+        }
+        if {$_nchecked == 0} { set _perframe_axis 0 }
+        foreach frame $result_frames {
+            # Hydration walks every frame IN PROCESS - no job pool to honour the flag
+            # for it, so the loop has to check for itself.
+            if {[_abort_requested]} break
             if {![dict exists $results $frame run_dir]} continue
             set _run_dir [dict get $results $frame run_dir]
             set fixed_axis [_manifest_axis $_run_dir]
@@ -147,9 +187,15 @@ proc ::VMDHole::_accel_compute_hydration {} {
                 break
             }
         }
-        if {$fixed_axis eq {}} {
+        if {$_perframe_axis} {
+            # Best case and the common one: bin each frame on the axis HOLE
+            # actually used for it. Covers static, Track (origin moves) and
+            # Stabilize (direction moves) without needing to know which.
+            # fixed_axis is still carried for the display fallback below.
+            set axis_use "frame"
+        } elseif {$fixed_axis eq {}} {
             set axis_use "pca"; set fixed_axis {}
-            set _anchor_note " CPOINT/CVECT anchor requested but unavailable (no manifest) - used per-frame PCA instead."
+            set _anchor_note " CPOINT/CVECT anchor requested but unavailable (no manifest, no per-frame axis) - used per-frame PCA instead."
             vmdcon -info "VMDHole: hydration -$_anchor_note"
         } elseif {!$_odrift && !$_cdrift} {
             # Static axis for the whole run: the one manifest CPOINT+CVECT lands every frame
@@ -162,11 +208,13 @@ proc ::VMDHole::_accel_compute_hydration {} {
             # consistent than a per-frame PCA direction that wobbles with centerline noise.
             set axis_use "manifest_dir"
         } else {
-            # The axis DIRECTION genuinely evolves per frame (Stabilize CVECT / rotation) -
-            # the one static cvect no longer describes most frames, so per-frame PCA (fit
-            # fresh from each frame's own spheres) is the correct choice here.
+            # The axis DIRECTION genuinely evolves per frame (Stabilize CVECT /
+            # rotation) and this run is too old to carry vmdhole_frame_axis.dat,
+            # so the real per-frame direction is not recoverable and a fit from
+            # each frame's own spheres is all that is left. Re-running HOLE would
+            # write the per-frame axes and take the "frame" branch above.
             set axis_use "pca"; set fixed_axis {}
-            set _anchor_note " This run's axis DIRECTION moves per frame (Stabilize CVECT) - used per-frame PCA instead."
+            set _anchor_note " This run's axis DIRECTION moves per frame (Stabilize CVECT) and predates the per-frame axis record - used per-frame PCA instead. Re-run HOLE to bin on the real per-frame axis."
             vmdcon -info "VMDHole: hydration -$_anchor_note"
         }
     }
@@ -180,13 +228,6 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # Per-frame density storage: list of dicts, one per processed frame.
     # Each dict: {frame <f> bins <dict bin->count>}
     set perframe_raw {}
-    # CHAP's anchor points (chap_trajectory_analysis.cpp:1592-1594): the most
-    # extreme low/high axial position reached by ANY single frame's own
-    # envelope (arcLengthLoSummary.min()/arcLengthHiSummary.max() in their
-    # code) - fixed, global values used later to shift the whole energy
-    # profile so it reads zero there.
-    set anchor_lo_extreme 1e30
-    set anchor_hi_extreme -1e30
     vmdcon -info "VMDHole: hydration starting — $nframes frame(s)  water=\"$wsel\"  bulk=$bulk /A^3  T=$state(water_temp) K"
     # PHASE A (sequential - the only part that needs VMD/atomselect): per
     # frame, find the qualifying waters' axial coordinates (qco). This is the
@@ -207,6 +248,9 @@ proc ::VMDHole::_accel_compute_hydration {} {
     set frame_radii [dict create]   ;# per-frame mean pore radius PER BIN - MUST be keyed by frame (see Phase C)
     set _wsel_validated 0
     foreach frame $result_frames {
+        # Hydration walks every frame IN PROCESS - no job pool to honour the flag
+        # for it, so the loop has to check for itself.
+        if {[_abort_requested]} break
         incr fi
         if {![dict exists $results $frame]} { continue }
         set rec [dict get $results $frame]
@@ -239,7 +283,24 @@ proc ::VMDHole::_accel_compute_hydration {} {
             }
             set _wsel_validated 1
         }
-        if {$axis_use eq "manifest_full"} {
+        if {$axis_use eq "frame"} {
+            ;# This frame's OWN resolved CPOINT+CVECT, same {cpx cpy cpz ux uy uz}
+            ;# shape as _manifest_axis. Availability was verified for every frame
+            ;# before this mode was selected, so a miss here would mean the file
+            ;# vanished mid-run; fall back to the run axis rather than silently
+            ;# binning this one frame on a different rule.
+            set _fa {}
+            if {[dict exists $results $frame run_dir]} {
+                set _fa [_frame_axis_persisted [dict get $results $frame run_dir]]
+            }
+            if {[llength $_fa] == 6} {
+                lassign $_fa mx my mz ux uy uz
+            } elseif {[llength $fixed_axis] == 6} {
+                lassign $fixed_axis mx my mz ux uy uz
+            } else {
+                lassign [oriented_axis $centers] ux uy uz mx my mz
+            }
+        } elseif {$axis_use eq "manifest_full"} {
             ;# _manifest_axis returns {cpx cpy cpz ux uy uz} - origin first, then axis.
             lassign $fixed_axis mx my mz ux uy uz
         } elseif {$axis_use eq "manifest_dir"} {
@@ -265,13 +326,11 @@ proc ::VMDHole::_accel_compute_hydration {} {
         }
         set env [lsort -real -index 0 $env]
         set cmin [lindex [lindex $env 0] 0]; set cmax [lindex [lindex $env end] 0]
-        if {$cmin < $anchor_lo_extreme} { set anchor_lo_extreme $cmin }
-        if {$cmax > $anchor_hi_extreme} { set anchor_hi_extreme $cmax }
         # per-frame envelope radius accumulation. binrsum/binrn build the
         # trajectory-MEAN radius per bin (used for the Density view, a valid linear
         # quantity). _frame_rsum/_frame_rn additionally build THIS frame's OWN mean
         # radius per bin, stored in perframe_raw below and used for the per-frame
-        # ENERGY volume (C2) - a breathing/gated pore's energy needs each frame's
+        # ENERGY volume - a breathing/gated pore's energy needs each frame's
         # own R_t(z), not the trajectory mean (Jensen: mean(-ln(n/V_t)) != -ln(n/V̄)).
         set _frame_rsum [dict create]; set _frame_rn [dict create]
         foreach e $env {
@@ -345,6 +404,11 @@ proc ::VMDHole::_accel_compute_hydration {} {
 
     # PHASE C (sequential, cheap - pure arithmetic on already-collected qco):
     # bin every frame's waters using its own (now known) bandwidth.
+    # Support of the KDE sum: every bin the pore's own radius data covers.
+    # Anything outside is dropped by the coverage gate further down anyway.
+    set _kb [lsort -integer [dict keys $binrn]]
+    set kde_lo [expr {[llength $_kb] ? [lindex $_kb 0] : 0}]
+    set kde_hi [expr {[llength $_kb] ? [lindex $_kb end] : -1}]
 
     set frame_bw [dict create]
     set bincount [dict create]
@@ -398,7 +462,6 @@ proc ::VMDHole::_accel_compute_hydration {} {
     set kT [expr {1.9872041e-3 * $_T}]
     set coords {}; set occ {}; set dens {}; set countspf {}
     set meanrs {}
-    set clamp_los {}
     set sorted_bins_all [lsort -integer [dict keys $binrn]]
     foreach bi $sorted_bins_all {
         set nr [dict get $binrn $bi]
@@ -413,23 +476,8 @@ proc ::VMDHole::_accel_compute_hydration {} {
         # <N>/(pi <R>^2 dz) from the mean radius here. $vol/$meanr survive only for the
         # per-bin Poisson clamp and the reported mean-radius profile, which ARE per-bin
         # quantities.
-        # Energy density floor = the RULE OF THREE (Hanley & Lippman-Hand, JAMA 1983;
-        # 249:1743): observing ZERO waters in N frames of bin volume V bounds the true
-        # density at ≈3/(N·V) at 95% confidence, capping the free-energy barrier at
-        # −kT·ln(3/(N·V)) - a citable convention preventing −ln(0), reporting a
-        # fully-dewetted gate as a conservative lower bound. In absolute Å⁻³ to match
-        # CHAP's raw −ln(density) energy.
-        # CAPPED at bulk: without this, a narrow/under-sampled bin's 3/(N·V) can exceed
-        # bulk, flooring a dry gate above bulk and, after the mouth-zero shift, reading
-        # spuriously WET. min(...,bulk) makes an under-sampled gate read ~0 instead.
-        # pf_on (default): rule-of-three floor capped at bulk. pf OFF (chap_mode): a small
-        # bounded epsilon so −ln stays finite, no bulk cap.
-        set _clamp_lo [expr {$pf_on \
-            ? (($nfdata > 0 && $vol > 0) ? min(3.0 / ($nfdata * $vol), $bulk) : 0.0065 * $bulk) \
-            : 1.0e-4 * $bulk}]
         lappend coords  [expr {($bi + 0.5) * $dz}]
         lappend countspf $perfr
-        lappend clamp_los $_clamp_lo
         lappend meanrs  $meanr
     }
     # $energy is built from a PER-FRAME G (below), not a log of the already-averaged
@@ -442,14 +490,6 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # bin" would bias the mean upward), so time stays O(frames x bins) either way.
     set sorted_bins $sorted_bins_all
     set nb [llength $coords]
-    set bi_lo_anchor [expr {int(floor($anchor_lo_extreme/$dz))}]
-    set bi_hi_anchor [expr {int(floor($anchor_hi_extreme/$dz))}]
-    set idx_lo_anchor -1; set idx_hi_anchor -1
-    for {set bi2 0} {$bi2 < $nb} {incr bi2} {
-        set bi_actual [lindex $sorted_bins $bi2]
-        if {$bi_actual == $bi_lo_anchor} { set idx_lo_anchor $bi2 }
-        if {$bi_actual == $bi_hi_anchor} { set idx_hi_anchor $bi2 }
-    }
     # Precompute each bin's volume once (was recomputed per-frame before).
     set bin_vol {}
     foreach bi $sorted_bins {
@@ -463,8 +503,25 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # Running Welford accumulators, O(bins) memory regardless of frame count.
     set occ_n [lrepeat $nb 0]; set occ_mean [lrepeat $nb 0.0]; set occ_m2 [lrepeat $nb 0.0]
     set g_n   [lrepeat $nb 0]; set g_mean   [lrepeat $nb 0.0]; set g_m2   [lrepeat $nb 0.0]
-    set anchor_lo_gvals {}
-    set anchor_hi_gvals {}
+    # How many of a bin's contributing frames sat ON the density floor. Those all
+    # get the IDENTICAL energy -kT*ln(min(3/V,bulk)), so they add nothing to the
+    # variance: a bin that is dry in most frames reports a small SD precisely
+    # where the measurement is least informative. That is censoring, not noise,
+    # and no effective-sample-size correction touches it - so it is counted and
+    # reported rather than folded away.
+    set g_floored [lrepeat $nb 0]
+    # Lag products for the per-bin autocorrelation, used for the effective sample
+    # size below. Keyed "<bin>,<lag>"; the ring buffer holds the last _acf_L
+    # CONTRIBUTING samples of each bin as {ordinal value} pairs.
+    array set _acf_buf {}; array set _acf_sxy {}; array set _acf_cnt {}
+    set _acf_L 0
+    if {$nfdata >= 12 && $nb > 0} {
+        set _acf_L [expr {int($nfdata/4) < 50 ? int($nfdata/4) : 50}]
+        # Work guard: the pairing below is O(frames x bins x lag).
+        while {$_acf_L > 5 && $nfdata*$nb*$_acf_L > 5000000} { set _acf_L [expr {$_acf_L/2}] }
+        if {$nfdata*$nb*$_acf_L > 5000000} { set _acf_L 0 }
+    }
+    set _acf_ord -1
     # perframe_occ/perframe_frames (the dense frames x bins matrix) is built
     # whenever the Hydration tab is in the per-frame heatmap view OR the
     # trajectory is small enough that the memory cost is negligible either
@@ -478,7 +535,14 @@ proc ::VMDHole::_accel_compute_hydration {} {
         || $nframes <= 2000}]
     set perframe_occ {}
     set perframe_frames {}
+    # Chronological order, so the ordinal below really is a time index. Welford is
+    # order-independent, so sorting costs the mean/SD nothing; the autocorrelation
+    # needs it. The lag unit is ONE ANALYSED FRAME, whatever stride produced the
+    # list - a correlation time in those units is what a user comparing two runs
+    # of the same stride wants.
+    set perframe_raw [lsort -integer -index 1 $perframe_raw]
     foreach pf_entry $perframe_raw {
+        incr _acf_ord
         set pf_bins [dict get $pf_entry bins]
         set pf_radii [expr {[dict exists $pf_entry radii] ? [dict get $pf_entry radii] : [dict create]}]
         set _fcmin [expr {[dict exists $pf_entry cmin] ? [dict get $pf_entry cmin] : -1e30}]
@@ -526,32 +590,63 @@ proc ::VMDHole::_accel_compute_hydration {} {
             # separately across frames afterward - see the note below.)
             set rho_e $rho
             # Energy from RAW per-frame density (CHAP's own -ln(density); no bulk
-            # division). Clamps in the SAME absolute (Å⁻³) units: $clo (from
-            # clamp_los) is a raw-density Poisson floor, upper bound 8·bulk.
+            # division). Both clamps are in absolute Å⁻³, the same units as $rho.
             set rc $rho_e
-            set clo [lindex $clamp_los $bi2]
-            # NO upper cap, in either mode - a wide-open pore's raw density is real geometry,
-            # not an artifact to clamp (CHAP doesn't clamp it either; its answer is the KDE
-            # bandwidth plus the red-hatched R<1.4A annotation this plugin already draws).
-            # The 1e6*bulk below is an overflow guard for log(), not a physical bound.
-            set chi [expr {1.0e6 * $bulk}]
-            if {$rc > $chi} { set rc $chi }
-            # Both modes floor at clo before taking the log - $clo is already the
-            # right value for whichever mode this is (rule-of-three for pf_on, a
-            # small bounded epsilon for CHAP mode; see clo's own definition above).
-            # Must NOT reproduce CHAP's literal mendInfinities() fallback
-            # (+/- numeric_limits<real>::max() for an exactly-zero-density
-            # frame): that relies on CHAP's KDE-smoothed density essentially
-            # never hitting exact zero, but this plugin's per-frame bin COUNT
-            # is not a continuous KDE spline - a genuinely dry frame at a
-            # genuinely dry gate (the case this tool exists to find) can hit
-            # an exact zero count on real trajectories, and a single such
-            # frame contributing +3.4e38 kcal/mol into a Welford mean would
-            # explode that bin's averaged energy and dwarf every other bin on
-            # the plot. The bounded-epsilon floor (see clo's own comment)
-            # avoids that.
-            if {$rc < $clo} { set rc $clo }
+            # A floor exists ONLY to keep log() finite. It must never overwrite a
+            # density that was actually measured - and the previous
+            # min(3/V, bulk) did exactly that: in a narrow bin (r ~ 2 A, V ~ 12.6
+            # A^3) the rule-of-three bound 3/V is 0.238 A^-3, seven times bulk, so
+            # min(...) returned BULK and a fully dewetted gate was overwritten with
+            # bulk water. Measured on a real Nav gate: occupancy 0.001-0.31 across
+            # 15 bins, every frame floored, and the reported energy a flat -0.024
+            # kcal/mol - the WET side of the mouth-zeroed scale. The barrier the
+            # tool exists to find was being erased.
+            #
+            # So the measured density now stands as it is, however small, and the
+            # floor applies only where there is genuinely nothing to take a log of.
+            # For those, the rule of three (Hanley & Lippman-Hand, JAMA 1983;
+            # 249:1743) bounds the density that N frames of bin volume V could have
+            # hidden: 3/(N*V). That bound is legitimately N-dependent - it is a
+            # confidence statement, not a measurement - and the bins it applies to
+            # are counted in floored_frac so a bound is never read as a value.
+            set _was_floored 0
+            if {$rc <= 0.0} {
+                if {$pf_on} {
+                    set clo [expr {($nfdata > 0 && $_vol_e > 0) \
+                        ? 3.0/($nfdata*$_vol_e) : 1.0e-6*$bulk}]
+                } else {
+                    set clo [expr {1.0e-4 * $bulk}]
+                }
+                if {$clo <= 0.0} { set clo [expr {1.0e-6*$bulk}] }
+                set rc $clo
+                set _was_floored 1
+            }
+            if {$_was_floored} { lset g_floored $bi2 [expr {[lindex $g_floored $bi2] + 1}] }
             set gv [expr {-1.0 * $kT * log($rc)}]
+            # Pair this sample with the bin's own recent samples by their ORDINAL
+            # distance in the run's frame list. A bin only receives a frame whose
+            # centerline actually reached it (the coverage gate above), so its
+            # series has GAPS - pairing by position in the buffer instead of by
+            # ordinal would silently file a lag-3 product under lag 1.
+            if {$_acf_L > 0} {
+                set _bufk $bi2
+                if {[info exists _acf_buf($_bufk)]} {
+                    foreach _pr $_acf_buf($_bufk) {
+                        lassign $_pr _po _pv
+                        set _lag [expr {$_acf_ord - $_po}]
+                        if {$_lag < 1 || $_lag > $_acf_L} { continue }
+                        set _kk "$bi2,$_lag"
+                        set _acf_sxy($_kk) [expr {([info exists _acf_sxy($_kk)] ? $_acf_sxy($_kk) : 0.0) + $gv*$_pv}]
+                        set _acf_cnt($_kk) [expr {([info exists _acf_cnt($_kk)] ? $_acf_cnt($_kk) : 0) + 1}]
+                    }
+                    lappend _acf_buf($_bufk) [list $_acf_ord $gv]
+                    if {[llength $_acf_buf($_bufk)] > $_acf_L} {
+                        set _acf_buf($_bufk) [lrange $_acf_buf($_bufk) end-[expr {$_acf_L-1}] end]
+                    }
+                } else {
+                    set _acf_buf($_bufk) [list [list $_acf_ord $gv]]
+                }
+            }
 
             set n [expr {[lindex $occ_n $bi2] + 1}]
             set delta [expr {$v - [lindex $occ_mean $bi2]}]
@@ -565,8 +660,6 @@ proc ::VMDHole::_accel_compute_hydration {} {
             set gm2 [expr {[lindex $g_m2 $bi2] + $gdelta*($gv-$gmean)}]
             lset g_n $bi2 $gn; lset g_mean $bi2 $gmean; lset g_m2 $bi2 $gm2
 
-            if {$bi2 == $idx_lo_anchor} { lappend anchor_lo_gvals $gv }
-            if {$bi2 == $idx_hi_anchor} { lappend anchor_hi_gvals $gv }
         }
         if {$want_pf_matrix} {
             lappend perframe_occ $pf_occ
@@ -578,6 +671,16 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # per-frame loop; chap_trajectory_analysis.cpp).
     set energy {}; set occ_std {}; set energy_std {}
     set occ {}; set dens {}
+    # SD describes the spread of the per-frame values and is correct as it stands -
+    # correlation does not change it. What correlation DOES change is how precisely
+    # the MEAN is known: N frames of MD are not N independent samples. The standard
+    # correction is the statistical inefficiency
+    #     g = 1 + 2 * sum_t (1 - t/N) * rho(t),
+    # truncated at the first non-positive rho (the initial-positive-sequence rule),
+    # giving N_eff = N/g and SEM = SD/sqrt(N_eff). With g = 1 this collapses to the
+    # familiar SD/sqrt(N). See Flyvbjerg & Petersen, J Chem Phys 91:461 (1989) and
+    # Chodera et al., J Chem Theory Comput 3:26 (2007).
+    set energy_sem {}; set n_eff {}; set floored_frac {}
     for {set bi2 0} {$bi2 < $nb} {incr bi2} {
         set _om [lindex $occ_mean $bi2]
         lappend occ  $_om
@@ -585,7 +688,30 @@ proc ::VMDHole::_accel_compute_hydration {} {
         lappend energy [lindex $g_mean $bi2]
         set nv [lindex $occ_n $bi2]
         lappend occ_std    [expr {$nv > 1 ? sqrt([lindex $occ_m2 $bi2] / double($nv-1)) : 0.0}]
-        lappend energy_std [expr {$nv > 1 ? sqrt([lindex $g_m2   $bi2] / double($nv-1)) : 0.0}]
+        set _gsd [expr {$nv > 1 ? sqrt([lindex $g_m2 $bi2] / double($nv-1)) : 0.0}]
+        lappend energy_std $_gsd
+        lappend floored_frac [expr {$nv > 0 ? [lindex $g_floored $bi2]/double($nv) : 0.0}]
+        set _ne ""; set _sem ""
+        set _gv [expr {$nv > 1 ? [lindex $g_m2 $bi2]/double($nv-1) : 0.0}]
+        if {$_acf_L > 0 && $nv > 3 && $_gv > 0.0} {
+            set _gm [lindex $g_mean $bi2]
+            set _sum 0.0
+            for {set _t 1} {$_t <= $_acf_L} {incr _t} {
+                set _kk "$bi2,$_t"
+                if {![info exists _acf_cnt($_kk)] || $_acf_cnt($_kk) < 2} break
+                set _rho [expr {(($_acf_sxy($_kk)/double($_acf_cnt($_kk))) - $_gm*$_gm)/$_gv}]
+                if {$_rho <= 0.0} break
+                set _sum [expr {$_sum + (1.0 - $_t/double($nv))*$_rho}]
+            }
+            set _g [expr {1.0 + 2.0*$_sum}]
+            if {$_g < 1.0} { set _g 1.0 }
+            set _ne [expr {$nv/$_g}]
+            if {$_ne < 1.0} { set _ne 1.0 }
+            if {$_ne > $nv} { set _ne double($nv) }
+            set _sem [expr {$_gsd/sqrt($_ne)}]
+        }
+        lappend n_eff $_ne
+        lappend energy_sem $_sem
     }
     # VACUOUS-BIN TRIM: a bin where NO frame's own HOLE centerline ever reached it
     # (occ_n==0) has occ_mean/g_mean stuck at their Welford INITIAL value 0.0 - not
@@ -603,7 +729,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     }
     if {[llength $_keep] < $nb} {
         set _nc {}; set _no {}; set _nd {}; set _ne {}; set _nos {}; set _nes {}
-        set _ncp {}; set _nmr {}
+        set _ncp {}; set _nmr {}; set _nsem {}; set _nneff {}; set _nff {}
         foreach bi2 $_keep {
             lappend _nc  [lindex $coords $bi2]
             lappend _no  [lindex $occ $bi2]
@@ -613,9 +739,14 @@ proc ::VMDHole::_accel_compute_hydration {} {
             lappend _nes [lindex $energy_std $bi2]
             lappend _ncp [lindex $countspf $bi2]
             lappend _nmr [lindex $meanrs $bi2]
+            # Index-aligned with coords for the same reason perframe_occ is.
+            lappend _nsem  [lindex $energy_sem $bi2]
+            lappend _nneff [lindex $n_eff $bi2]
+            lappend _nff   [lindex $floored_frac $bi2]
         }
         set coords $_nc; set occ $_no; set dens $_nd; set energy $_ne
         set occ_std $_nos; set energy_std $_nes; set countspf $_ncp; set meanrs $_nmr
+        set energy_sem $_nsem; set n_eff $_nneff; set floored_frac $_nff
         # perframe_occ rows are built over the SAME bi2 range (see the per-frame
         # loop above) - keep them index-aligned with the now-trimmed coords, or
         # every pfdens/Per-frame-heatmap consumer that pairs coords[i] with
@@ -633,15 +764,84 @@ proc ::VMDHole::_accel_compute_hydration {} {
     }
     # Apply the shift (a constant added to every bin's mean energy does not
     # change energy_std - Var(X+c) = Var(X)).
+    # Anchored on the outermost bins that ANY frame actually measured, which
+    # after the vacuous-bin trim above are simply the two ends of $energy.
+    #
+    # It used to anchor on bin floor(extreme_coverage/dz) and collect that bin's
+    # per-frame values during the loop. That bin is chosen from the extreme
+    # coverage COORDINATE, so its CENTRE sits up to half a bin OUTSIDE the
+    # coverage range - and the energy loop's own coverage gate then skips it for
+    # every frame. Measured on a real run: lo_extreme -45.0005 picks bin -46,
+    # whose centre -45.5 is outside [-45.0005, ...], so anchor_lo_gvals came back
+    # EMPTY and the shift silently stayed 0.0 even though water_energy_shift
+    # defaults ON. The whole profile was left on the absolute -kT*ln(rho) scale,
+    # where bulk water sits near +2.1 kcal/mol rather than at zero.
     set shift 0.0
-    if {$shift_on && [llength $anchor_lo_gvals] > 0 && [llength $anchor_hi_gvals] > 0} {
-        set alo 0.0
-        foreach v $anchor_lo_gvals { set alo [expr {$alo + $v}] }
-        set alo [expr {$alo / double([llength $anchor_lo_gvals])}]
-        set ahi 0.0
-        foreach v $anchor_hi_gvals { set ahi [expr {$ahi + $v}] }
-        set ahi [expr {$ahi / double([llength $anchor_hi_gvals])}]
-        set shift [expr {-0.5 * ($alo + $ahi)}]
+    set _gzero_note ""
+    set _anchor_olo ""; set _anchor_ohi ""
+    # "" = shift never ran (toggle off / profile too short): zero-referencing
+    # is then unknown, which _gz_adaptive_range treats like a valid anchor
+    # (symmetric range), matching the pre-anchor-check behaviour.
+    set _anchor_status ""
+    if {$shift_on && [llength $energy] >= 2} {
+        set alo [lindex $energy 0]
+        set ahi [lindex $energy end]
+        # ANCHOR VALIDITY. The shift declares "G = 0 here", so an anchor bin is
+        # only meaningful if that bin is actually bulk solvent. occ is this bin's
+        # own rho/rho_bulk, so the test is direct: a real bulk anchor sits near
+        # 1.0. Anything far below it is not bulk and must not define the zero.
+        #
+        # CHAP does NOT make this check - it takes the outermost sampled bins
+        # unconditionally (chap_trajectory_analysis.cpp:1764-1769, the same
+        # -0.5*(lo+hi) used below). But its authors clearly meant to: every frame
+        # it computes solventDensityAnchorLo/Hi and poreRadiusAnchorLo/Hi
+        # (:1719-1724) - the density and radius at each anchor, exactly what a
+        # validity test needs - and then references them nowhere. This completes
+        # that intent rather than departing from CHAP.
+        #
+        # Why it matters here and not there: CHAP terminates its pathway at
+        # pf-max-free-dist (1.0 nm) and anchors at the pore OPENINGS, so its
+        # anchors are bulk by construction. HOLE's endrad is 15 A and, with the
+        # usual `protein` selection, the centerline can keep walking after the
+        # protein ends - measured on a real Nav run: protein ends at z=85.8 but
+        # the profile ran to z=96.7, and the two anchors came back at 0.031x and
+        # 0.791x bulk. Their mean still became "zero", putting the whole G(z)
+        # scale ~1.0 kcal/mol away from either end's own value. Both anchors were
+        # also the WORST-sampled bins in the profile (n_eff 6 of 50 frames, vs
+        # 41-43 in the interior).
+        #
+        # 0.5 = half of bulk. Deliberately generous: it must never fire on a
+        # healthy profile. CHAP's own example-02 anchors measure 0.96x and 0.89x
+        # and both pass untouched, so that validated comparison is unchanged.
+        set _anchor_min 0.5
+        set _anchor_olo [lindex $occ 0]
+        set _anchor_ohi [lindex $occ end]
+        set _lo_ok [expr {[string is double -strict $_anchor_olo] && $_anchor_olo >= $_anchor_min}]
+        set _hi_ok [expr {[string is double -strict $_anchor_ohi] && $_anchor_ohi >= $_anchor_min}]
+        # Structured verdict for CODE to branch on (stored as anchor_status).
+        # The prose note is for humans; display logic must never re-parse it -
+        # a reworded warning silently changing the gz colour range is exactly
+        # the coupling this key exists to prevent (see _gz_adaptive_range).
+        set _anchor_status [expr {$_lo_ok && $_hi_ok ? "both" :
+                                  ($_lo_ok ? "lo_only" : ($_hi_ok ? "hi_only" : "none"))}]
+        if {$_lo_ok && $_hi_ok} {
+            set shift [expr {-0.5 * ($alo + $ahi)}]
+        } elseif {$_lo_ok} {
+            set shift [expr {-1.0 * $alo}]
+            set _gzero_note [format "the far end of the profile is not bulk solvent (%.3f x bulk); G=0 anchored on the near end alone" $_anchor_ohi]
+        } elseif {$_hi_ok} {
+            set shift [expr {-1.0 * $ahi}]
+            set _gzero_note [format "the near end of the profile is not bulk solvent (%.3f x bulk); G=0 anchored on the far end alone" $_anchor_olo]
+        } else {
+            # Neither end reached bulk. Any zero would be invented, so don't
+            # invent one - leave the raw -kT*ln(rho) scale and say so, rather
+            # than shifting to a reference that does not exist.
+            set shift 0.0
+            set _gzero_note [format "NEITHER end of the profile is bulk solvent (%.3f x and %.3f x bulk) - G(z) is left on the raw -kT*ln(rho) scale, so only DIFFERENCES along it are meaningful, not absolute values" $_anchor_olo $_anchor_ohi]
+        }
+        if {$_gzero_note ne ""} {
+            vmdcon -warn "VMDHole hydration: $_gzero_note. Extend the water selection, or shorten the profile (ENDRAD) so it stops inside solvent."
+        }
         set _shifted {}
         foreach g $energy { lappend _shifted [expr {$g + $shift}] }
         set energy $_shifted
@@ -653,19 +853,24 @@ proc ::VMDHole::_accel_compute_hydration {} {
     }
     # axis_mode/axis record which channel axis these coords are registered to, so
     # gz_profile/dens_profile (which project a DISPLAY frame's own centerline onto
-    # this SAME coordinate system to overlay colours) stay consistent with how the
+    # this SAME coordinate system to overlay colors) stay consistent with how the
     # bins were built rather than silently re-fitting their own per-frame PCA axis.
     #   cpoint = static manifest CPOINT+CVECT; cvect = manifest DIRECTION + per-frame origin
     #   (NOTE: for "cvect" the stored `axis` carries the manifest ORIGIN, which binning did
     #    NOT use - _hydration_display_axis deliberately reads only the DIRECTION from it and
     #    recomputes the per-frame centroid origin. Do not "fix" it to use the stored origin,
     #    that would break registration); pca = per-frame PCA.
-    set _axis_mode [dict get {manifest_full cpoint manifest_dir cvect pca pca} $axis_use]
+    set _axis_mode [dict get {frame frame manifest_full cpoint manifest_dir cvect pca pca} $axis_use]
     set hydration_data [dict create coords $coords occupancy $occ energy $energy \
         occ_std $occ_std energy_std $energy_std \
+        energy_sem $energy_sem n_eff $n_eff floored_frac $floored_frac \
         density $dens countspf $countspf radii $meanrs nframes $nfdata nframes_water $nfwater \
         total_waters $total_w wsel $wsel bulk $bulk dz $dz kT $kT \
+        kde [expr {$use_kde ? 1 : 0}] kde_bw [expr {$use_kde ? $bw : ""}] \
+        floor_rule [expr {$pf_on ? "rule_of_three_per_frame" : "epsilon"}] \
         min_g $_gmin max_g $_gmax energy_shift $shift \
+        anchor_occ_lo $_anchor_olo anchor_occ_hi $_anchor_ohi anchor_note $_gzero_note \
+        anchor_status $_anchor_status \
         axis_mode $_axis_mode axis $fixed_axis \
         perframe_occ $perframe_occ perframe_frames $perframe_frames]
     # Persist the computed profile next to the results so it can be reloaded on a later
@@ -698,9 +903,9 @@ proc ::VMDHole::_accel_compute_hydration {} {
             }}
         }
     }
-    # Also invalidate the MEAN PROFILE's gz/dens-coloured surface files: their filename tag
+    # Also invalidate the MEAN PROFILE's gz/dens-colored surface files: their filename tag
     # keys on plot_data_version (bumped only by a new HOLE RUN), NOT on hydration, so a
-    # hydration RECOMPUTE with no re-run would otherwise serve the OLD hydration colouring
+    # hydration RECOMPUTE with no re-run would otherwise serve the OLD hydration coloring
     # from disk, so the mean profile can't show old hydration. Delete both the
     # smoothed display files (_prop_gz/dens) and the smooth-independent cache (_propus_gz/
     # dens); the mean surface then rebuilds fresh below. mean_dir is the same for every frame
@@ -728,7 +933,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     if {[info exists state(hydro_scheme)] && $state(hydro_scheme) in {gz dens pfdens}} {
         catch {on_hydro_method_changed}
     }
-    # Mean Profile coloured by a water scheme must ALSO refresh so it reflects the new
+    # Mean Profile colored by a water scheme must ALSO refresh so it reflects the new
     # hydration (its stale files were just deleted, so this rebuilds fresh) - #12.
     # refresh_mean_surface_if_shown is a no-op unless the 3D surface is currently shown.
     if {[info exists state(mean_hydro_scheme)] && $state(mean_hydro_scheme) in {gz dens}} {
@@ -738,7 +943,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # Water schemes (G(z)/density) are now available - add them to the
     # property pickers, which otherwise hide them until hydration exists.
     catch {refresh_property_scheme_menus}
-    set state(status) "Hydration: $total_w water-in-pore counts over $nfdata frame(s); selection \"$wsel\".$_anchor_note"
+    set state(status) "Hydration: $total_w water-in-pore counts over $nfdata frame(s); selection \"$wsel\".$_anchor_note[expr {$_gzero_note ne "" ? " G=0 reference: $_gzero_note." : ""}]"
     vmdcon -info "VMDHole: hydration complete — $total_w water-in-pore counts over $nfdata frame(s) ($nfwater with water)."
     return 1
 }
