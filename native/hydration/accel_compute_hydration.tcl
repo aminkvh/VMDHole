@@ -235,7 +235,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # per-frame AMISE bandwidth solve, deferred to Phase B below so it can run
     # in parallel across frames - they are fully independent of each other.
     if {$bw_auto} {
-        error "hydro_project accelerated path requires a FIXED water_kde_bw (not auto/AMISE) - see NOTES-hydration-accel.md"
+        error "hydro_project accelerated path requires a FIXED water_kde_bw - set state(water_kde_bw) to a number rather than auto/AMISE"
     }
     set _hp_batch_dir $::HP_ACCEL_BATCH_DIR
     file mkdir $_hp_batch_dir
@@ -418,7 +418,14 @@ proc ::VMDHole::_accel_compute_hydration {} {
     foreach _l $_hp_batch_lines { puts $_hp_bf $_l }
     close $_hp_bf
     if {[llength $_hp_frame_order] > 0} {
-        set _hp_cmd "[shell_quote $::HP_ACCEL_BIN] --bin --bin-global [shell_quote $_hp_global_file] --batch [shell_quote $_hp_batch_file]"
+        # Support of the KDE sum: every bin the pore's own radius data covers,
+        # exactly as the pure-Tcl Phase C computes it. It is global and only
+        # becomes known once every frame has been scanned, which is why it goes
+        # on the command line rather than in each frame's per-frame BIN line.
+        set _hp_kb [lsort -integer [dict keys $binrn]]
+        set _hp_klo [expr {[llength $_hp_kb] ? [lindex $_hp_kb 0] : 0}]
+        set _hp_khi [expr {[llength $_hp_kb] ? [lindex $_hp_kb end] : -1}]
+        set _hp_cmd "[shell_quote $::HP_ACCEL_BIN] --bin --bin-global [shell_quote $_hp_global_file] --kde-range=$_hp_klo,$_hp_khi --batch [shell_quote $_hp_batch_file]"
         if {[catch {exec sh -c $_hp_cmd} _hp_err]} {
             error "hydro_project batch failed: $_hp_err"
         }

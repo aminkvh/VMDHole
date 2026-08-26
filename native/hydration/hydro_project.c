@@ -13,8 +13,8 @@
  * both frame count and water count; the AMISE bandwidth solve
  * (_amise_optimal_bandwidth/_amise_bandwidths_parallel) is NOT invoked at
  * all under the default fixed bandwidth and was NOT the bottleneck measured
- * here -- see native/NOTES-hydration-accel.md for the full phase
- * breakdown and the commands that produced it.
+ * here. (The phase breakdown that established this lives in the author's
+ * working notes, which are not part of the repository.)
  *
  * BIT-IDENTICALITY: every arithmetic expression below is transcribed
  * expression-for-expression from the Tcl source (envelope_radius and the
@@ -48,9 +48,10 @@
  * per-frame parser. --bin additionally requires --bin-global PATH (batch
  * mode only) to receive the ONE cross-frame global bin table, written once
  * after every frame in the batch has been processed, in the SAME frame
- * order the batch file lists them. See NOTES-hydration-accel.md for the
- * exact per-frame text format and why single-job mode does not support
- * --bin (there is nothing to distinguish "global" from "local" with one
+ * order the batch file lists them. parse_and_project() below is the
+ * authoritative definition of the per-frame text format. Single-job mode
+ * takes --bin but not --bin-global (there is nothing to distinguish
+ * "global" from "local" with one
  * frame; use plain project-only mode, or --batch with a single-line batch
  * file, if a global total is still wanted for exactly one frame).
  */
@@ -284,8 +285,7 @@ static void parse_and_project(FrameJob *job) {
     }
 
     /* residue COG reduction (always performed - matches Tcl's near-universal
-       branch; see NOTES-hydration-accel.md for the one unreachable-in-
-       practice Tcl branch this does not replicate). */
+       branch; one Tcl branch, unreachable in practice, is not replicated). */
     DArr rx = {0}, ry = {0}, rz = {0};
     int n_res = cog_reduce(w_resid.d, w_x.d, w_y.d, w_z.d, n_w, &rx, &ry, &rz);
 
@@ -309,6 +309,15 @@ static void parse_and_project(FrameJob *job) {
     free(rx.d); free(ry.d); free(rz.d);
 }
 
+/* --kde-range=LO,HI. The Tcl sweeps EVERY bin the pore's radius data covers,
+   not a window around each water, so the support is a property of the whole
+   run and cannot be derived here: it comes from binrn, which is complete only
+   after every frame has been scanned. It is therefore passed in, once, rather
+   than recomputed per frame. Required whenever a KDE job is binned - there is
+   no default, because the old default was the bug. */
+static long g_kde_lo = 0, g_kde_hi = -1;
+static int  g_have_kde_range = 0;
+
 static void frame_bin_range(const FrameJob *job, long *lo, long *hi) {
     int i;
     int have = 0;
@@ -316,8 +325,8 @@ static void frame_bin_range(const FrameJob *job, long *lo, long *hi) {
         double co = job->qco.d[i];
         long bi_lo, bi_hi;
         if (job->use_kde) {
-            bi_lo = (long)floor((co - 3.0*job->bw) / job->dz);
-            bi_hi = (long)floor((co + 3.0*job->bw) / job->dz);
+            bi_lo = g_kde_lo;
+            bi_hi = g_kde_hi;
         } else {
             bi_lo = bi_hi = (long)floor(co / job->dz);
         }
@@ -354,6 +363,10 @@ int main(int argc, char **argv) {
             return 0;
         } else if (strcmp(argv[ai], "--bin") == 0) {
             g_bin_mode = 1;
+        } else if (strncmp(argv[ai], "--kde-range=", 12) == 0) {
+            if (sscanf(argv[ai] + 12, "%ld,%ld", &g_kde_lo, &g_kde_hi) != 2)
+                fail("malformed --kde-range (want LO,HI)");
+            g_have_kde_range = 1;
         } else if (strcmp(argv[ai], "--bin-global") == 0) {
             if (ai + 1 >= argc) { fprintf(stderr, "hydro_project: --bin-global requires a FILE argument\n"); return 1; }
             g_bin_global_path = argv[++ai];
@@ -374,6 +387,8 @@ int main(int argc, char **argv) {
         memset(&job, 0, sizeof(job));
         parse_and_project(&job);
         if (g_bin_mode && !job.have_bin_params) fail("--bin given but job has no BIN line");
+        if (g_bin_mode && job.use_kde && !g_have_kde_range)
+            fail("--bin with a KDE job requires --kde-range=LO,HI");
         double *local_bins = NULL;
         long lo = 0, hi = -1;
         if (g_bin_mode) {
@@ -385,8 +400,8 @@ int main(int argc, char **argv) {
                 double co = job.qco.d[i];
                 if (job.use_kde) {
                     double norm = job.dz / (job.bw * 2.5066282746310002);
-                    long blo = (long)floor((co - 3.0*job.bw) / job.dz);
-                    long bhi = (long)floor((co + 3.0*job.bw) / job.dz);
+                    long blo = g_kde_lo;
+                    long bhi = g_kde_hi;
                     long bi;
                     for (bi = blo; bi <= bhi; bi++) {
                         double dzz = ((double)bi + 0.5) * job.dz - co;
@@ -441,6 +456,8 @@ int main(int argc, char **argv) {
         job->out_path = xa_strdup(out_path);
         parse_and_project(job);
         if (g_bin_mode && !job->have_bin_params) fail("--bin given but a job has no BIN line");
+        if (g_bin_mode && job->use_kde && !g_have_kde_range)
+            fail("--bin with a KDE job requires --kde-range=LO,HI");
     }
     fclose(bf);
 
@@ -482,8 +499,8 @@ int main(int argc, char **argv) {
                 double co = job->qco.d[i];
                 if (job->use_kde) {
                     double norm = job->dz / (job->bw * 2.5066282746310002);
-                    long blo = (long)floor((co - 3.0*job->bw) / job->dz);
-                    long bhi = (long)floor((co + 3.0*job->bw) / job->dz);
+                    long blo = g_kde_lo;
+                    long bhi = g_kde_hi;
                     long bi;
                     for (bi = blo; bi <= bhi; bi++) {
                         double dzz = ((double)bi + 0.5) * job->dz - co;
