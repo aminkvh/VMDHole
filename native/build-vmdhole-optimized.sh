@@ -27,6 +27,14 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$1"
 OUT="${2:-$HERE/build}"
+# Resolve OUT to an absolute path before anything cd's. The mole_tunnel_engine
+# step below compiles from inside $HERE, so a RELATIVE second argument - which
+# is how every doc and script invokes this, e.g. `native/build` from the repo
+# root - resolved to $HERE/native/build there and the link failed with
+# "cannot open output file". That step only warns, so the script still exited 0
+# and left whatever binary was already in $OUT: a stale engine, silently.
+mkdir -p "$OUT" || { echo "cannot create output directory $OUT" >&2; exit 1; }
+OUT="$(cd "$OUT" && pwd)" || exit 1
 CC="${CC:-cc}"
 OPT="${OPT:--O2}"
 HOLE_FFLAGS="$OPT -fd-lines-as-comments -fbackslash -std=legacy"
@@ -205,6 +213,10 @@ fi
 # sos_triangle_fast and --tunnel-voronoi need the default 1e3 and have
 # byte-identity tests pinned to it. One binary cannot hold both.
 echo ">> Building mole_tunnel_engine ($OPT) ..."
+# Remove the target first: otherwise a failed compile leaves the PREVIOUS
+# binary in place and the warning below reads as "not built" when what actually
+# happened is "silently kept the old one".
+rm -f "$OUT/mole_tunnel_engine"
 MOLE_SRC="mole/mole_main.c mole/mole_tunnel.c mole/mole_lining.c mole/mole_complex.c mole/mole_dh.c mole/mole_rng.c voronoi/vor_delaunay.c voronoi/vor_predicates.c"
 if ( cd "$HERE" && $CC $OPT -DVP_SCALE=100000.0 -DVP_MAX_COORD=20000000L \
        -o "$OUT/mole_tunnel_engine" $MOLE_SRC -lm ); then
