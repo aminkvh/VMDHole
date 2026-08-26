@@ -379,11 +379,20 @@ return value is now captured and each record type requires the fields it
 actually consumes: a colour record (type 1) needs 2, a point (type 4) needs 4
 (type + x,y,z).
 
-Note the threshold is 4, not 7. Fields 5-7 of a point record are stored into
-`dots[][4..6]` and then **unconditionally overwritten** with normals recomputed
-from the finished triangulation, so they are vestigial; requiring all seven
-would discard records whose geometry is perfectly usable. A well-formed `.sos`
-always supplies seven fields, so valid input is unaffected either way.
+Note the threshold is 4, not 7: requiring all seven would discard records whose
+geometry is perfectly usable.
+
+> **Correction.** An earlier version of this note said fields 5-7 are
+> "unconditionally overwritten with normals recomputed from the finished
+> triangulation, so they are vestigial". They are not. The recomputation is
+> unreachable - `vertex_normals()` returns before the loop that assigns
+> `dots[][4]` (that dead code is verbatim upstream) - so the normal read from
+> the file flows through to the output, and `reorder_triangle()` sums the three
+> vertex normals and swaps two corners when the dot product is negative. A short
+> point record inheriting the previous record's normal could therefore change
+> emitted vertex order. `read_cord` now zeroes fields 5-7 before each scan, so a
+> short record reads as "no normal" rather than "the last one's". A well-formed
+> `.sos` always supplies seven fields, so valid input is unaffected.
 
 ## Additive feature: ellipse-probe asymmetry performance (`--asym-ellipse`)
 
