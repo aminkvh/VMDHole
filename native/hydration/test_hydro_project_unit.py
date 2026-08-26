@@ -10,14 +10,14 @@ Covers:
   - --batch --bin --bin-global: the GLOBAL cross-frame accumulator, and
     (critically) a check that a naive per-frame-subtotal-then-merge would
     have given a DIFFERENT answer on the same data -- i.e. this test would
-    have caught the bug described in NOTES-hydration-accel.md if it were
+    have caught a per-frame-subtotal-then-merge regression if it were
     reintroduced.
 
 Does NOT cover: bit-identity against Tcl's own arithmetic (that needs a real
 VMD session -- see test_hydro_accel_parity.tcl for the end-to-end proof
-against real trajectories) or the libm/exp() cross-runtime caveat documented
-in NOTES-hydration-accel.md (this test's reference IS Python's math.exp(),
-run on the same host/libm as hydro_project, so it cannot see that caveat).
+against real trajectories) or the libm/exp() cross-runtime caveat (this
+test's reference IS Python's math.exp(), run on the same host/libm as
+hydro_project, so it cannot see that caveat).
 """
 import glob
 import math
@@ -118,12 +118,40 @@ def qco_of(fr):
     return qco
 
 
-def bin_of(qco, dz, bw, use_kde):
+def kde_support(frames, dz):
+    """The support of the KDE sum, the way the Tcl derives it: the bins the
+    pore's own radius data covers, taken over every frame. Deliberately NOT a
+    function of the bandwidth - a window around each water is the bug this
+    reference exists to detect, so mirroring it here would make the comparison
+    vacuous."""
+    los = [math.floor(fr['cmin'] / dz) for fr in frames]
+    his = [math.floor(fr['cmax'] / dz) for fr in frames]
+    return int(min(los)), int(max(his))
+
+
+def bin_of_truncated(qco, dz, bw):
+    """The +/-3 sigma window the engine used to apply. Kept solely so the test
+    can assert the engine no longer agrees with it."""
+    bins = {}
+    for co in qco:
+        norm = dz / (bw * 2.5066282746310002)
+        lo = math.floor((co - 3.0 * bw) / dz); hi = math.floor((co + 3.0 * bw) / dz)
+        for bi in range(int(lo), int(hi) + 1):
+            dzz = (bi + 0.5) * dz - co
+            bins[bi] = bins.get(bi, 0.0) + norm * math.exp(-dzz * dzz / (2.0 * bw * bw))
+    return bins
+
+
+def bin_of(qco, dz, bw, use_kde, kde_lo=None, kde_hi=None):
     bins = {}
     for co in qco:
         if use_kde:
             norm = dz / (bw * 2.5066282746310002)
-            lo = math.floor((co - 3.0 * bw) / dz); hi = math.floor((co + 3.0 * bw) / dz)
+            # EVERY bin in the support, not a +/-3 sigma window: a Gaussian has
+            # infinite support, so truncating manufactures exact zeros at
+            # precisely the dry gates this tool exists to find, and drops 0.27%
+            # of each water's mass because norm is the FULL normalisation.
+            lo, hi = kde_lo, kde_hi
             for bi in range(int(lo), int(hi) + 1):
                 dzz = (bi + 0.5) * dz - co
                 w = norm * math.exp(-dzz * dzz / (2.0 * bw * bw))
@@ -174,13 +202,33 @@ def main():
         fr = make_frame(hash(tag) & 0xffff, n_res=150, box=8.0, dcap=dcap)
         inp = os.path.join(tmpdir, f"single_{tag}.in")
         write_job(inp, fr, use_kde=use_kde)
-        out = subprocess.check_output([BIN, "--bin"], stdin=open(inp), text=True)
+        klo, khi = kde_support([fr], 1.0)
+        argv = [BIN, "--bin"] + ([f"--kde-range={klo},{khi}"] if use_kde else [])
+        out = subprocess.check_output(argv, stdin=open(inp), text=True)
         qco_c, bins_c = parse_qco_bins(out)
         qco_py = qco_of(fr)
-        bins_py = bin_of(qco_py, 1.0, 1.4, use_kde)
+        bins_py = bin_of(qco_py, 1.0, 1.4, use_kde, klo, khi)
         expected = "QCO %d\n" % len(qco_py) + " ".join("%.17g" % c for c in qco_py) + "\n" + fmt_bins(bins_py)
         ok &= check(f"single-job {tag}: QCO+BINS byte-identical to independent Python reference",
                     out == expected)
+        if use_kde:
+            # Not a vacuous pass: the reference above must be distinguishable
+            # from the +/-3 sigma window the engine used to use. If these ever
+            # agree, the fixture stopped exercising the truncation and the
+            # check above proves nothing.
+            # The point is not that MORE bins are swept - the pore's support can
+            # be narrower than +/-3 sigma at the edges. It is that every bin
+            # inside the support gets a contribution from every water, so the
+            # truncation can no longer manufacture an exact zero at a dry gate.
+            trunc = bin_of_truncated(qco_py, 1.0, 1.4)
+            zeros_full = [b for b, v in bins_py.items() if v == 0.0]
+            zeros_trunc = [b for b in range(klo, khi + 1) if trunc.get(b, 0.0) == 0.0]
+            ok &= check(f"single-job {tag}: engine no longer agrees with the +/-3 sigma window "
+                        f"({len(bins_py)} bins swept vs {len(trunc)})",
+                        bins_py != trunc)
+            ok &= check(f"single-job {tag}: no exact zeros inside the support "
+                        f"(truncation would have manufactured {len(zeros_trunc)})",
+                        len(zeros_full) == 0)
 
     # --- batch mode: global accumulator, and proof it's NOT a subtotal-merge ---
     N_FRAMES = 14
@@ -198,7 +246,9 @@ def main():
     with open(batch_file, "w") as f:
         f.write("\n".join(batch_lines) + "\n")
     global_file = os.path.join(batch_dir, "global.out")
-    subprocess.check_call([BIN, "--bin", "--bin-global", global_file, "--batch", batch_file])
+    gklo, gkhi = kde_support(frames, 1.0)
+    subprocess.check_call([BIN, "--bin", "--bin-global", global_file,
+                           f"--kde-range={gklo},{gkhi}", "--batch", batch_file])
 
     # TRUE running-global reference: one continuous accumulation across all
     # frames, in frame order, item by item (mirrors Tcl's original nested loop).
@@ -206,13 +256,12 @@ def main():
     subtotal_merge = {}
     for fr in frames:
         qco = qco_of(fr)
-        frame_bins = bin_of(qco, 1.0, 1.4, 1)
+        frame_bins = bin_of(qco, 1.0, 1.4, 1, gklo, gkhi)
         for bi, v in frame_bins.items():
             subtotal_merge[bi] = subtotal_merge.get(bi, 0.0) + v  # WRONG approach
         for co in qco:
             norm = 1.0 / (1.4 * 2.5066282746310002)
-            lo = math.floor((co - 3.0 * 1.4) / 1.0); hi = math.floor((co + 3.0 * 1.4) / 1.0)
-            for bi in range(int(lo), int(hi) + 1):
+            for bi in range(gklo, gkhi + 1):
                 dzz = (bi + 0.5) * 1.0 - co
                 w = norm * math.exp(-dzz * dzz / (2.0 * 1.4 * 1.4))
                 true_global[bi] = true_global.get(bi, 0.0) + w  # CORRECT approach
@@ -230,7 +279,7 @@ def main():
 
     ndiff_vs_subtotal = sum(1 for k in true_global if true_global[k] != subtotal_merge.get(k, 0.0))
     ok &= check(f"regression guard: subtotal-merge WOULD have differed on {ndiff_vs_subtotal} bin(s) "
-                f"(this proves the test discriminates the bug fixed in NOTES-hydration-accel.md, "
+                f"(this proves the test discriminates a subtotal-merge regression, "
                 f"not a vacuous pass)", ndiff_vs_subtotal > 0)
 
     for f_out in glob.glob(os.path.join(batch_dir, "f*.out")):
