@@ -32,18 +32,34 @@ echo "accel-parity: EXE=$EXE"
 
 # --- 1. Makefile invariants (catches the R-15 class at patch time) -------------
 if [ -f "$SRC/Makefile" ]; then
-  miss=""
-  for o in coarea_fast.o hcapen_fast.o holcal_par.o holeen_par.o sphqpu_par.o; do
-    grep -q "^$o" "$SRC/Makefile" || miss="$miss $o"
-  done
-  [ -z "$miss" ] && ok "all object swaps present in Makefile FILES" \
-                 || bad "Makefile FILES missing object swap(s):$miss"
-  miss=""
-  for f in holcal_par holeen_par concal coarea_fast sphqpu_par; do
-    grep -q "^$f\.o:" "$SRC/Makefile" || miss="$miss $f"
-  done
-  [ -z "$miss" ] && ok "all per-file -fopenmp rules present" \
-                 || bad "Makefile missing per-file -fopenmp rule(s):$miss"
+  # The expected lists are READ FROM apply_patches.py rather than duplicated
+  # here. They were duplicated, and drifted the moment concal_par.f was added:
+  # this check went red naming "concal", which is deliberately no longer in
+  # OMP_FILES. What it verifies is that the Makefile reflects what the patch
+  # script intends, so the script is the right source for both sides.
+  APPLY="$(dirname "$0")/../../native/connolly_patches/apply_patches.py"
+  if [ ! -f "$APPLY" ]; then
+    skp "no apply_patches.py (Makefile invariants)"
+  else
+    _swaps=$(python3 -c 'import ast,re,sys; src=open(sys.argv[1]).read(); m=re.search(r"^OBJ_SWAPS\s*=\s*(\[.*?\])", src, re.S|re.M); v=ast.literal_eval(m.group(1)) if m else []; print(" ".join(x[1] if isinstance(x,tuple) else x for x in v))' "$APPLY")
+    _omp=$(python3 -c 'import ast,re,sys; src=open(sys.argv[1]).read(); m=re.search(r"^OMP_FILES\s*=\s*(\[.*?\])", src, re.S|re.M); v=ast.literal_eval(m.group(1)) if m else []; print(" ".join(x[1] if isinstance(x,tuple) else x for x in v))' "$APPLY")
+    if [ -z "$_swaps" ] || [ -z "$_omp" ]; then
+      bad "could not read OBJ_SWAPS/OMP_FILES out of apply_patches.py"
+    else
+      miss=""
+      for o in $_swaps; do
+        grep -q "^$o" "$SRC/Makefile" || miss="$miss $o"
+      done
+      [ -z "$miss" ] && ok "all object swaps present in Makefile FILES ($(echo $_swaps | wc -w) checked)" \
+                     || bad "Makefile FILES missing object swap(s):$miss"
+      miss=""
+      for f in $_omp; do
+        grep -q "^$f\.o:" "$SRC/Makefile" || miss="$miss $f"
+      done
+      [ -z "$miss" ] && ok "all per-file -fopenmp rules present ($(echo $_omp | wc -w) checked)" \
+                     || bad "Makefile missing per-file -fopenmp rule(s):$miss"
+    fi
+  fi
 else
   skp "no patched src tree at $SRC (Makefile invariants)"
 fi
