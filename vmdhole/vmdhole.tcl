@@ -938,7 +938,24 @@ proc ::VMDHole::find_hole_exe {} {
 proc ::VMDHole::init_executables {} {
     variable state
     variable _swept
+    # Engine paths a caller set BEFORE calling us must survive load_config.
+    # docs/scripting.md tells batch authors to do exactly that, but load_config
+    # assigns every persisted key unconditionally, and hole_exec is persisted -
+    # so a config file holding an empty or stale hole_exec silently discarded
+    # the path the script had just set. The run then fell back to the embedded
+    # Tcl engine, roughly 100x slower, with the caller believing it had pointed
+    # at a real binary. A config file exists for anyone who has opened the GUI
+    # once, which is why the documented headless recipe did not work.
+    # Non-empty here means the caller assigned it: every one of these defaults
+    # to the empty string.
+    set _preset [dict create]
+    foreach _k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file} {
+        if {[info exists state($_k)] && $state($_k) ne ""} {
+            dict set _preset $_k $state($_k)
+        }
+    }
     load_config
+    dict for {_k _v} $_preset { set state($_k) $_v }
     # Scratch reclaim has to happen here, not only in show_gui: a batch job
     # never opens the GUI - docs/scripting.md tells batch authors not to call
     # it - so a run killed by the scheduler left its /tmp and /dev/shm scratch
