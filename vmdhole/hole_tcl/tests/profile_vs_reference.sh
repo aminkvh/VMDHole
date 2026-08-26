@@ -11,7 +11,11 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$DIR/../../.." && pwd)
 PDB=${1:?usage: profile_vs_reference.sh PDB ?extra args?}
 shift
-[ -x "$HOME/hole2/exe/hole" ] || { echo "SKIP: no reference binary"; exit 0; }
+# Honour VMDHOLE_HOLE_EXE_DIR like the rest of the suite; $HOME/hole2/exe stays
+# the install default. Hardcoding $HOME skipped this comparison on any tree whose
+# HOLE lives elsewhere.
+REFHOLE=${VMDHOLE_HOLE_EXE_DIR:-$HOME/hole2/exe}/hole
+[ -x "$REFHOLE" ] || { echo "SKIP: no reference binary at $REFHOLE"; exit 0; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 cp "$PDB" "$TMP/in.pdb"
@@ -21,7 +25,7 @@ cp "$RADSRC" "$TMP/s.rad"
 # Short filenames on purpose: HOLE's card fields are fixed width and silently
 # truncate a long path, which reads as "cannot open radius file".
 printf 'coord in.pdb\nradius s.rad\ncvect 0 0 1\nsample 0.5\nendrad 8.0\n' > "$TMP/ctrl.inp"
-( cd "$TMP" && "$HOME/hole2/exe/hole" < ctrl.inp > out.txt 2>&1 )
+( cd "$TMP" && "$REFHOLE" < ctrl.inp > out.txt 2>&1 )
 
 # The reference profile is the table after the cenxyz.cvec header; take the
 # first two numeric columns (axial coordinate, radius).

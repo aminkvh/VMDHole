@@ -32,6 +32,17 @@ set RAD  [file join $root native stock_build hole2 rad simple.rad]
 
 cd [file join $here ..]
 source vmdhole.tcl
+# Point the plugin at the engines the suite built before letting it discover.
+# find_hole_exe only searches four fixed install paths, so on a tree that builds
+# into native/build this group skipped for "no sos_triangle with --asym-ellipse"
+# while a perfectly capable one sat in $VMDHOLE_HOLE_EXE_DIR.
+if {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne ""} {
+    foreach {_k _n} {hole_exec hole sph_process_exec sph_process
+                     sos_triangle_exec sos_triangle mole_engine_exec mole_tunnel_engine} {
+        set _p [file join $::env(VMDHOLE_HOLE_EXE_DIR) $_n]
+        if {[file executable $_p]} { set ::VMDHole::state($_k) $_p }
+    }
+}
 ::VMDHole::init_executables
 
 if {![file readable $PDB] || ![file readable $RAD]} { puts "  SKIP  no 1GRM fixture"; done }
