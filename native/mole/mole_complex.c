@@ -70,6 +70,35 @@ double mole_vdw_radius(const char *elem)
     return 1.75;   /* ElementInfo.Default.VdwRadius */
 }
 
+/* Is this coordinate field actually a finite number?
+
+   Validation only - the VALUE still comes from MOLE's own parser below, so
+   nothing about a well-formed file changes. Two ways a bad field got through
+   silently before:
+
+     * mole_parse_double is a faithful reproduction of ParseDoubleFast, which
+       has no NaN/Inf handling: it stops at the first character it does not
+       recognise, so "nan" parses as 0.0 and the atom lands at the origin.
+       Correcting the parser would break the fidelity it exists for.
+     * the MOLE_ATOMS_EXACT path uses strtod, which DOES accept "nan" and
+       "inf" - the non-finite value then propagates into the Delaunay
+       predicates.
+
+   Either way the run continues and reports a plausible tunnel set built from a
+   coordinate nobody supplied, which is the outcome mole_read_atoms already
+   refuses for a truncated structure. */
+static int mole_coord_ok(const char *s)
+{
+    char *end = NULL;
+    double v;
+    if (!s || !*s) return 0;
+    v = strtod(s, &end);
+    if (end == s) return 0;                    /* no numeric prefix at all */
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
+    if (*end) return 0;                        /* trailing junk */
+    return isfinite(v);                        /* nan / inf spellings strtod takes */
+}
+
 /* MOLE's own decimal parser (NumberParser.ParseDoubleFast), reproduced.
  *
  * It accumulates the integer part, then the fractional digits as an integer over
@@ -266,6 +295,12 @@ int mole_read_atoms(const char *path, mole_atoms *A, int cap)
            already holds their parsed doubles and must be read back with a
            correctly-rounded strtod. Applying their parser again would round a
            second time. Normal .cif-derived tables go through their parser. */
+        if (!mole_coord_ok(sx) || !mole_coord_ok(sy) || !mole_coord_ok(sz)) {
+            fprintf(stderr, "mole_read_atoms: %s atom %d has a coordinate that "
+                    "is not a finite number (\"%s\" \"%s\" \"%s\") - refusing "
+                    "rather than analysing it as 0.\n", path, n + 1, sx, sy, sz);
+            fclose(f); return -1;
+        }
         if (exact) {
             A->xyz[3*n+0] = strtod(sx, NULL);
             A->xyz[3*n+1] = strtod(sy, NULL);
