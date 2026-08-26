@@ -51,7 +51,17 @@ static void cover(const mole_complex *M, int *comp, int n, double radius,
         double dx = M->center[3*comp[i]]   - M->center[3*best];
         double dy = M->center[3*comp[i]+1] - M->center[3*best+1];
         double dz = M->center[3*comp[i]+2] - M->center[3*best+2];
-        if (sqrt(dx*dx + dy*dy + dz*dz) > radius) rest[m++] = comp[i];
+        /* `comp[i] != best` is what makes this terminate. The pivot's own
+           distance to itself is 0, so for any radius >= 0 the `> radius` test
+           already excludes it and this conjunct changes nothing - the kept set
+           is bit-identical. For a NEGATIVE radius, though, 0 > radius is TRUE:
+           the pivot survives into `rest`, `rest` becomes a verbatim copy of
+           `comp`, and cover() recurses forever, pushing one pivot per level
+           past the end of the caller's nb-entry buffer (ASan: heap-buffer-
+           overflow WRITE, seven cover() frames). Excluding the pivot bounds the
+           recursion by construction whatever the radius. */
+        if (comp[i] != best && sqrt(dx*dx + dy*dy + dz*dz) > radius)
+            rest[m++] = comp[i];
     }
     if (m > 0) cover(M, rest, m, radius, pivots, npiv);
     free(rest);

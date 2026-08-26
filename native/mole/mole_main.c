@@ -115,9 +115,8 @@ static void write_cavity(FILE *out, int id, const mole_complex *M, int comp,
     int packed, nb, ni, j;
     mole_props P;
     if (!bnd || !inn) { free(bnd); free(inn); return; }
-    packed = mole_cavity_residues(M, comp, pres, &MR, bnd, inn);
+    packed = mole_cavity_residues(M, comp, pres, &MR, bnd, inn, &nb, &ni);
     if (packed < 0) { free(bnd); free(inn); return; }
-    nb = packed >> 16; ni = packed & 0xffff;
     /* Type: MOLE calls a cavity with no boundary residues a Void. */
     fprintf(out, "V %d %s %.3f %d %.17g %d %d\n", id, nb ? "Cavity" : "Void",
             cv->volume, cv->depth, cv->depth_length, nb, ni);
@@ -269,12 +268,30 @@ int main(int argc, char **argv)
         return 2;
     }
     atoms_file = argv[1]; out_file = argv[2];
-    P.probe_radius = (argc > 3) ? atof(argv[3]) : 3.0;
-    P.interior_threshold = (argc > 4) ? atof(argv[4]) : 1.25;
-    P.min_depth = (argc > 5) ? atoi(argv[5]) : 8;
-    P.min_depth_length = (argc > 6) ? atof(argv[6]) : 5.0;
-    P.min_tunnel_length = (argc > 7) ? atof(argv[7]) : 0.0;
-    P.weight = (argc > 8) ? (mole_weight_fn)atoi(argv[8]) : MOLE_W_VORONOI_SCALE;
+    /* Each positional is taken only if it is really a positional. Without the
+       `--` test, `engine atoms out --cover=6` read "--cover=6" as the probe
+       radius: atof gives 0.0, the run reports "0 channels, 0 voids" and exits
+       0 with no diagnostic. argv[9..11] were already guarded this way below;
+       argv[3..8] were not. */
+#define POSN(i) ((argc > (i)) && strncmp(argv[i], "--", 2))
+    P.probe_radius       = POSN(3) ? atof(argv[3]) : 3.0;
+    P.interior_threshold = POSN(4) ? atof(argv[4]) : 1.25;
+    P.min_depth          = POSN(5) ? atoi(argv[5]) : 8;
+    P.min_depth_length   = POSN(6) ? atof(argv[6]) : 5.0;
+    P.min_tunnel_length  = POSN(7) ? atof(argv[7]) : 0.0;
+    P.weight             = POSN(8) ? (mole_weight_fn)atoi(argv[8]) : MOLE_W_VORONOI_SCALE;
+    /* L9: an out-of-range weight silently ran MOLE's default, because
+       mole_edge_cost's `default:` arm returns the same thing weight 0 selects -
+       a faithful rendering of a C# switch over an enum that could not be out of
+       range, but here the value comes from argv. Say so rather than pretend the
+       user got what they asked for; the flag parser below already rejects an
+       unknown option with exit 2. */
+    if (P.weight < MOLE_W_VORONOI_SCALE || P.weight > MOLE_W_CONSTANT) {
+        fprintf(stderr, "--tunnel-mole: weight %d is out of range "
+                "(0=VoronoiScale 1=LengthAndRadius 2=Length 3=Constant)\n",
+                (int)P.weight);
+        return 2;
+    }
     /* The origin is positional but the flags below are not, so a run with
        flags and no start point must not have three of them read as x y z. */
     if (argc > 11 && strncmp(argv[9], "--", 2) && strncmp(argv[10], "--", 2)
@@ -327,7 +344,7 @@ int main(int argc, char **argv)
        the extra widths are left equal to the plain radius rather than reported
        as zero, and the header says which happened. */
     mole_pivot_extras(&MA, mbfac, mfree, mbb);
-    mole_pivot_residues(&MA, mres, &MR);
+    if (mole_pivot_residues(&MA, mres, &MR) < 0) return 1;
     mole_profile_extras(MA.n ? mbfac : NULL, MA.has_names ? mfree : NULL);
     /* MOLE's DH triangulation by default: same cells as vor_delaunay, plus
        MOLE's per-cell vertex order, which decides lining layer boundaries.
@@ -540,8 +557,9 @@ int main(int argc, char **argv)
             int packed;
             free(bres); bres = xa_calloc((size_t)(MR.n ? MR.n : 1), 1);
             if (b && n2 && bres) {
-                packed = mole_cavity_residues(&M, c, mres, &MR, b, n2);
-                if (packed >= 0) for (i = 0; i < (packed >> 16); i++) bres[b[i]] = 1;
+                int _nb = 0, _ni = 0;
+                packed = mole_cavity_residues(&M, c, mres, &MR, b, n2, &_nb, &_ni);
+                if (packed >= 0) for (i = 0; i < _nb; i++) bres[b[i]] = 1;
             }
             free(b); free(n2);
         }
@@ -660,8 +678,14 @@ int main(int argc, char **argv)
                     mole_filter_similar(pf, pl, dd, cnt, max_sim);
                     w = base_;
                     for (q = 0; q < cnt; q++) {
-                        if (dd[q]) mole_profile_free(&res[base_+q].prof);
-                        else res[w++] = res[base_+q];
+                        if (dd[q]) {
+                            /* `path` is allocated alongside `prof` and the final
+                               cleanup walks SURVIVORS only, so a tunnel dropped
+                               here leaked its path array. */
+                            mole_profile_free(&res[base_+q].prof);
+                            free(res[base_+q].path);
+                            res[base_+q].path = NULL; res[base_+q].npath = 0;
+                        } else res[w++] = res[base_+q];
                     }
                     nres = w;
                     free(dd); free(pf); free(pl);
