@@ -397,6 +397,39 @@ static unsigned hash_cell(int cx,int cy,int cz)
   return h & (HASH_BUCKETS - 1);
 }
 
+/* A dot's integer cell index, safe against a non-finite coordinate.
+ *
+ * `(int)floor(v/cell)` is UNDEFINED when v is NaN, or when the quotient falls
+ * outside int range. In practice it yields INT_MIN, and the +-1 neighbourhood
+ * walks that consume these indices (build_grid_at's callers, cull_coords) then
+ * compute INT_MIN-1 -- signed overflow, which is itself undefined. UBSan
+ * reports exactly that on a .sos carrying NaN dots:
+ *     sos_triangle_fast.c: runtime error: signed integer overflow:
+ *     -2147483648 + -1 cannot be represented in type 'int'
+ *
+ * This hazard belongs to the spatial hash added in THIS file, not to HOLE:
+ * upstream sos_triangle.c has no cell index at all (its cull is an O(N^2)
+ * vec_compare scan, and its neighbour search is a full scan), so there is no
+ * upstream behaviour to stay byte-identical to here -- only UB to remove.
+ *
+ * Clamping rather than rejecting keeps a non-finite dot in the same place
+ * upstream would: carried through the pipeline rather than silently dropped.
+ * CELL_LIMIT leaves headroom for the +-1 walk, and sits ~1e9 cells from the
+ * origin -- 1e6 A at CELL_TOL 1e-3, and larger still for the coarser
+ * neighbour grid -- so every coordinate a real .sos can hold is far inside it
+ * and the kept-dot set is bit-for-bit unchanged.
+ */
+#define CELL_LIMIT 1000000000          /* << INT_MAX, with room for +-1 */
+static int cell_index(double v, double cell)
+{
+  double c = floor(v / cell);
+  /* Written as a negated `>` so NaN - for which every comparison is false -
+     falls into this branch instead of reaching the (int) cast. */
+  if (!(c > -(double)CELL_LIMIT)) return -CELL_LIMIT;
+  if (c >  (double)CELL_LIMIT)    return  CELL_LIMIT;
+  return (int)c;
+}
+
 /* --- speedup 4: edge hash for destroy() -------------------------------- */
 /* destroy() scans the append-only edge list for the (unordered) pair it is    */
 /* given -- O(edges) per call, O(edges^2) overall. Index every edge by its     */
@@ -444,9 +477,9 @@ void build_grid_at(double cell)
   NCELL = cell;
   for (b=0;b<HASH_BUCKETS;b++) ng_head[b] = -1;
   for (i=0;i<max_dots;i++) {
-    ng_cx[i]=(int)floor(dots[i][0]/NCELL);
-    ng_cy[i]=(int)floor(dots[i][1]/NCELL);
-    ng_cz[i]=(int)floor(dots[i][2]/NCELL);
+    ng_cx[i]=cell_index(dots[i][0],NCELL);
+    ng_cy[i]=cell_index(dots[i][1],NCELL);
+    ng_cz[i]=cell_index(dots[i][2],NCELL);
     b=hash_cell(ng_cx[i],ng_cy[i],ng_cz[i]);
     ng_dotnext[i]=ng_head[b];
     ng_head[b]=i;
@@ -3962,11 +3995,33 @@ int neighbour (struct base_line *node, double angle_limit, double *prev_dist)
 	     (dots[node->a][2]-dots[node->b][2])*(dots[node->a][2]-dots[node->b][2]));
 
   {
-    int ax=(int)floor(dots[node->a][0]/NCELL);
-    int ay=(int)floor(dots[node->a][1]/NCELL);
-    int az=(int)floor(dots[node->a][2]/NCELL);
-    int cr=(int)(sqrt(9.0*base_dist)/NCELL)+1;
-    long ncells=(2L*cr+1); ncells=ncells*ncells*ncells;
+    int ax=cell_index(dots[node->a][0],NCELL);
+    int ay=cell_index(dots[node->a][1],NCELL);
+    int az=cell_index(dots[node->a][2],NCELL);
+    /* cr is the cell radius covering the 3*|base| search sphere. Computing it
+       as `(int)(sqrt(9*base_dist)/NCELL)+1` is UNDEFINED when base_dist is NaN
+       (a non-finite dot): the cast yields INT_MIN, cr becomes INT_MIN+1, and
+       the very next line cubes 2L*cr+1 = -4294967293 -- which overflows long
+       BEFORE the `ncells > max_dots` guard below can reject it. UBSan:
+         runtime error: signed integer overflow:
+         -4294967293 * -4294967293 cannot be represented in type 'long int'
+       Resolve cr in double first, so a non-finite or oversized radius selects
+       the full scan WITHOUT ever forming an overflowing ncells -- which is the
+       same branch the guard would have chosen for it. CR_CAP is far above any
+       cr that could pass that guard (it fails already at cr > 29 for the
+       largest MAX_COORD) and far below the cube overflowing long, so every
+       finite input keeps its existing branch and its existing result. */
+    #define CR_CAP 100000
+    double crd = sqrt(9.0*base_dist)/NCELL;
+    int cr;
+    long ncells;
+    if (!(crd >= 0.0) || crd > (double)CR_CAP) {   /* negated >=: NaN lands here */
+      cr = CR_CAP;
+      ncells = (long)max_dots + 1;                 /* forces the full scan below */
+    } else {
+      cr = (int)crd + 1;
+      ncells = (2L*cr+1); ncells = ncells*ncells*ncells;
+    }
 
     if (NCELL<=0.0 || ncells > (long)max_dots)
       {
@@ -4512,9 +4567,9 @@ void cull_coords()
 
   for (in_cntr=0;in_cntr<in_dots_total;in_cntr++)
     {
-      cx = (int)floor(in_dots[in_cntr][0]/CELL_TOL);
-      cy = (int)floor(in_dots[in_cntr][1]/CELL_TOL);
-      cz = (int)floor(in_dots[in_cntr][2]/CELL_TOL);
+      cx = cell_index(in_dots[in_cntr][0],CELL_TOL);
+      cy = cell_index(in_dots[in_cntr][1],CELL_TOL);
+      cz = cell_index(in_dots[in_cntr][2],CELL_TOL);
 
       is_dup = 0;
       /* scan the 3x3x3 neighbourhood of cells (covers any accepted dot within
