@@ -704,6 +704,7 @@ proc vmdhole_singleframe_tk {} {
 # Load-time line intentionally left minimal — "VMDHole v... loaded" is printed
 # inside show_gui on first open so it appears when the user actually uses the plugin.
 variable ::VMDHole::_gui_opened 0
+variable ::VMDHole::_swept 0
 
 proc ::VMDHole::install {} {
     if {[llength [info commands vmd_install_extension]]} {
@@ -936,7 +937,15 @@ proc ::VMDHole::find_hole_exe {} {
 
 proc ::VMDHole::init_executables {} {
     variable state
+    variable _swept
     load_config
+    # Scratch reclaim has to happen here, not only in show_gui: a batch job
+    # never opens the GUI - docs/scripting.md tells batch authors not to call
+    # it - so a run killed by the scheduler left its /tmp and /dev/shm scratch
+    # behind with nothing that would ever collect it. Guarded here rather than
+    # inside the sweeper, which stays callable repeatedly: headless_smoke.tcl
+    # drives it three times to check the age guard from both sides.
+    if {!$_swept} { set _swept 1; catch {_sweep_stale_tmpdirs} }
     if {$state(hole_exec) eq "" || ![file executable $state(hole_exec)]} {
         set found [find_hole_exe]
         if {$found ne ""} {
