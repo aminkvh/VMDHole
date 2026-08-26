@@ -392,9 +392,16 @@ C is the cached-list answer trustworthy for THIS query? An excluded atom's
 C CLEARANCE (its constraining quantity) is dist_to_segment MINUS its own
 C vdW radius, so the safety bound must subtract MAXVDW too, not just
 C HALFLEN+DRIFT (see MAXVDW comment above - this was the actual bug).
+C The 0.9 factor is a 10% tightening of the bound - but only while SAFE is
+C positive. For SAFE < 0, 0.9*SAFE is GREATER than SAFE, so the same
+C expression LOOSENS the test and admits answers the argument above does not
+C cover. Negative SAFE is reachable: the rebuild trigger keeps a cached path
+C alive down to CUTDIST-HALFLEN-DRIFT = 1.0, and MAXVDW is 1.85-2.10 in every
+C shipped rad file, so SAFE bottoms out near -1.1. Requiring SAFE > 0 keeps
+C the test unchanged wherever it was sound and rebuilds otherwise.
         SAFE = CUTDIST - HALFLEN - DRIFT - MAXVDW
         TRUSTED = (NCAND.GT.0) .AND. (.NOT.CANDOVF) .AND.
-     &            (IAT1.NE.-1000) .AND.
+     &            (IAT1.NE.-1000) .AND. (SAFE.GT.0D0) .AND.
      &            (ENERGY.LT.0.9D0*SAFE) .AND.
      &            (DAT2.LT.0.9D0*SAFE)
 
