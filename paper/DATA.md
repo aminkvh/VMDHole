@@ -34,13 +34,9 @@ paper/case_studies/
     out/                         CAVER 3's own results on these frames
 ```
 
-`04_full_trajectory/` sits at the repository root in some older notes; the path
-above is the current one.
-
-!!! note
-    CAVER's own download page offers the same simulation, but its only host
-    (`decibel.fi.muni.cz`) refuses connections. The Zenodo record is the
-    working source.
+> Note: CAVER's own download page offers the same simulation, but its only
+> host (`decibel.fi.muni.cz`) refuses connections. The Zenodo record is the
+> working source.
 
 ## Small single-structure inputs (auto-fetched)
 
@@ -96,23 +92,14 @@ Any CHARMM-GUI-style membrane system with the pore axis along z will do; see
 that directory's own README for what the case is meant to show. Substitute your
 own — nothing downstream depends on this being one specific system.
 
-## Water traces (optional, orthogonal evidence)
-
-**Zenodo: [10.5281/zenodo.5642954](https://doi.org/10.5281/zenodo.5642954)** —
-TransportTools use cases. Fifteen DhaA simulations **with water traces**, which
-is the kind of transport evidence CAVER itself was validated against. Not used
-by any script here; recorded because it is the natural next comparison.
-
----
-
 ## What works without any of this
 
 - The plugin itself, entirely.
 - The tutorial — [gramicidin A](case1_gramicidin_1GRM/) ships in the repository.
 - Cases 2, 3 and 5 — one `fetch_structures.sh` run gets their PDB inputs.
-- Ten of the seventeen test groups.
+- Most of the test groups (`vmdhole/tests/run_tests.sh`).
 
-The seven groups that skip need locally built HOLE binaries
+The groups that skip need locally built HOLE binaries
 (`native/stock_build/`, `vmdhole/hole_tcl/reference_bin/`), not trajectory data.
 Build them with `sh native/build-vmdhole-optimized.sh`.
 

@@ -71,7 +71,7 @@ copy_tracked() {
     done
 }
 
-copy_tracked vmdhole/ vmdhole/NOTES/ vmdhole/tests/ vmdhole/hole_tcl/ vmdhole/HANDOFF.md
+copy_tracked vmdhole/ vmdhole/NOTES/ vmdhole/tests/ vmdhole/hole_tcl/
 
 # Top level: licence, readme, installer - not under vmdhole/, so
 # copy_tracked's prefix match does not reach them. (The logo is not shipped:
