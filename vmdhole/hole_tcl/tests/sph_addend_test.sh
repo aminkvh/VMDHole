@@ -18,7 +18,7 @@
 # explicitly on BOTH sides via the `mcstep` card / `-mcstep` flag, so it is
 # still a real, fully deterministic byte-comparison at that reduced step
 # count (HOLE's RNG stream is bit-exact regardless of mcstep - see
-# vmdhole/hole_tcl/README.md's RNG section) - endrad/sample/cpoint are chosen so both
+# hole::rng in hole.tcl) - endrad/sample/cpoint are chosen so both
 # directions still store >=2 slices each at this step count (ADDEND's own
 # LASCEN reset needs that - see write_sph's header). Connolly's own grid is
 # widened to 0.6 (from the project's usual 0.2) for the same reason - its
