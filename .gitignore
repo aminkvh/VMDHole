@@ -46,6 +46,11 @@ vmdhole/main.pdf
 paper/benchmarks/env/
 paper/benchmarks/scratch_bench/
 paper/benchmarks/__pycache__/
+# Any Python cache, not just that one directory. A stray
+# vmdhole/hole_tcl/__pycache__/*.pyc reached a commit because only the
+# paper/benchmarks path was listed.
+__pycache__/
+*.py[cod]
 paper/benchmarks/*.log
 
 # Editor / tool backups
