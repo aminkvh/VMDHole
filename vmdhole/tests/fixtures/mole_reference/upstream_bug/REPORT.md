@@ -3,6 +3,11 @@
 Reported against `github.com/sb-ncbr/MOLE` at `e0df21c` (25 Aug 2025), the tip
 at the time of writing. Reproduced with Mono 6.12.0.199 on Linux.
 
+This is why VMDHole's tunnel engine reports **8.44 Å** on 1MXT where MOLE 2
+reports **12.04 Å** — the one documented deviation from MOLE's own output. The
+deviation is pinned by `vmdhole/tests/mole_upstream_deviation.py` so it cannot
+be "fixed" by accident.
+
 ## Summary
 
 `TunnelComputation.FilterTunnels` decides which tunnel of a similar group to
@@ -52,10 +57,8 @@ public override int GetHashCode()           // REFERENCE semantics
 
 This violates the documented contract that equal objects return equal hash
 codes. Its practical effect here is on `HashSet<Tunnel> toRemove`: value-equal
-tunnels are stored as separate entries, and in the observed run — where the
-identity hashes all differ — the `toRemove.Contains(...)` guards recognise only
-the same object. A hash collision would make those guards behave differently, so
-this is a real, if unlikely, source of variability.
+tunnels are stored as separate entries, and the `toRemove.Contains(...)` guards
+recognise only the same object.
 
 ## Observed
 
@@ -85,27 +88,15 @@ survivors: 12.04
 ```
 
 The policy is to keep the shorter tunnel of a similar pair; the export contains
-the longer one. (8.89 has a seven-residue lining, is not value-equal to the
-others, and correctly removed only itself.)
+the longer one. The same shape recurs on 1KX5 (cavity 18: two candidates,
+identical 9-residue linings, MOLE prints the longer) — two structures, two
+independent confirmations.
 
-## Stability
-
-The outcome does not appear to depend on hash values. `base.GetHashCode()` is a
-per-run identity hash and varies between runs, while the result does not:
-
-```
-run 1: 8.44 tunnel hash= 496953705   output 11.93 12.04 25.31 3.47
-run 2: 8.44 tunnel hash= 177955469   output 11.93 12.04 25.31 3.47
-run 3: 8.44 tunnel hash=1257060712   output 11.93 12.04 25.31 3.47
-```
-
-`HashSet<T>` enumerates its sequentially stored entries, and nothing is ever
-removed from `toRemove`, so no freed slots are reused and enumeration follows
-insertion order. That reasoning matches both the .NET Framework reference source
-and the current .NET source. **It is not a public guarantee**, however, and
-identity-hash collisions can change `HashSet` membership — so read this as
-stable on the tested runtime and expected for the implementations inspected,
-not as guaranteed.
+The outcome is stable across runs: `base.GetHashCode()` varies per run, the
+output does not, because `HashSet<T>` enumerates its sequentially stored
+entries in insertion order when nothing is removed. That matches the .NET
+Framework reference source and the current .NET source, but is **not a public
+guarantee** — read it as stable on the tested runtime, not as guaranteed.
 
 ## Minimal reproduction
 
@@ -127,8 +118,7 @@ identity-based.
 ## Suggested fix
 
 **Remove by identity.** `FilterTunnels` already assigns each tunnel a unique
-per-call id at line 141 (`ret.ForEach((t, i) => t.Id = i);`) and indexes them at
-line 142, so the ids are available and unique within the call:
+per-call id at line 141 (`ret.ForEach((t, i) => t.Id = i);`), so:
 
 ```csharp
 var toRemove = new HashSet<int>();
@@ -139,95 +129,31 @@ ret.RemoveAll(t => toRemove.Contains(t.Id));
 ```
 
 This removes exactly the tunnels the filter selected, regardless of equality
-semantics, and also makes the `toRemove.Contains(...)` guards mean what they
-appear to mean.
+semantics. **Separately, make `GetHashCode` honour `Equals`** — worth doing on
+its own, but it does **not** fix the wrong survivor: `List.Remove` would still
+match by value.
 
-**Separately, make `GetHashCode` honour `Equals`** — hash the lining
-identifiers — so `Tunnel` no longer violates the contract. Worth doing on its
-own, but note it does **not** fix the wrong survivor: `List.Remove` would still
-match by value. It would also change behaviour if `toRemove` were left as a
-`HashSet<Tunnel>`, since value-equal tunnels would then collapse to one entry.
+## Verified by rebuilding MOLE with the fix
 
-If dropping every tunnel with the same lining is in fact intended, it would be
-worth stating explicitly — but it conflicts with the similarity filter, which
-has already chosen which member of the group to keep.
-
-## Re-verified A to Z, with lining data (2026-08-02)
-
-Re-checked from the language semantics down to the actual residue lists, to rule
-out the alternative explanation - that the port simply builds `ret` in a
-different order and the removal is innocent.
-
-**The semantics.** `Tunnel : IEquatable<Tunnel>`; `Equals(Tunnel)` compares the
-lining as an ORDERED zip of `PdbResidue.Identifier`; `GetHashCode()` returns
-`base.GetHashCode()`, the identity hash. So `EqualityComparer<Tunnel>.Default`
-resolves to `GenericEqualityComparer<Tunnel>` calling `IEquatable.Equals` -
-LINING equality - which is what `List<Tunnel>.Remove` uses, while
-`HashSet<Tunnel> toRemove` keys on the identity hash. Value semantics for
-removal, reference semantics for membership, in the same function.
-
-**The arithmetic, on 1MXT.** Tunnels in creation order, with lining sizes:
-
-    #1  8.44   7 residues
-    #2  8.89   8 residues
-    #4  12.04  7 residues
-    #5  12.04  7 residues
-    #6  12.04  7 residues
-    #7  12.04  7 residues
-
-and #1's lining is IDENTICAL to all four 12.04 linings - measured, not assumed.
-The similarity filter marks the four mutually-similar 12.04 tunnels. Each
-`ret.Remove(t)` scans from the start for a lining-equal element, so the FIRST
-call deletes #1, the 8.44 the filter never selected; the next three take #4, #5,
-#6; #7 survives. MOLE prints 12.04.
-
-**Same shape on 1KX5**, cavity 18: two candidates, both pass the bottleneck,
-identical 9-residue linings, MOLE prints the longer.
-
-**What this rules out.** `ret` is built in creation order - for each source, for
-each opening in `s.Openings` order - and our opening order now reproduces MOLE's
-tetrahedron for tetrahedron (see NOTES/mole2-dh-triangulation.md and the
-openings fix). So the port does not order `ret` differently; the divergence is
-the value/identity mismatch and nothing else. Two structures, two independent
-confirmations.
-
-**Reproducing it, if a zero-diff requirement ever appears**, is now fully
-specified: mark as the filter does, then delete the first remaining tunnel whose
-ORDERED lining identifier list matches, in `toRemove` insertion order. That
-would be an explicit opt-in compatibility mode, never the default.
-
-## The fix, built and verified (2026-08-02)
-
-**Yes, it is fixable, and the patch is one line.** Built and run rather than
-proposed on paper.
-
-    // TunnelComputation.FilterTunnels
-    -   foreach (var t in toRemove) ret.Remove(t);
-    +   ret.RemoveAll(t => toRemove.Any(r => object.ReferenceEquals(r, t)));
-
-Removal by IDENTITY, which is what `toRemove` already means - it is keyed on the
-identity hash, since `Tunnel.GetHashCode()` returns `base.GetHashCode()`.
-
-**Why the fix must be local.** The tempting repair - make `GetHashCode` agree
-with `Equals` by hashing the lining - would change `HashSet<Tunnel>` semantics
-and collapse lining-equal tunnels into one entry. `Tunnel.Equals` also has other
-consumers (`TunnelCollection.Contains`, TunnelCollection.cs:103/119/207), so
-changing what equality MEANS is a wider blast radius than changing what this one
-removal USES. Nothing outside this loop needs to change.
-
-**Verified by rebuilding MOLE with it.** Same tree, same reference list, output
-to a separate directory so the validated oracle was untouched:
+The one-line identity-based removal was built and run, not proposed on paper:
 
     1MXT   stock  3.47 11.93 12.04 25.31
            fixed  3.47  8.44 11.93 25.31
     1KX5   stock  ... 7.72 7.84 8.75 ...   (60 tunnels)
            fixed  ... 7.61 7.72 8.75 ...   (60 tunnels)
 
-On 1KX5 exactly ONE of the sixty moves; the other 59 are identical, so the patch
-is not a behavioural rewrite - it changes only the case it is meant to.
+On 1KX5 exactly one of the sixty tunnels moves; the other 59 are identical, so
+the patch changes only the case it is meant to. **The fixed MOLE agrees with
+VMDHole's engine exactly on both structures** — the strongest confirmation
+available: if the cause were anything else, a one-line change to the removal
+could not have closed the gap.
 
-**And the fixed MOLE agrees with this port, exactly, on both structures.** That
-is the strongest statement available here: our output is not merely defensible,
-it is what MOLE produces once the defect is repaired. It also confirms the
-diagnosis by construction rather than by argument - if the cause were anything
-else, a one-line change to the removal could not have closed it.
+## Decisions taken in this repository
+
+- The defect is **not replicated** in VMDHole's engine. Being wrong in the same
+  way as the reference is a poor trade; VMDHole reports the tunnel MOLE's own
+  filter selects.
+- The 1MXT deviation is a **named regression** (`mole_upstream_deviation.py`)
+  so it cannot silently disappear or grow.
+- The acceptance bar for the port is "exact agreement with MOLE except
+  documented upstream defects" — this is the one such defect.

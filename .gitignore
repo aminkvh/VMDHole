@@ -166,7 +166,6 @@ packaging/build/
 # --- Publication hygiene (2026-08-24): internal development material that
 # stays on this machine but must never be tracked again. See the commit that
 # added this block for what each is.
-vmdhole/HANDOFF.md
 vmdhole/Caver.pdf
 04_full_trajectory/
 native/NOTES/
