@@ -1,11 +1,9 @@
 #!/bin/sh
 # Does hole::capsule agree with the real binary beyond the single fixture
-# (1GRM, CVECT along z) every number in vmdhole/hole_tcl/README.md's capsule section
-# was measured on?
+# (1GRM, CVECT along z) its fidelity was originally measured on?
 #
 # Three configurations, each seed-pinned (raseed 1, deterministic - HOLE's
-# own MC noise only shows up across DIFFERENT seeds, see
-# hole-monte-carlo-run-to-run-noise in this project's memory):
+# own MC noise only shows up across DIFFERENT seeds):
 #   1. 1GRM, cvect 0 0 1   - the already-validated baseline, kept here as a
 #      regression net now that a capsule test exists at all.
 #   2. 1GRM, cvect 1 1 1   - a NON-axis-aligned CVECT. "1 1 1" is exactly
@@ -20,8 +18,7 @@
 #      default 1000, matched explicitly on BOTH sides via the `mcstep` card
 #      / `-mcstep` flag) purely to keep this test's wall time reasonable
 #      (~2820 atoms x 1000 steps/slice in the Tcl interpreter is ~2.3
-#      minutes here - see vmdhole/hole_tcl/README.md's "Next steps" performance
-#      note - vs ~20s at mcstep 150); it is still a real, fully deterministic
+#      minutes here vs ~20s at mcstep 150); it is still a real, fully deterministic
 #      comparison at that reduced step count, not a shortcut that skips the
 #      search. endrad is 6.0 (vs 1GRM's 8.0) - large enough to clear KcsA's
 #      much narrower filter (bottleneck ~0.5-1 A above endrad 6 in <2 minutes)
@@ -36,10 +33,10 @@
 #
 # This is a PRINT-PRECISION regression guard (the reference-build hole is not
 # instrumented, so it can only be compared via its own %f-formatted stdout
-# table) - it is NOT the evidence for the bit-exact claim in
-# vmdhole/hole_tcl/README.md's "Root cause 3" section, which rests on a full E24.16
-# trace of an instrumented Fortran tree (scratch-built, not checked in here -
-# see that section for the reproducing recipe). What this test DOES catch:
+# table) - it is NOT the evidence for the bit-exact claim, which rests on a
+# full E24.16 trace of an instrumented Fortran tree (scratch-built, not
+# checked in here - see capsule.tcl's CAPSULE_PI header for the reproducing
+# recipe). What this test DOES catch:
 # any future edit that regresses capsule.tcl's agreement with the real
 # binary at the ~1e-4 A level, on a structure/CVECT this project's other
 # capsule tests never exercise.
