@@ -1,167 +1,73 @@
 # Changes relative to upstream HOLE2
 
-This is the Apache-2.0 statement of modifications for everything in
-`native/`. It has two parts: the **C program** `sos_triangle_fast.c` and the
-**Fortran patches** in `connolly_patches/`, which modify `hole` and
-`sph_process`. Every modification in both parts preserves output exactly;
-where that guarantee is qualified, the qualification is stated with the
-change. Line-level rationale is in the source comments.
+The Apache-2.0 statement of modifications for `native/`: the C program
+`sos_triangle_fast.c`, and the Fortran patches in `connolly_patches/` (applied
+to a HOLE2 checkout by `apply_patches.py`). All modifications preserve output:
+the accelerated binaries are byte-for-byte identical to upstream on the same
+input — `./verify.sh` reproduces this claim. Rationale and detail are in the
+source comments; measurements are in the paper (`paper/benchmarks/`).
 
-## The C program: `sos_triangle_fast.c`
+## `sos_triangle_fast.c`
 
 A modified copy of `sos_triangle.c` from HOLE2
-(https://github.com/osmart/hole2, Apache-2.0). It is a **drop-in
-replacement**: the command-line interface, the stdin `.sos` input format, and
-the stdout `.vmd_plot` output are unchanged, and the generated surface is
-**byte-for-byte identical** to the upstream program (`./verify.sh` reproduces
-this claim). The modifications are confined to performance, capacity, and
-opt-in additive features; the triangulation algorithm and its output are not
-altered.
+(https://github.com/osmart/hole2, Apache-2.0). Drop-in replacement — same
+CLI, same `.sos` input, same `.vmd_plot` output.
 
-### The six performance/capacity changes
+Performance/capacity changes (algorithm and output unchanged):
 
-Upstream's runtime concentrates in two routines that are O(N²) in the number
-of surface dots (the upstream source itself flags one: *"search through all
-dots for neighbours. (slow, but works...)"*).
+- `cull_coords`: spatial hash grid replaces the exhaustive pairwise duplicate
+  test.
+- `check_point`: O(1) used-vertex flag replaces a rescan of every triangle.
+- `neighbour`: edge-invariant terms hoisted out of the candidate loop, and a
+  uniform spatial grid restricts the search to the only dots that can pass
+  the existing 3·|base| cutoff (ties still break by smallest dot index; a
+  mis-estimated cell size falls back to the original full scan).
+- `destroy`: hash on the endpoint pair replaces a linear scan of the edge
+  list, with bucket chains in creation order so the first match is unchanged.
+- `MAX_COORD` raised 30000 → 200000, so large/high-density surfaces that
+  previously aborted now complete.
 
-| # | Routine | Before | After | Complexity |
-|---|---------|--------|-------|------------|
-| 1 | `cull_coords` | exhaustive pairwise duplicate test | spatial hash grid (cell = the 1e-3 dedup tolerance; exact 3×3×3 neighbour test) | O(N²) → ~O(N) |
-| 2 | `check_point` | rescans every triangle to ask "is this dot used yet?" | O(1) `point_used[]` flag set when a vertex is written | O(N·T) → O(1) |
-| 3 | `neighbour` (micro) | recomputes edge-only terms per candidate; `pow(v,2)` | edge-invariant terms hoisted; `v*v` | constant-factor |
-| 4 | `destroy` | linear scan of the whole edge list | hash keyed on the (unordered) endpoint pair; bucket chains in creation order so the first match is unchanged | O(E) → ~O(1) |
-| 5 | `neighbour` (grid) | scans all N dots | uniform spatial grid queried for the only dots that can win (within 3·\|base\| of vertex `a`); cell size ≈5× the median nearest-neighbour distance (the true 2-D surface spacing, not a 3-D volume estimate) | O(N) per call → ~O(1) |
-| 6 | `MAX_COORD` | `30000` (fixed array bound) | `200000` — large pores/high densities that previously aborted now complete | capacity |
+Opt-in additive features (inert without their flags; a normal `-s`/`-v`
+invocation is still byte-for-byte upstream):
 
-### Why the output is provably identical
+- `--hydro-atoms` / `--hydro-sph` / `--hydro-scheme kd|ww` /
+  `--hydro-signed`: colour the surface by nearest-lining-residue
+  hydrophobicity in the same compiled pass, bit-identical to the plugin's Tcl
+  path. `--hole-features` is the capability probe.
+- `--points`: emit unique vertices instead of triangles (the plugin's dots
+  display).
+- `--recolor` + `--hydro-values`, and `--batch-recolor FILE` /
+  `--batch FILE` / `--batch-asym-ellipse FILE`: recolour or process many
+  frames in one process.
+- `--asym-ellipse` / `--asym-ellipse-geo` / `--asym-threads N`: the
+  PoreAnalyser-style asymmetry fit; single-frame runs auto-detect the thread
+  count when `--asym-threads` is not given.
 
-Two changes reorder work, so they need an argument:
-
-* **Change 5 is lossless by construction.** The original `neighbour()` already
-  rejects any candidate beyond `3·|base|` from edge-vertex `a`, so restricting
-  the search to the grid cells covering that radius removes only work that had
-  no effect. Ties break by smallest dot index — exactly the choice the
-  original strict-`<` scan in index order made — and a mis-estimated cell size
-  falls back to the original full scan.
-* **Change 4 preserves first-match order.** Edges are appended to their hash
-  bucket in creation order and the lookup returns the first matching endpoint
-  pair — the same node the original full-list scan returned.
-
-Changes 1–3 and 6 are value-preserving by inspection (same arithmetic, fewer
-times).
-
-### Measured effect
-
-`sos_triangle` alone: **~9.4× at the plugin's default dot density (15), up to
-~75× at density 40**, growing with surface size — the change is algorithmic,
-near-quadratic → near-linear (fitted exponents 1.95 → 1.02 over the density
-sweep). Whole pipeline (`hole` → `sph_process` → `sos_triangle`), against
-genuine stock HOLE 2.2 built at the same `-O2`, 1BL8, seeded, output
-identical: **11.8× (circular, density 15)** and **6.9× (CONNOLLY, density
-8)**. CONNOLLY is quoted at density 8 because stock cannot complete it at 15 —
-upstream's `MAX_COORD 30000` emits zero triangles from density 12 upward on
-this structure, so above that the difference is capability, not speed.
-
-Data of record: `../paper/benchmarks/results/sos_scaling.csv` and
-`../paper/benchmarks/pipeline_end_to_end.csv`, regenerated by
-`paper/benchmarks/reproduce.sh`. If prose and CSV ever disagree, the CSV wins.
-
-## Additive feature: hydrophobicity colouring (opt-in)
-
-The binary can colour the pore surface by the hydrophobicity of the nearest
-channel-lining residues inside the same compiled pass that triangulates —
-replacing a per-frame Tcl post-pass and riding the plugin's across-frame
-parallelism. The plugin auto-detects the feature and falls back to Tcl when
-absent. **Inert unless the flags below are passed** — with a normal `-s`/`-v`
-invocation the output is still byte-for-byte upstream.
-
-| flag | meaning |
-|---|---|
-| `--hole-features` | Print `hole_features: hydro` and exit — the plugin's capability probe. |
-| `--hydro-atoms FILE` | Enable colouring. One row per channel-local atom: `x y z h_kd h_ww`. |
-| `--hydro-sph FILE` | The HOLE `.sph` file (sphere centres + radii). |
-| `--hydro-scheme kd\|ww` | Which hydropathy column to use (default `kd`). |
-| `--points` | Emit unique vertices (`draw point`) instead of triangles — the plugin's dots display. |
-
-What it computes is identical to the plugin's Tcl path: per-sphere mean
-hydropathy of atoms within `r + 3 Å`, spheres thinned to ≤200, each triangle
-coloured by its centroid's nearest thinned sphere with the same thresholds as
-`::VMDHole::hydro_to_vmd_color`. Centroids use the coordinates rounded to the
-3 decimals the mesh is written with, so the result is *bit-identical* to the
-Tcl path. `verify.sh` Part C checks this against a reference implementation
-(0 differing triangles out of ~85 000 across four frames × both scales);
-Part D checks `--points`.
-
-## Additive feature: batched recolour (`--batch-recolor`)
-
-`--batch-recolor FILE` runs multiple recolour jobs (`--recolor` +
-`--hydro-values`) in one process instead of one process per frame — recolour
-jobs are cheap, so process-spawn overhead dominated. Each line:
-`base_vmd_plot<TAB>out_vmd_plot<TAB>values_path<TAB>sph_path`.
-`--hydro-signed` applies to every job in the file. Values-path only. Verified
-byte-for-byte identical to the single-job path on real surfaces, with jobs
-deliberately listed out of generation order to catch state leaking between
-jobs.
-
-## Additive feature: ellipse-probe asymmetry performance (`--asym-ellipse`)
-
-Profiling put ~99% of `--asym-ellipse`'s per-frame cost in the PoreAnalyser
-Nelder-Mead fit. Two changes, both value-preserving:
-
-1. **Hoist the ellipse rotation and rotated centre out of the per-atom loop.**
-   `pa_on`/`pa_ev` recomputed `cos`/`sin` of theta and the rotated centre for
-   every atom although both are fixed across each caller's atom loop; each
-   caller now computes them once and passes them in. Pure de-duplication of
-   deterministic arithmetic — bit-for-bit identical, verified on all 50
-   benchmark frames, single-frame and batch, across thread counts.
-2. **Auto-detect thread count for the single-frame CLI paths.** When
-   `--asym-threads` is not given at all, the single-frame branches call
-   `omp_get_max_threads()`. An explicit `--asym-threads 1` is still honoured
-   (by design — batch workers rely on it), and `--batch-asym-ellipse` never
-   auto-detects (its worker pool already parallelises across frames;
-   per-worker threads would oversubscribe by nproc×).
-
-Measured: 3.8 s → 0.35 s per frame on the benchmark fixture when the flag is
-absent (auto-threading), 1.2–1.3× from the hoist alone.
-
-## Robustness fixes (no effect on valid input)
-
-Each verified byte-for-byte identical against the previous binary on real
-`.sos` data:
-
-1. **`calc_tri` recursion: dedicated stack + depth ceiling.** Recursion depth
-   tracks mesh size and could overflow the default 8 MB stack on large
-   Connolly clouds. The recursion now runs on a dedicated pthread with a
-   768 MB stack, with a depth counter turning a runaway into a reported error
-   instead of a crash.
-2. **`-X` argument arity.** A bare `-X` with no operand read past the end of
-   `argv` and segfaulted; now checked and reported.
-3. **`read_cord` honours the `sscanf` field count.** Short or malformed
-   records used to inherit stale values silently; each record type now
-   requires the fields it actually consumes.
+Robustness fixes (no effect on valid input): the `calc_tri` recursion runs on
+a dedicated large-stack thread with a depth ceiling instead of crashing on
+very large meshes; a bare `-X` with no operand is reported instead of reading
+past `argv`; `read_cord` checks its `sscanf` field count instead of silently
+inheriting stale values from malformed records.
 
 ## Fortran patches (`connolly_patches/`)
 
-These modify HOLE2's Fortran sources — `hole` and `sph_process` — and are
-applied to a real HOLE2 checkout by `apply_patches.py`. Each is a modified
-copy of the upstream file of the same base name; upstream's own modification
-history is preserved in the file headers.
+Each is a modified copy of the upstream file of the same base name; upstream's
+own modification history is preserved in the file headers.
 
 | Patch | Upstream file | Modification |
 |---|---|---|
-| `coarea_fast.f` | `coarea.f` | 2D spatial grid over the active circles, built once per call, replacing a linear scan over all circles. |
-| `hcapen_fast.f` | `hcapen.f` | Skips the full scan when the geometry is comfortably inside the safe bound, where the result is guaranteed to equal the scanned answer. |
-| `holcal_par.f` | `holcal.f` | Two-pass CONNOLLY driver: pass 1 grows the centreline with `CONCAL` suppressed to discover every plane; pass 2 parallelises the per-plane `CONCAL` work with OpenMP. Per-plane scratch files carry PID and plane index (opened `STATUS='REPLACE'` so a recycled PID can never pick up a stale tail). |
-| `holeen_par.f` | `holeen.f` | Replaces the blanket `SAVE` — which raced under OpenMP — with per-thread (`threadprivate`) caches. |
-| `sphqpu_par.f` | `sphqpu.f` | Parallel dot-culling pass; surviving dots written serially in the original order. Falls back to the unchanged serial loop if the parallel path cannot be set up. |
-| `machine_dep.g77` | same | RNG call-counter, so the seeded random sequence is reproducible across the parallel paths. |
+| `coarea_fast.f` | `coarea.f` | 2D spatial grid over the active circles replaces a linear scan. |
+| `hcapen_fast.f` | `hcapen.f` | Skips the full scan when the geometry is inside the safe bound, where the result is guaranteed equal. |
+| `holcal_par.f` | `holcal.f` | Two-pass CONNOLLY driver so per-plane work can run under OpenMP; per-plane scratch files carry PID + plane index, opened `STATUS='REPLACE'`. |
+| `holeen_par.f` | `holeen.f` | Blanket `SAVE` (which raced under OpenMP) replaced with per-thread caches. |
+| `sphqpu_par.f` | `sphqpu.f` | Parallel dot-culling pass; results written serially in the original order, with a serial fallback. |
+| `machine_dep.g77` | same | RNG call-counter so the seeded sequence is reproducible across the parallel paths. |
 | `Makefile` | same | OpenMP build flags. |
 
-The parallel patches distribute the *computation* but emit results in the
+The parallel patches distribute the computation but emit results in the
 original serial order, so output does not depend on thread count or
-scheduling — the accelerated binaries are byte-identical to stock, which
-`verify.sh` checks.
+scheduling.
 
-> **`verify.sh` footgun:** Part E compares `$HOLE_EXE/hole` (default
-> `~/hole2/exe`) against `$ACCEL`. Run `verify.sh` **before** installing to
-> the live exe directory, or Part E silently self-compares.
+> Note: `verify.sh` Part E compares `$HOLE_EXE/hole` (default `~/hole2/exe`)
+> against `$ACCEL`. Run it **before** installing to the live exe directory,
+> or Part E silently compares the accelerated build against itself.
