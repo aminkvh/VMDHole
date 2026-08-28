@@ -2241,7 +2241,7 @@ chk "the blanket CONNOLLY draft skip is gone" \
 # ...but a draft mesh must never be served when full quality was asked for, or
 # the settle pass would re-render the cheap mesh it is supposed to replace.
 chk "a draft mesh is dropped when full quality is asked for" \
-    [expr {[string first {*_draft.vmd_plot} $_lsf] >= 0}] 1
+    [expr {[string first {*_draft*.vmd_plot} $_lsf] >= 0}] 1
 chk "...and only when NOT drafting" \
     [expr {[string first "!\$draft && \$asset ne" $_lsf] >= 0}] 1
 
@@ -4010,7 +4010,7 @@ chk "a draft frame with a mesh in hand still recolors" \
 chk "...and writes to a draft-named file so the settle pass rebuilds" \
     [expr {[string first {append msuffix "_draft"} $_bht] >= 0}] 1
 chk "...keyed on the BASE mesh, so no other method's filenames move" \
-    [expr {[string first {string match "*_draft.vmd_plot" $plot0} $_bht] >= 0}] 1
+    [expr {[string first {string match "*_draft*.vmd_plot" $plot0} $_bht] >= 0}] 1
 
 # --- The margin moved to the right of "Show nearby" --------------------------
 set _brp [info body ::VMDHole::build_run_panel]
@@ -4213,7 +4213,7 @@ set ::VMDHole::state(conn_site_colormode,0) red
 chk "...and its row picker actually changes it" [::VMDHole::_conn_site_color 0] "red"
 catch {unset ::VMDHole::state(conn_site_colormode,0)}
 chk "the lobes render resolves the pore through that same accessor" \
-    [expr {[string first {[list pore [dict get $cls pore] [_conn_site_color 0]]} \
+    [expr {[string first {[list pore [dict get $cls pore] [_conn_site_color 0]} \
         [info body ::VMDHole::_build_conn_lobes_plot]] >= 0}] 1
 chk "reset puts every region back to auto" \
     [expr {[string first {foreach k [array names state conn_site_colormode,*] { set state($k) "" }} \
@@ -4405,6 +4405,30 @@ chk "openings dropped for this frame are counted" \
 chk "...and said out loud in the openings panel" \
     [expr {[string first {_conn_lobe_frame_drop_note} \
         [info body ::VMDHole::_refresh_conn_lobes_panel]] >= 0}] 1
+
+# An UNTICKED opening must still be MESHED. _split_conn_mesh_by_region assigns
+# every triangle to its nearest classified dot among the regions it is handed,
+# so omitting a region does not remove its geometry - it redistributes it into
+# whatever is left. Measured on Nav frame 0 before this: an opening drawn beside
+# the pore and its four neighbours is 168 triangles; drawn alone it took 7122,
+# the whole surface, and the pore took the other openings' triangles (86183 ->
+# 94466). The user-visible form is an opening's colour bleeding across the main
+# pore, and only while playing - stopping, ticking everything, then re-ticking
+# the one opening re-split the full set and cached the right meshes back.
+set _bclp [info body ::VMDHole::_build_conn_lobes_plot]
+chk "an unticked opening is still meshed, not skipped" \
+    [expr {[string first {![_conn_site_shown $sid] ||} $_bclp] < 0}] 1
+chk "...and so is the pore, carrying a shown flag rather than being left out" \
+    [expr {[string first {[_conn_site_shown 0] ? 1 : 0} $_bclp] >= 0}] 1
+chk "...as does every opening" \
+    [expr {[string first {[_conn_site_shown $sid] ? 1 : 0} $_bclp] >= 0}] 1
+chk "...with nothing ticked still drawing nothing" \
+    [expr {[string first {_anyshown} $_bclp] >= 0}] 1
+set _brm3 [info body ::VMDHole::_build_conn_region_meshes]
+chk "the mesh builder tracks which regions are drawn" \
+    [expr {[string first {shown_of} $_brm3] >= 0}] 1
+chk "...and emits only those" \
+    [expr {[string first {![dict get $shown_of $name]} $_brm3] >= 0}] 1
 # Ion Flow's 3D membership test must cover all three pore methods.
 set _ifs [info body ::VMDHole::_ion_flow_scan]
 chk "Ion Flow builds its 3D sphere set for capsule" \

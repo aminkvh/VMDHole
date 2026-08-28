@@ -95,14 +95,43 @@ if {$st eq "ok"} {
     # of a lining that stops halfway up the channel.
     chk "...naming the +VE direction" [::VMDHole::_incomplete_dirs_label $raw] "+"
 
-    # A detector nothing reads is worth nothing. msg_log is the retained
-    # channel behind the Message Log window - the status bar shows one line and
-    # the console scrolls away under VMD's own output.
+    # The warning is HOLE's capsule conductance code failing a strict
+    # comparison on roundoff (hcapgr.f), not the search stopping: on this very
+    # fixture the profile spans both sides of CPOINT. So the sidecar is kept
+    # verbatim, but the run must NOT tell the user the search stopped early -
+    # the gate keeps a direction only when its side of the .sph is empty.
+    lassign [::VMDHole::_sph_side_counts $cap_dir] np nn
+    note "stored records: +VE $np, -VE $nn"
+    chk "both sides of the capsule .sph hold records" [expr {$np >= 2 && $nn >= 2}] 1
+    chk "the gate drops a warning both sides contradict" \
+        [::VMDHole::_incomplete_real_dirs $cap_dir $raw] ""
     set surfaced 0
     foreach e $::VMDHole::msg_log {
         if {[string first "stopped its own search early" [lindex $e 2]] >= 0} { set surfaced 1 }
     }
-    chk "the run SURFACED it to the user, not just to disk" $surfaced 1
+    chk "...so nothing is surfaced for a complete profile" $surfaced 0
+
+    # The gate must still pass a REAL early stop through. Same sidecar text,
+    # a .sph whose +VE side is empty: one start record, records on -VE only.
+    set gdir [file join $work gateprobe]
+    file mkdir $gdir
+    set gfh [open [file join $gdir hole_out.sph] w]
+    puts $gfh "ATOM      1  QC1 SPH S   0       0.000   0.000   0.000  3.00  0.00"
+    puts $gfh "ATOM      1  QC2 SPH S   0       0.500   0.000   0.000  3.00  0.00"
+    foreach r {-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16 -17 -18 -19 -20 -21} {
+        puts $gfh [format "ATOM      1  QC1 SPH S%4d       0.000   0.000 %7.3f  3.00  0.00" $r [expr {$r*0.5}]]
+        puts $gfh [format "ATOM      1  QC2 SPH S%4d       0.500   0.000 %7.3f  3.00  0.00" $r [expr {$r*0.5}]]
+    }
+    close $gfh
+    lassign [::VMDHole::_sph_side_counts $gdir] gp gn
+    chk "side counts read the synthetic .sph" [list $gp $gn] {0 21}
+    chk "an empty +VE side keeps the +VE warning" \
+        [::VMDHole::_incomplete_real_dirs $gdir "MAY BE INCOMPLETE IN +VE DIRECTION"] \
+        "MAY BE INCOMPLETE IN +VE DIRECTION"
+    chk "...but not a -VE warning the -VE records contradict" \
+        [::VMDHole::_incomplete_real_dirs $gdir \
+            "MAY BE INCOMPLETE IN +VE DIRECTION MAY BE INCOMPLETE IN -VE DIRECTION"] \
+        "MAY BE INCOMPLETE IN +VE DIRECTION"
 }
 
 # 2. SPHERICAL - the control. Same structure, same cards, no warning.

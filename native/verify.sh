@@ -14,6 +14,12 @@
 set -e
 cd "$(dirname "$0")"
 CC="${CC:-cc}"; CFLAGS="${CFLAGS:--O2}"
+# Stock reference: the pristine tree's binaries when they exist. ~/hole2/exe is
+# where the ACCELERATED build gets installed, so defaulting to it made Part E
+# compare the accelerated hole against itself once it was installed.
+if [ -z "${HOLE_EXE:-}" ] && [ -x "$(dirname "$0")/stock_build/hole2/exe/hole" ]; then
+  HOLE_EXE="$(cd "$(dirname "$0")" && pwd)/stock_build/hole2/exe"
+fi
 HOLE_EXE="${HOLE_EXE:-$HOME/hole2/exe}"
 RAD="${RAD:-$HOME/hole2/rad/simple.rad}"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
@@ -140,6 +146,11 @@ echo "== Part E: parallel CONNOLLY / fast CAPSULE (accelerated vs stock hole) ==
 ACCEL="${ACCEL:-./build/hole}"
 if [ ! -x "$HOLE_EXE/hole" ] || [ ! -x "$ACCEL" ] || [ ! -f "$RAD" ]; then
   echo "  skipped: need stock \$HOLE_EXE/hole, accelerated \$ACCEL ($ACCEL), and \$RAD."
+elif ldd "$HOLE_EXE/hole" 2>/dev/null | grep -qi gomp || nm "$HOLE_EXE/hole" 2>/dev/null | grep -q omp_fn; then
+  # A stock reference that is itself an OpenMP build compares the accelerated
+  # hole against itself and cannot fail. Refuse outright rather than pass.
+  echo "  FAIL: \$HOLE_EXE/hole ($HOLE_EXE/hole) is an OpenMP (patched) build, not stock - point HOLE_EXE at a pristine build (native/stock_build/hole2/exe)."
+  exit 1
 else
   # Every run below happens inside "cd $w" (a scratch dir), so a RELATIVE
   # ACCEL/RAD (e.g. the "./build/hole" default) would resolve against $w, not

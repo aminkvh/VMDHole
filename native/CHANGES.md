@@ -57,7 +57,7 @@ own modification history is preserved in the file headers.
 | Patch | Upstream file | Modification |
 |---|---|---|
 | `coarea_fast.f` | `coarea.f` | 2D spatial grid over the active circles replaces a linear scan. |
-| `hcapen_fast.f` | `hcapen.f` | Skips the full scan when the geometry is inside the safe bound, where the result is guaranteed equal. |
+| `hcapen_fast.f` | `hcapen.f` | The CAPSULE energy routine. A uniform grid over the atoms (built once per dataset) replaces the per-call scan of every atom: the cells around the query segment are gathered, a bound proves nothing outside them can rank in the two best, and the original loop is then replayed in original atom order over just those atoms - same expressions, same floating-point path, same result. Falls back to the full scan whenever the bound cannot be established. |
 | `holcal_par.f` | `holcal.f` | Two-pass CONNOLLY driver so per-plane work can run under OpenMP; per-plane scratch files carry PID + plane index, opened `STATUS='REPLACE'`. |
 | `holeen_par.f` | `holeen.f` | Blanket `SAVE` (which raced under OpenMP) replaced with per-thread caches. |
 | `sphqpu_par.f` | `sphqpu.f` | Parallel dot-culling pass; results written serially in the original order, with a serial fallback. |

@@ -11,15 +11,22 @@
 # does for its gitignored inputs - but says so loudly rather than silently.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# This script lives in native/connolly_patches/; the source checkouts live one
+# level up in native/. Looking beside the script found nothing, so the suite's
+# wrapper had been skipping this test.
+NAT="$(cd "$HERE/.." && pwd)"
 SRC="${1:-}"
 if [ -z "$SRC" ]; then
-  for c in "$HERE/stock_build/hole2/src" "$HERE/sphproc_build/hole2/src" "$HOME/hole2/src"; do
+  for c in "$NAT/stock_build/hole2/src" "$NAT/sphproc_build/hole2/src" "$HOME/hole2/src"; do
     [ -f "$c/hcapen.f" ] && SRC="$c" && break
   done
 fi
 if [ -z "$SRC" ] || [ ! -f "$SRC/hcapen.f" ]; then
-  echo "hcapen_cache: SKIP - no hole2/src checkout with hcapen.f found."
-  echo "              pass one as \$1 to run this test."
+  # Group-level form ("SKIP: ...") on its own line: run_tests.sh anchors on
+  # exactly that, and under VMDHOLE_RELEASE=1 a skipped group is a failure.
+  # The previous wording ("hcapen_cache: SKIP - ...") was invisible to it, so
+  # this test skipped through a release gate as a pass.
+  echo "SKIP: no hole2/src checkout with hcapen.f found (pass one as \$1)."
   exit 0
 fi
 
@@ -28,7 +35,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 gfortran $FF -o "$TMP/fast"  "$HERE/test_hcapen_cache.f" \
-    "$HERE/connolly_patches/hcapen_fast.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
+    "$HERE/hcapen_fast.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
 gfortran $FF -o "$TMP/stock" "$HERE/test_hcapen_cache.f" \
     "$SRC/hcapen.f" "$SRC/holeen.f" "$SRC/ut_vector.f"
 

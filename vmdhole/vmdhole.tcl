@@ -25598,19 +25598,31 @@ proc ::VMDHole::_apply_display_change_now {} {
         set plot_cache_order {}
         foreach f [dict keys $results] { dict set results $f asset {} }
     }
-    if {$state(selected_result_frame) eq "" || \
-            ![dict exists $results $state(selected_result_frame)]} {
-        return
+    # Which frame to repaint: the selected result row, or - with no row selected
+    # (the normal state after Run + Play) - the frame whose surface is already on
+    # screen. Without the fallback, a color/scheme/facing change made in that
+    # state invalidated every cache above and then repainted NOTHING: the visible
+    # surface kept its old colors with no message, and the new look only appeared
+    # on the next row click, which reads as "the setting does nothing".
+    variable _last_rendered_frame
+    set _adc_frame $state(selected_result_frame)
+    if {$_adc_frame eq "" || ![dict exists $results $_adc_frame]} {
+        if {[info exists _last_rendered_frame] && \
+                [dict exists $results $_last_rendered_frame]} {
+            set _adc_frame $_last_rendered_frame
+        } else {
+            return
+        }
     }
-    # Build (if needed) + render the selected frame now.
-    if {[catch {load_surface_for_frame $state(selected_result_frame)} err]} {
+    # Build (if needed) + render that frame now.
+    if {[catch {load_surface_for_frame $_adc_frame} err]} {
         # LOG IT TOO, do not just drop it in the status bar - the very next status
         # update overwrites it, and a surface that silently fails to build after a
         # successful compute (profile present, 3D surface absent) is otherwise
         # confusing with no trace of why. vmdcon keeps it in the console, errorInfo
         # keeps the stack.
         set state(status) "Surface not built: $err"
-        catch {vmdcon -err "VMDHole: surface build FAILED for frame '$state(selected_result_frame)': $err"}
+        catch {vmdcon -err "VMDHole: surface build FAILED for frame '$_adc_frame': $err"}
         catch {vmdcon -err "VMDHole: $::errorInfo"}
         return
     }
@@ -30813,10 +30825,19 @@ proc ::VMDHole::_build_conn_lobes_plot {run_dir sph_file frame dotden out_plot {
     # uncolored surface even though nothing about the pore itself changed.
     set map [_conn_lobe_site_map $table $frame $lobes]
     set lat [dict get $cls lateral]
+    # EVERY region is meshed, shown or not; the 4th element says which ones get
+    # DRAWN. The split assigns each triangle to its nearest classified dot among
+    # the regions it is given, so leaving a region out does not remove its
+    # geometry - it redistributes it into whatever is left. Measured on Nav
+    # frame 0: with the pore and all five openings present an opening is 168
+    # triangles; with that opening alone it is 7122 - it swallows the whole
+    # surface, which is what "the opening's colour bleeds across the main pore"
+    # looks like. Meshing the full set also makes each region's cached plot
+    # independent of what was ticked when it was built, which is what the
+    # per-region cache below already assumes.
     set regions {}
-    if {[_conn_site_shown 0]} {
-        lappend regions [list pore [dict get $cls pore] [_conn_site_color 0]]
-    }
+    lappend regions [list pore [dict get $cls pore] [_conn_site_color 0] \
+        [expr {[_conn_site_shown 0] ? 1 : 0}]]
     set li 0
     set _drop_floor 0; set _drop_nosite 0; set _drop_hidden 0
     foreach lb $lobes {
@@ -30825,23 +30846,30 @@ proc ::VMDHole::_build_conn_lobes_plot {run_dir sph_file frame dotden out_plot {
         # A site hidden by the persistence threshold has no row to switch it
         # off, so the render has to honour the threshold itself or it would
         # draw openings the list does not admit exist.
-        if {$sid == 0 || ![_conn_site_shown $sid] || ![_conn_site_persistent $table $sid]} {
+        # A lobe with no site, or one below the persistence floor, has no row to
+        # switch it off, so it is neither drawn nor meshed - but it still has to
+        # be classified out of the pore, which _conn_classify_sph already did.
+        # An UNTICKED site is meshed and simply not drawn (see the note above).
+        if {$sid == 0 || ![_conn_site_persistent $table $sid]} {
             # Counted so the panel can say WHY this frame shows fewer openings
             # than the two-tone view does: that one is per-frame and draws every
             # lateral dot, while this list is pooled over the trajectory and a
             # rare opening never earns a row.
-            if {$sid == 0} { incr _drop_nosite } \
-            elseif {![_conn_site_shown $sid]} { incr _drop_hidden } \
-            else { incr _drop_floor }
+            if {$sid == 0} { incr _drop_nosite } else { incr _drop_floor }
             continue
         }
+        if {![_conn_site_shown $sid]} { incr _drop_hidden }
         set lines {}
         foreach i [lindex $lb 3] { lappend lines [lindex $lat $i] }
-        lappend regions [list "site$sid" $lines [_conn_site_color $sid]]
+        lappend regions [list "site$sid" $lines [_conn_site_color $sid] \
+            [expr {[_conn_site_shown $sid] ? 1 : 0}]]
     }
     variable _conn_lobe_frame_drops
     set _conn_lobe_frame_drops [list $_drop_floor $_drop_nosite $_drop_hidden]
     if {![llength $regions]} { return 0 }
+    set _anyshown 0
+    foreach _r $regions { if {[lindex $_r 3] ne "0"} { set _anyshown 1; break } }
+    if {!$_anyshown} { return 0 }
     return [_write_conn_multi_plot \
         [_build_conn_region_meshes $run_dir $cls $regions $dotden $sph_file $molid $frame] $out_plot]
 }
@@ -31202,9 +31230,13 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
     # regions this call happens to build, so a lobe gets the same density
     # whether it is drawn alone or beside its neighbours.
     set _refr [_conn_median_sprad [concat [dict get $cls pore] [dict get $cls keep]]]
+    set shown_of [dict create]
     foreach r $regions {
-        lassign $r name lines color
+        lassign $r name lines color rshown
         if {[llength $lines] < 4} continue
+        # No 4th element = every region is drawn, which is what the two-tone
+        # caller passes.
+        dict set shown_of $name [expr {$rshown eq "" || $rshown ne "0"}]
         lappend order $name
         set _rdd [_conn_region_dotden $dotden [_conn_median_sprad $lines] $_refr]
         # The density is part of the mesh, so it is part of the filename: without
@@ -31213,7 +31245,15 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
         # not standalone per-region meshes. Without the marker an existing run dir
         # would serve its old sealed-lobe plot, whose mtime is already newer than
         # the .sph, and the fix would appear not to work on any prior run.
-        set tag "${name}_[_conn_margin_tag]_d${_rdd}_u1"
+        # _conn_surface_suffix (trim / pore-gate / draft) too: the reuse check
+        # below is mtime-based against src_sph, which is asymmetric. Turning the
+        # axial trim ON writes a NEW trimmed .sph, so its newer mtime forces a
+        # rebuild - but turning it back OFF returns src_sph to the ORIGINAL
+        # hole_out.sph, whose mtime is older than the trimmed region mesh just
+        # built, so every check passed and the TRIMMED mesh was served with the
+        # trim switched off. Putting the state in the name makes the two
+        # variants different files instead of one file with two meanings.
+        set tag "${name}_[_conn_margin_tag]_d${_rdd}_u1[_conn_surface_suffix]"
         set rsph  [file join $run_dir "hole_conn_${tag}.sph"]
         set rsos  [file join $run_dir "hole_conn_${name}.sos"]
         set rplot [file join $run_dir "hole_conn_${tag}.vmd_plot"]
@@ -31250,7 +31290,9 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
     # plain CONNOLLY draws. Each region still ends up with its own plot file, so
     # per-region colour, material, property and show/hide are untouched.
     if {[llength $tobuild] > 0} {
-        set _uni_tag "all_[_conn_margin_tag]_d${dotden}"
+        # Same reason as the per-region tag above: this union mesh is built from
+        # src_sph, so a trimmed and an untrimmed build must not share a path.
+        set _uni_tag "all_[_conn_margin_tag]_d${dotden}[_conn_surface_suffix]"
         set _uni_sph  [file join $run_dir "hole_conn_${_uni_tag}.sph"]
         set _uni_sos  [file join $run_dir "hole_conn_${_uni_tag}.sos"]
         set _uni_plot [file join $run_dir "hole_conn_${_uni_tag}.vmd_plot"]
@@ -31336,6 +31378,8 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
     set _prop_possible [expr {$molid ne "" && [string is integer -strict $molid] && $molid >= 0}]
     set parts {}
     foreach name $order {
+        # Meshed so the split is complete, but not drawn.
+        if {[dict exists $shown_of $name] && ![dict get $shown_of $name]} continue
         set rp ""
         if {[dict exists $cached $name]} {
             set rp [dict get $cached $name]
@@ -33452,7 +33496,14 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
         triangulated - wireframe {
             # wireframe shares this mesh; only the rendering differs (edges as lines).
             if {[_conn_lobes_active]} {
-                set lp [file join $run_dir "hole_conn_lobes_[_conn_lobes_tag].vmd_plot"]
+                # Density + draft marker belong in this COMBINED plot's name too,
+                # not just in the per-region parts: without them a playback
+                # (draft, low-density) build landed under the same name the
+                # settle pass then geom_cache_valid-approved, so stopping on a
+                # frame kept showing the coarse draft split - region boundaries
+                # visibly leaking into the pore - until an unrelated
+                # checkbox/color toggle changed the tag and forced a rebuild.
+                set lp [file join $run_dir "hole_conn_lobes_[_conn_lobes_tag]_d${conn_dotden}[_conn_surface_suffix].vmd_plot"]
                 # Short-circuit an already-built scene, the way the two-tone
                 # branch below always has. _conn_lobes_tag encodes which regions
                 # are shown, their colors, the scheme and the persistence
@@ -33507,7 +33558,10 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
                 # run directory holds a pre-union-mesh copy whose mtime already
                 # beats the .sph, so geom_cache_valid would serve sealed lobes for
                 # ever and the fix would look inert.
-                set tt [file join $run_dir "hole_conn_2tone_[_conn_margin_tag]_u1.vmd_plot"]
+                # Same density/draft identity as the lobes plot above, and for
+                # the same reason: the settle pass must never reuse a coarse
+                # draft-built split.
+                set tt [file join $run_dir "hole_conn_2tone_[_conn_margin_tag]_u1_d${conn_dotden}[_conn_surface_suffix].vmd_plot"]
                 if {[geom_cache_valid $tt $sph_file]} {
                     return [dict create kind vmd_plot path $tt]
                 }
@@ -33677,7 +33731,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # A draft-density base gets a draft-named color file. Keyed on the BASE, not
     # on the draft flag: only CONNOLLY has a cheaper draft mesh, so no other
     # method's filenames move and no other method's cache is split.
-    if {[string match "*_draft.vmd_plot" $plot0]} { append msuffix "_draft" }
+    if {[string match "*_draft*.vmd_plot" $plot0]} { append msuffix "_draft" }
     # A caller coloring a SUB-mesh (a Connolly region) needs its own cache file:
     # same scheme and settings, different geometry, so sharing the run-wide name
     # would let the two overwrite each other's colors.
@@ -35693,7 +35747,15 @@ proc ::VMDHole::run_analysis {} {
                         set fh [open $sh_file w]
                         puts $fh "#!/bin/sh"
                         puts $fh "cd [shell_quote $tmp_dir] || exit 1"
-                        if {$_fb_script ne ""} {
+                        if {$_fb_script eq "" && ![_run_uses_card capsule]} {
+                            puts $fh "$omp_prefix[shell_quote $state(hole_exec)] < hole.inp > hole_out.txt 2>/dev/null"
+                            # Capture the ENGINE's status on the very next line:
+                            # the script continues with cp/awk/printf/rm, and the
+                            # pipe close below sees only the LAST command's status,
+                            # so a segfaulting HOLE looked like a clean run. Phase 3
+                            # reads this back and refuses to register the frame.
+                            puts $fh "_vh_rc=\$?"
+                        } elseif {$_fb_script ne ""} {
                             # No binary: the same pool, running the pure-Tcl engine
                             # per frame. Its cards come from the control file just
                             # written, so the two paths cannot diverge on input, and
@@ -35717,15 +35779,39 @@ proc ::VMDHole::run_analysis {} {
                             append _cmd " [shell_quote $_fb_script]"
                             foreach _a $_fb { append _cmd " [shell_quote $_a]" }
                             puts $fh "$_cmd > hole_out.txt 2>&1"
+                            puts $fh "_vh_rc=\$?"
                         } else {
+                            # CAPSULE's Monte Carlo search can collapse on one side
+                            # of CPOINT under an unlucky seed: measured on the Nav
+                            # channel, seed 1 (the default) gave 15 A of a 39.5 A
+                            # pore with the -VE side reduced to ~1 A, and HOLE says
+                            # nothing. Spherical and Connolly are unaffected. So a
+                            # capsule frame whose .sph covers under 2 A on one side
+                            # of CPOINT and over 2 A with 5x as many records on the
+                            # other (_profile_one_sided's rule, in record units) is
+                            # re-run with the next seed, up to three times, and
+                            # the seed that produced the kept result is recorded
+                            # beside it (vmdhole_seed.dat). Deterministic - seed,
+                            # seed+1, ... - so the run stays reproducible. Capsule
+                            # never produces a 2dmaps run, so no second HOLE run
+                            # has to be told about the changed seed.
+                            set _seed0 [_hole_seed]
+                            set _samp [expr {[string is double -strict $state(sample)] && $state(sample) > 0 \
+                                ? $state(sample) : 0.25}]
+                            puts $fh "rm -f [shell_quote [file join $run_dir vmdhole_seed.dat]] 2>/dev/null"
+                            puts $fh "_vh_try=0"
+                            puts $fh "while :; do"
                             puts $fh "$omp_prefix[shell_quote $state(hole_exec)] < hole.inp > hole_out.txt 2>/dev/null"
+                            puts $fh "_vh_rc=\$?"
+                            # QC1 = the first cap-centre record of each stored slice;
+                            # the record number is a four-digit field at columns
+                            # 23-26, negative on the -VE side, 0 for the start slice.
+                            puts $fh "\[ \"\$_vh_rc\" -eq 0 \] && \[ \"\$_vh_try\" -lt 3 \] && awk -v S=$_samp '/^ATOM/ && \$3==\"QC1\" {r=substr(\$0,23,4)+0; if (r>0) p++; else if (r<0) n++} END {exit !((p*S<2 && n*S>2 && n>5*p) || (n*S<2 && p*S>2 && p>5*n))}' hole_out.sph 2>/dev/null || break"
+                            puts $fh "_vh_try=\$((_vh_try+1))"
+                            puts $fh "sed -i \"s/^raseed .*/raseed \$(($_seed0+_vh_try))/\" hole.inp"
+                            puts $fh "printf '%s' \"\$(($_seed0+_vh_try))\" > [shell_quote [file join $run_dir vmdhole_seed.dat]] 2>/dev/null"
+                            puts $fh "done"
                         }
-                        # Capture the ENGINE's status on the very next line: the
-                        # script continues with cp/awk/printf/rm, and the pipe
-                        # close below sees only the LAST command's status, so a
-                        # segfaulting HOLE looked like a clean run. Phase 3 reads
-                        # this back and refuses to register the frame.
-                        puts $fh "_vh_rc=\$?"
                         puts $fh "printf '%s' \"\$_vh_rc\" > [shell_quote [file join $run_dir vmdhole_status.dat]] 2>/dev/null"
                         # HOLE can stop its axial search early and say so
                         # ("WARNING RUN MAY BE INCOMPLETE IN +VE DIRECTION")
@@ -35900,6 +35986,7 @@ proc ::VMDHole::run_analysis {} {
         # Frames whose profile covers only one side of their own CPOINT. Separate
         # from the list above because HOLE does NOT warn about this one.
         set _onesided_frames {}
+        set _reseeded_frames {}
         set _nparsed 0
         set _ntotal [llength $frames]
         set _last_ui_ms [clock milliseconds]
@@ -35944,10 +36031,12 @@ proc ::VMDHole::run_analysis {} {
                 # Survived the crash check, so this frame becomes a result -
                 # but HOLE may still have cut its own search short. Recorded
                 # against the frame so the summary can name it.
-                set _inc [_hole_frame_incomplete $run_dir]
+                set _inc [_incomplete_real_dirs $run_dir [_hole_frame_incomplete $run_dir]]
                 if {$_inc ne ""} { lappend _incomplete_frames $frame [_incomplete_dirs_label $_inc] }
                 set _os [_profile_one_sided $run_dir $profile]
                 if {$_os ne ""} { lappend _onesided_frames $frame $_os }
+                set _sd [_hole_frame_seed $run_dir]
+                if {$_sd ne ""} { lappend _reseeded_frames $frame $_sd }
             }
 
             if {[lsearch -exact $reused $frame] >= 0} {
@@ -36049,17 +36138,15 @@ proc ::VMDHole::run_analysis {} {
                 their earlier results were discarded rather than left active:\
                 [join $_stale_dropped {, }]"
         }
-        # HOLE's own early-stop warning. Reported like the two above and NOT as
-        # a failure, because it is not one: the frame keeps its profile and the
-        # engine exits 0. What it means is that the search stopped before the
-        # pore opened out to ENDRAD in the named direction, so anything read off
-        # the ends of that profile - the lining overlay, the mean, the span - is
-        # covering less of the channel than the user asked for, with nothing
-        # else on screen to say so. Measured to fire on CAPSULE where spherical
-        # and Connolly stay silent, and it is NOT a severity signal: on 1GRM it
-        # fires while the capsule profile still spans 16.25 A against
-        # spherical's 16.50. So it is reported verbatim, not editorialised into
-        # a truncation claim.
+        # HOLE's own early-stop warning, kept only for a direction whose side of
+        # the .sph really is empty (see the gate where _incomplete_frames is
+        # filled: the warning itself is a roundoff coin flip in HOLE's capsule
+        # conductance code, and fires on complete profiles). Reported like the
+        # two above and NOT as a failure: the frame keeps its profile and the
+        # engine exits 0. A direction that is genuinely empty means anything
+        # read off that end - the lining overlay, the mean, the span - covers
+        # less of the channel than the user asked for, with nothing else on
+        # screen to say so.
         if {[llength $_incomplete_frames] > 0} {
             set _if {}
             foreach {_fr _dir} $_incomplete_frames { lappend _if "$_fr ($_dir)" }
@@ -36092,6 +36179,18 @@ proc ::VMDHole::run_analysis {} {
                 Monte Carlo, so a different Random seed (File > Settings) usually recovers\
                 it. Anything read off that end - lining, mean, span - covers only the part\
                 that was searched." warn
+        }
+        if {[llength $_reseeded_frames] > 0} {
+            set _rs {}
+            foreach {_fr _sd} $_reseeded_frames { lappend _rs "$_fr (seed $_sd)" }
+            set _nrs [llength $_rs]
+            set _rss [lrange $_rs 0 9]
+            if {$_nrs > 10} { lappend _rss "..." }
+            append fail_note " — capsule search re-seeded on $_nrs frame(s): [join $_rss {, }]"
+            _note "The capsule search collapsed to one side of CPOINT on $_nrs frame(s) and\
+                was re-run with another random seed (frame, seed): [join $_rs {, }]. The\
+                kept profiles cover both sides; the seed used is recorded beside each\
+                frame (vmdhole_seed.dat)." warn
         }
         vmdcon -info "VMDHole: run complete — $n_new new frame(s), $n_total total.$fail_note  Output: $root_dir$loc_note"
         set state(status) "Added $n_new frame(s) - $n_total total.$fail_note Pre-building surfaces..."
@@ -44334,7 +44433,7 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
     # must not be handed that mesh back - drop it and let the build below run.
     # Its file stays on disk under its own name, so returning to motion reuses it.
     if {!$draft && $asset ne {} && [dict exists $asset path] && \
-            [string match "*_draft.vmd_plot" [dict get $asset path]]} {
+            [string match "*_draft*.vmd_plot" [dict get $asset path]]} {
         set asset {}
         catch {dict set results $frame asset {}}
     }
@@ -44501,6 +44600,10 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
         default { error "Unsupported asset type for frame $frame." }
     }
     catch {mol rename $mol "HOLE surface (frame $frame)"}
+    # The frame now on screen - apply_display_change's repaint target when no
+    # result row is selected.
+    variable _last_rendered_frame
+    set _last_rendered_frame $frame
     # Optional companion channel-path overlay drawn on the same track (skipped for the
     # CAPSULE stadiums, whose .sph is the escaped-sphere cloud, not a clean centerline).
     if {$state(show_centerline) && [dict get $asset kind] ni {sph capsule_lines}} {
@@ -54714,6 +54817,64 @@ proc ::VMDHole::_hole_frame_incomplete {run_dir} {
     if {[catch {open $f r} fh]} { return "" }
     set v [string trim [read $fh]]
     close $fh
+    return $v
+}
+
+proc ::VMDHole::_sph_side_counts {run_dir} {
+    # Stored search records on each side of CPOINT, read off the frame's own
+    # .sph: the first-centre record of every slice (QSS for spherical and
+    # Connolly, QC1 for capsule) with a positive / negative record number.
+    # Record 0 is the start slice; -888/-999 are Connolly's escaped and
+    # flood-fill markers, not slices. Returns {n_plus n_minus}.
+    set f [file join $run_dir hole_out.sph]
+    if {[catch {open $f r} fh]} { return {0 0} }
+    set np 0; set nn 0
+    while {[gets $fh line] >= 0} {
+        if {![string match "ATOM*" $line]} continue
+        set nm [string trim [string range $line 12 15]]
+        if {$nm ne "QC1" && $nm ne "QSS"} continue
+        set r [string trim [string range $line 22 25]]
+        if {![string is integer -strict $r] || $r < -800} continue
+        if {$r > 0} { incr np } elseif {$r < 0} { incr nn }
+    }
+    close $fh
+    return [list $np $nn]
+}
+
+proc ::VMDHole::_incomplete_real_dirs {run_dir raw} {
+    # HOLE's "MAY BE INCOMPLETE" text, reduced to the directions that really
+    # are. The warning is printed by HOLE's CAPSULE conductance code
+    # (hcapgr.f), not by the search: it looks for a stored record lying past
+    # the last record's own cap-centre midpoint with a strict test, and both
+    # cap centres of that record sit in one slice plane, so the two
+    # projections differ only by roundoff (measured 2e-13 A). It fires on a
+    # coin flip - 47 of 100 Nav frames, every profile complete to ENDRAD - and
+    # the only real early stop HOLE has is the STRMAX overflow, which prints
+    # its own message. So a direction is kept only when its side of the .sph
+    # actually holds fewer than two stored records. Returns "" when nothing
+    # real is left.
+    if {$raw eq ""} { return "" }
+    lassign [_sph_side_counts $run_dir] np nn
+    set keep ""
+    if {[string first "IN +VE" $raw] >= 0 && $np < 2} {
+        append keep "MAY BE INCOMPLETE IN +VE DIRECTION "
+    }
+    if {[string first "IN -VE" $raw] >= 0 && $nn < 2} {
+        append keep "MAY BE INCOMPLETE IN -VE DIRECTION "
+    }
+    return [string trim $keep]
+}
+
+proc ::VMDHole::_hole_frame_seed {run_dir} {
+    # The seed a capsule frame was re-run with after its first search collapsed
+    # to one side of CPOINT (see the job script), or "" when the frame used the
+    # run's own seed. No sidecar = no re-run.
+    set f [file join $run_dir vmdhole_seed.dat]
+    if {![file exists $f]} { return "" }
+    if {[catch {open $f r} fh]} { return "" }
+    set v [string trim [read $fh]]
+    close $fh
+    if {![string is integer -strict $v]} { return "" }
     return $v
 }
 
