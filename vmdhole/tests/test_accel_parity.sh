@@ -73,7 +73,17 @@ fi
 # --- 4. byte-identical vs stock, across densities and thread counts ------------
 # thread count 3 is deliberate: it does not divide the sphere count evenly, so a
 # chunking bug in the parallel cull / ordered write shows up here and nowhere else.
-if [ -x "$EXE/sph_process" ] && [ -x "$STOCK" ] && [ -f "$BIG" ]; then
+#
+# The stock reference has to BE stock. native/stock_build was found carrying the
+# patch set (its Makefile listed sphqpu_par.o, the binary linked libgomp), so
+# this comparison had been diffing the accelerated cull against itself and
+# could not have failed. A reference that is an OpenMP build is a FAIL here,
+# not a skip: the test would otherwise go green while proving nothing.
+if [ -x "$STOCK" ] && { ldd "$STOCK" 2>/dev/null | grep -qi gomp || nm "$STOCK" 2>/dev/null | grep -q omp_fn; }; then
+  bad "stock reference $STOCK is an OpenMP (patched) build - byte-identity vs itself proves nothing; rebuild native/stock_build from the pristine Makefile"
+  STOCK=""
+fi
+if [ -x "$EXE/sph_process" ] && [ -n "$STOCK" ] && [ -x "$STOCK" ] && [ -f "$BIG" ]; then
   T2=$(mktemp -d); bad_n=0
   for d in 10 15 20 25; do
     OMP_NUM_THREADS=1 "$STOCK" -sos -dotden $d -color "$BIG" "$T2/ref.sos" >/dev/null 2>&1
