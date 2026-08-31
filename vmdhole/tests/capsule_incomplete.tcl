@@ -47,12 +47,12 @@ cd [file join $here ..]
 source vmdhole.tcl
 
 if {![file readable $PDB] || ![file readable $RAD]} {
-    puts "  SKIP  no capsule-incomplete fixture / amberuni.rad"
+    puts "SKIP: capsule_incomplete - no capsule-incomplete fixture / amberuni.rad"
     puts "INCOMPLETE-RESULT pass=$pass fail=$fail"
     quit
 }
 if {![file executable $REF]} {
-    puts "  SKIP  no HOLE binary at $REF (the fallback engine does not emit this warning)"
+    puts "SKIP: capsule_incomplete - no HOLE binary at $REF (the fallback engine does not emit this warning)"
     puts "INCOMPLETE-RESULT pass=$pass fail=$fail"
     quit
 }

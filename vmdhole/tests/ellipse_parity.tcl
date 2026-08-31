@@ -45,9 +45,9 @@ if {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne
 }
 ::VMDHole::init_executables
 
-if {![file readable $PDB] || ![file readable $RAD]} { puts "  SKIP  no 1GRM fixture"; done }
+if {![file readable $PDB] || ![file readable $RAD]} { puts "SKIP: ellipse_parity - no 1GRM fixture"; done }
 if {![::VMDHole::asymmetry_c_available] || ![::VMDHole::sos_triangle_has_feature asymellipse]} {
-    puts "  SKIP  no sos_triangle with --asym-ellipse"
+    puts "SKIP: ellipse_parity - no sos_triangle with --asym-ellipse"
     done
 }
 
