@@ -48,10 +48,10 @@ sh tests/unit/test_sos_nonfinite_input.sh    # or one at a time
 | `test_tsv_reader_parity.sh` | The threaded TSV reader skipping `_resolve_conn_radii`, so a CONNOLLY trajectory's bottleneck differed 2.5x between the serial and threaded paths. |
 | `test_tsv_publish_on_failure.sh` | A failed profile parse (zero rows, or a throw) truncating the good `hole_profile.tsv` beside it. Both TSV writers must publish by rename only after a parse that produced rows. |
 
-## Wiring these into the main suite
+## Wiring
 
-They are intentionally *not* wired in yet. To adopt one, add its name to
-`GROUPS` in `vmdhole/tests/run_tests.sh` and give it a `test_*.sh` wrapper in
-`vmdhole/tests/`, or call `run_unit_tests.sh` as a single group. Both of these
-are also good candidates for the `tcl-lint` / `build-c` CI jobs in
-`.github/workflows/tests.yml`, because neither needs VMD.
+CI runs the whole directory: the `tcl-suite` job in
+`.github/workflows/tests.yml` calls `run_unit_tests.sh` (it needs only tclsh,
+a C compiler and python3, all of which that job installs). The main suite does
+not invoke it; to adopt a test as a `run_tests.sh` group, add its name to
+`GROUPS` there and give it a `test_*.sh` wrapper in `vmdhole/tests/`.
