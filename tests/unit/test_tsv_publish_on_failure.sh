@@ -40,6 +40,12 @@ cat > "$T/bad_out.txt" <<'TXTEOF'
  ***ERROR****
  radius file has no VDWR entry for element QQ
 TXTEOF
+# One data row: the publish gate is points == 0 exactly, so a single-row
+# profile must still publish (guards a gate mutated to any higher threshold).
+cat > "$T/one_row_out.txt" <<'TXTEOF'
+ cenxyz.cvec     radius  cen_line_D sum{s/area}
+     1.00000     2.50000    0.40000    0.00400
+TXTEOF
 
 cat > "$T/drv.tcl" <<'TCLEOF'
 namespace eval ::VMDHole {}
@@ -88,6 +94,11 @@ proc exercise {name parsecmd} {
     } else {
         puts "BAD $name: valid output misparsed: $r"
     }
+    if {[dict get $r tsv_file] eq $dest} {
+        puts "OK $name: success return names the published destination"
+    } else {
+        puts "BAD $name: success return names '[dict get $r tsv_file]', not the destination"
+    }
     if {[file exists $dest] && ![file exists $dest.part]} {
         puts "OK $name: successful parse published the TSV and removed the .part"
     } else {
@@ -101,6 +112,11 @@ proc exercise {name parsecmd} {
         puts "OK $name: stale output is reported as a failed parse"
     } else {
         puts "BAD $name: stale output not reported as failure: $r"
+    }
+    if {[dict get $r tsv_file] eq $dest} {
+        puts "OK $name: failure return names the destination, not the .part"
+    } else {
+        puts "BAD $name: failure return names '[dict get $r tsv_file]'"
     }
     if {[readfile $dest] eq $good} {
         puts "OK $name: failed parse left the good TSV byte-identical"
@@ -121,6 +137,15 @@ proc exercise {name parsecmd} {
     } else {
         puts "BAD $name: failed parse created a file in a fresh dir"
     }
+
+    # 4. the gate is points == 0 exactly: one row is a success and publishes
+    set dest3 [file join $dir one_row_profile.tsv]
+    set r [{*}$parsecmd [file join $T one_row_out.txt] $dest3]
+    if {[dict get $r valid] == 1 && [dict get $r points] == 1 && [file exists $dest3]} {
+        puts "OK $name: a single-row profile publishes (gate is zero, not a threshold)"
+    } else {
+        puts "BAD $name: single-row profile mishandled: valid=[dict get $r valid] exists=[file exists $dest3]"
+    }
 }
 
 exercise serial {::VMDHole::parse_profile}
@@ -135,7 +160,7 @@ if [ "$rc" -ne 0 ] || printf '%s\n' "$out" | grep -q '^FATAL'; then
 fi
 nok=$(printf '%s\n' "$out" | grep -c '^OK ')
 nbad=$(printf '%s\n' "$out" | grep -c '^BAD ')
-if [ "$nbad" -eq 0 ] && [ "$nok" -ge 12 ]; then
+if [ "$nbad" -eq 0 ] && [ "$nok" -ge 18 ]; then
     echo "  PASS  a failed parse can no longer truncate a published profile ($nok checks)"
     echo "  -> $nok passed, 0 failed"
 else
