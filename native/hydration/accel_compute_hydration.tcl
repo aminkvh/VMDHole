@@ -714,7 +714,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
             if {$_g < 1.0} { set _g 1.0 }
             set _ne [expr {$nv/$_g}]
             if {$_ne < 1.0} { set _ne 1.0 }
-            if {$_ne > $nv} { set _ne double($nv) }
+            if {$_ne > $nv} { set _ne [expr {double($nv)}] }
             set _sem [expr {$_gsd/sqrt($_ne)}]
         }
         lappend n_eff $_ne
