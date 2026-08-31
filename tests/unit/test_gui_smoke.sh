@@ -36,6 +36,7 @@ if ! echo 'if {[catch {package require Tk}]} {exit 1}; exit 0' | tclsh >/dev/nul
 fi
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
+export VMDHOLE_HARNESS_TMP="$T"
 cat > "$T/harness.tcl" <<'HARNESS_EOF'
 # Shared GUI-review harness: source vmdhole.tcl under plain tclsh+Tk with VMD
 # stubs and build the real GUI. Usage:  tclsh harness.tcl <script.tcl>
@@ -96,7 +97,8 @@ proc tk_chooseDirectory {args} { lappend ::TKDIALOG_LOG [list chooseDirectory $a
 namespace eval ::VMDHole {}
 source [file join $::env(VMDHOLE_ROOT) vmdhole vmdhole.tcl]
 # keep config I/O away from the user's real ~/.vmdhole_config
-set ::VMDHole::config_file [file join [pwd] .harness_vmdhole_config]
+set ::HARNESS_TMP [expr {[info exists ::env(VMDHOLE_HARNESS_TMP)] ? $::env(VMDHOLE_HARNESS_TMP) : [pwd]}]
+set ::VMDHole::config_file [file join $::HARNESS_TMP .harness_vmdhole_config]
 catch {file delete $::VMDHole::config_file}
 
 ::VMDHole::show_gui
@@ -317,7 +319,7 @@ set fh [open $cfg w]; puts $fh "keep_visualization ="; close $fh
 set rc [catch {::VMDHole::close_gui} err]
 puts "TORNBOOL rc=$rc [expr {$rc==0 ? {OK} : "BAD $err"}]"
 # 7. unreadable config: GUI still opens
-set ::VMDHole::config_file [file join [pwd] .harness_cfg_dir]
+set ::VMDHole::config_file [file join $::HARNESS_TMP .harness_cfg_dir]
 file mkdir $::VMDHole::config_file
 set rc [catch {::VMDHole::load_config} err]
 puts "UNREADABLE rc=$rc [expr {$rc==0 ? {OK} : "BAD $err"}]"
@@ -328,7 +330,7 @@ set ::VMDHole::state(mole_weight_disp) "Length"
 set fh [open $cfg r]; set t [read $fh]; close $fh
 puts "WEIGHTKEY [expr {[string match "*mole_weight_disp = Length*" $t] ? {OK} : {BAD}}]"
 # 9. a caller-preset engine path is not persisted by init_executables
-set eng [file join [pwd] .harness_fake_hole]
+set eng [file join $::HARNESS_TMP .harness_fake_hole]
 set fh [open $eng w]; puts $fh "#!/bin/sh"; close $fh
 file attributes $eng -permissions 0755
 file delete -force $cfg
