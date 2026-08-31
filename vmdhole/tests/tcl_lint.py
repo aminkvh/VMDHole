@@ -121,6 +121,20 @@ def main():
                 findings.append(("dead-callback", i + 1,
                                  f"bind {m.group(1)} - no such proc"))
 
+    # --- bare-mathfunc -------------------------------------------------------
+    # `set x double($n)` stores the six-character STRING "double(" plus the
+    # argument - there is no expr and no command substitution, so the guard it
+    # sits in silently produces a non-number. The author meant
+    # `set x [expr {double($n)}]`.
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith("#"):
+            continue
+        if re.search(r'(?:^|[;{])\s*set\s+[\w:]+\s+'
+                     r'(?:double|int|wide|abs|sqrt|floor|ceil|round|exp|log|log10|pow)'
+                     r'\([^()]*\)\s*(?:$|[;}])', l):
+            findings.append(("bare-mathfunc", i + 1,
+                             f"literal expr-function string: {l.strip()[:60]}"))
+
     # --- undeclared-var ------------------------------------------------------
     nsvars = set()
     for stmt in re.split(r'[;\n]', src):
@@ -162,7 +176,7 @@ def main():
             findings.append(("no-BS", ln, f"narrative/history comment: {txt}"))
 
     if not findings:
-        print("  clean: no switch-comment, switch-parity, dead-callback, "
+        print("  clean: no switch-comment, switch-parity, dead-callback, bare-mathfunc, "
               f"undeclared-var or no-BS findings ({len(nobs)}/{NOBS_BASELINE} "
               "narrative comments, not growing)")
         return 0
