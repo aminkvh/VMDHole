@@ -787,7 +787,9 @@ proc ::VMDHole::_config_skip_keys {} {
 proc ::VMDHole::load_config {} {
     variable config_file
     variable state
+    variable _loading_config
     if {![file exists $config_file]} { return }
+    set _loading_config 1
     # Keys that must NOT be restored from disk even if an older config wrote them:
     # per-molecule/analysis inputs (selection, CPOINT/CVECT, HOLE params) and per-panel
     # view toggles (display_mode, surface_color, ...) describe one specific analysis, not
@@ -805,7 +807,13 @@ proc ::VMDHole::load_config {} {
     # derived from a real key. show_mean_surface / mean_profile_fill in particular
     # must stay non-sticky - persisting Fill was a reported complaint.
     set skip_keys [_config_skip_keys]
-    set fh [open $config_file r]
+    if {![file isfile $config_file] || [catch {open $config_file r} fh]} {
+        # An unreadable config (NFS hiccup, wrong permissions) must not stop
+        # the GUI from opening - run on defaults and say so.
+        catch {vmdcon -warn "VMDHole: could not read $config_file ($fh) - using defaults."}
+        set _loading_config 0
+        return
+    }
     while {[gets $fh line] >= 0} {
         set line [string trim $line]
         if {$line eq "" || [string match "#*" $line]} { continue }
@@ -869,6 +877,7 @@ proc ::VMDHole::load_config {} {
     if {[info exists state(pore_lining_view)]} {
         _sync_pore_lining_view_disp
     }
+    set _loading_config 0
 }
 
 proc ::VMDHole::save_config {} {
@@ -900,7 +909,7 @@ proc ::VMDHole::save_config {} {
         water_dens_cap water_kde water_kde_bw water_poisson_floor water_energy_shift
         mole_probe mole_interior mole_minlen mole_bottleneck mole_originradius
         mole_mindepth mole_mindeplen mole_cover mole_autocover mole_maxorigins
-        mole_bottletol mole_maxsim mole_weight mole_fbl mole_exits_only
+        mole_bottletol mole_maxsim mole_weight_disp mole_fbl mole_exits_only
         mole_strict_interior tunnel_cluster_maxdev conn_trim_escaped
         conn_pore_gate conn_pore_margin conn_draft_dotden
         mean_3d_mode mean_display_mode conn_lobe_tolz conn_lobe_tola conn_lobe_minseen
@@ -912,6 +921,11 @@ proc ::VMDHole::save_config {} {
         mean_tunnel_display_mode
         export_run_map export_run_next
     }
+    # Sibling temp + rename, not truncate-in-place: save runs automatically
+    # (GUI open, headless init, export-name resolution), so a concurrent
+    # load_config in the same user's batch job could read a torn file.
+    set _cfg_pub $config_file
+    set config_file "$_cfg_pub.tmp[pid]"
     set fh [open $config_file w]
     puts $fh "# VMDHole configuration - auto-generated"
     foreach key $persistent_keys {
@@ -920,6 +934,8 @@ proc ::VMDHole::save_config {} {
         }
     }
     close $fh
+    catch {file rename -force $config_file $_cfg_pub}
+    set config_file $_cfg_pub
 }
 
 proc ::VMDHole::find_hole_exe {} {
@@ -986,7 +1002,11 @@ proc ::VMDHole::init_executables {} {
                 if {[file exists $rp]} { set state(radius_file) $rp; break }
             }
         }
-        save_config
+        # Not when a caller preset any engine path: the documented batch
+        # recipe points at job-local binaries, and persisting them would
+        # overwrite the interactive session's saved paths with ones that may
+        # not exist tomorrow.
+        if {[dict size $_preset] == 0} { save_config }
     }
     if {$state(hole_exec) ne "" && [file executable $state(hole_exec)]} {
         vmdcon -info "VMDHole: hole=$state(hole_exec)"
@@ -1334,8 +1354,10 @@ proc ::VMDHole::show_gui {} {
     # openings list came up empty with nothing computed.
     variable _calc_depth
     variable state
-    set _calc_depth 0
-    set state(abort_requested) 0
+    if {![_op_in_progress]} {
+        set _calc_depth 0
+        set state(abort_requested) 0
+    }
     if {!$_gui_opened} {
         vmdcon -info "VMDHole v$version[expr {$build eq "" ? "" : " (build $build)"}] — GUI opened."
         set _gui_opened 1
@@ -17433,10 +17455,20 @@ proc ::VMDHole::_tunnel_cfg {} {
 
 # Panel-entry guards. `positive` rejects <= 0 as well as non-numeric, which is
 # what every MOLE radius wants; MinTunnelLength legitimately takes 0.
+proc ::VMDHole::_metrics_water_probe {} {
+    # THE reader for the Channel-metrics water-probe field: the one metrics
+    # entry with no validation - an emptied or mistyped field ("1,15") killed
+    # the profile plot's whole metrics pass on the next redraw.
+    variable state
+    set p [expr {[info exists state(metrics_water_probe)] ? [string trim $state(metrics_water_probe)] : ""}]
+    if {![_is_finite $p] || $p < 0} { return 1.15 }
+    return $p
+}
+
 proc ::VMDHole::_num_or {key def positive} {
     variable state
     set v [string trim [set state($key)]]
-    if {![string is double -strict $v]} { return $def }
+    if {![_is_finite $v]} { return $def }
     if {$positive && $v <= 0} { return $def }
     if {!$positive && $v < 0} { return $def }
     return $v
@@ -17683,7 +17715,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
     # or scripted run (batch import, the test suite) would block forever on a
     # dialog nobody can answer. Without a GUI the existing results are left
     # alone and the run proceeds - never destroy data no one was asked about.
-    if {!$is_tmp && [_have_tk]} {
+    if {!$is_tmp && [_have_tk] && [winfo exists $w]} {
         set _existing [glob -nocomplain -directory $root -type d "tunnel_*"]
         if {[llength $_existing] > 0 \
                 && [info exists state(overwrite_results)] && $state(overwrite_results)} {
@@ -20670,7 +20702,7 @@ proc ::VMDHole::close_gui {} {
     set have_vis [expr {($current_surface_mol >= 0 && \
         ![catch {molinfo $current_surface_mol get name}]) || [dict size $results] > 0 \
         || [llength $tunnel_result_frames] > 0}]
-    if {$state(keep_visualization) && $have_vis} {
+    if {[string is true -strict $state(keep_visualization)] && $have_vis} {
         # Leave the surface molecule, the frame-sync trace, and the cached
         # results in place so the user can keep scrubbing/playing the trajectory
         # and watch the HOLE surface follow the frames after the panel closes.
@@ -20741,7 +20773,7 @@ proc ::VMDHole::close_gui {} {
     # tkwait return, the dialog release its own grab, and the caller unwind.
     catch {set ::VMDHole::_overwrite_ans 0}
     _withdraw_child_dialogs
-    if {[winfo exists $w]} { catch {wm withdraw $w} }
+    if {[_have_tk] && [winfo exists $w]} { catch {wm withdraw $w} }
     # And the entry is a toggle, so VMD also has to be told it is off, or its
     # own state says "on" with nothing on screen and the next click is a no-op.
     catch {menu vmdhole off}
@@ -23568,7 +23600,7 @@ proc ::VMDHole::reset_session {} {
     # added that no longer exist.
     if {[_op_in_progress]} {
         variable state
-        set state(status) "Another operation is already in progress."
+        set state(status) "Another operation is already in progress - Abort it first, then Reset."
         return
     }
     variable results
@@ -35789,7 +35821,9 @@ proc ::VMDHole::run_analysis {} {
             # on a dialog nobody can answer or died on `toplevel`. Without a
             # GUI the existing results are left alone and the run proceeds -
             # never destroy data no one was asked about.
-            if {[llength $existing_frames] > 0 && $state(overwrite_results) && [_have_tk]} {
+            variable w
+            if {[llength $existing_frames] > 0 && $state(overwrite_results) \
+                    && [_have_tk] && [winfo exists $w]} {
                 if {![confirm_overwrite_dialog $root_dir [llength $existing_frames]]} {
                     set state(status) "Run cancelled — existing results preserved."
                     set _cancelled 1
@@ -37450,7 +37484,7 @@ proc ::VMDHole::metrics_for_frame {frame {kappa_override ""}} {
     }
     set kappa [expr {$kappa_override ne "" ? $kappa_override : [metrics_kappa]}]
     set F [profile_cond_F $profile]
-    set probe [expr {[info exists state(metrics_water_probe)] ? $state(metrics_water_probe) : 1.15}]
+    set probe [_metrics_water_probe]
     return [dict create \
         min_radius $rmin \
         steric_radius $_st_rmin \
@@ -37481,7 +37515,7 @@ proc ::VMDHole::metrics_for_tunnel {} {
     lassign [_tunnel_profile_series $tuple] cl yv
     if {[llength $yv] < 2} { return {} }
     set rmin [lindex $tuple 0]
-    set probe [expr {[info exists state(metrics_water_probe)] ? $state(metrics_water_probe) : 1.15}]
+    set probe [_metrics_water_probe]
     return [dict create \
         min_radius $rmin \
         steric_radius $rmin \
@@ -39023,6 +39057,12 @@ proc ::VMDHole::_on_ion_radius_fallback_changed {args} {
     # directions - checking fallback checks rename, unchecking it unchecks
     # rename too. The rename box only exists independently of fallback if a
     # user re-checks it by hand afterward.
+    # Not during load_config: the mirror fired on the restore of
+    # ion_radius_fallback and overwrote the hole_fix_atom_names value saved
+    # independently - a reopen then re-saved the reverted pair, losing the
+    # setting durably.
+    variable _loading_config
+    if {[info exists _loading_config] && $_loading_config} { return }
     variable state
     set state(hole_fix_atom_names) $state(ion_radius_fallback)
 }
@@ -41450,12 +41490,12 @@ proc ::VMDHole::_run_permeation {} {
         return
     }
     set axis $state(perm_axis)
-    if {![string is double -strict $state(perm_zlo)] || ![string is double -strict $state(perm_zhi)]} {
+    if {![_is_finite $state(perm_zlo)] || ![_is_finite $state(perm_zhi)]} {
         pack [label $d.body.err -text "Set numeric bulk bounds (or click Auto)."] -fill x; return
     }
     set zlo $state(perm_zlo); set zhi $state(perm_zhi)
     if {$zlo > $zhi} { set t $zlo; set zlo $zhi; set zhi $t }
-    set dt [expr {[string is double -strict $state(perm_ns_per_frame)] && $state(perm_ns_per_frame) > 0 ? $state(perm_ns_per_frame) : ""}]
+    set dt [expr {[_is_finite $state(perm_ns_per_frame)] && $state(perm_ns_per_frame) > 0 ? $state(perm_ns_per_frame) : ""}]
     set volt $state(perm_voltage)
     set state(status) "Counting ion permeation over the trajectory..."
     catch {update idletasks}
@@ -41850,7 +41890,7 @@ proc ::VMDHole::_fill_passability_dialog {} {
         set label "Frame $frame"
     }
     set g [dict get $m conductance]
-    set probe [expr {[info exists state(metrics_water_probe)] ? $state(metrics_water_probe) : 1.15}]
+    set probe [_metrics_water_probe]
     # CAPSULE reports TWO radii and they answer different questions, so one
     # number beside a verdict computed from the other reads as a contradiction
     # (min R 1.01 Å, and Na+ at 0.95 Å blocked). Both are shown whenever they
@@ -43641,7 +43681,7 @@ proc ::VMDHole::_hydrophobic_gate_info {frame} {
     if {[llength $xs] < 2 || [llength $ys] != [llength $xs]} { return "" }
     if {[lindex $xs 0] > [lindex $xs end]} { set xs [lreverse $xs]; set ys [lreverse $ys] }
     set r_at [_interp1_sorted $xs $ys $zmax]
-    set probe [expr {[info exists state(metrics_water_probe)] ? $state(metrics_water_probe) : 1.15}]
+    set probe [_metrics_water_probe]
     # A barrier at a genuine steric constriction (radius < probe) is a physical
     # occlusion, not a hydrophobic gate - only flag the sterically-open case.
     if {$r_at < $probe} { return "" }
