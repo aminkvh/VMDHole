@@ -35,12 +35,12 @@ cd [file join $here ..]
 source vmdhole.tcl
 
 if {![file readable $PDB] || ![file readable $RAD]} {
-    puts "  SKIP  no 1GRM fixture / radius file"
+    puts "SKIP: hole_tcl_fallback_e2e - no 1GRM fixture / radius file"
     puts "E2E-RESULT pass=$pass fail=$fail"
     quit
 }
 if {[::VMDHole::_hole_tcl_exe] eq ""} {
-    puts "  SKIP  no tclsh for the fallback"
+    puts "SKIP: hole_tcl_fallback_e2e - no tclsh for the fallback"
     puts "E2E-RESULT pass=$pass fail=$fail"
     quit
 }

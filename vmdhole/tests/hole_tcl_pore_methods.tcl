@@ -42,11 +42,11 @@ set REF  [file join $_exedir hole]
 cd [file join $here ..]
 source vmdhole.tcl
 
-if {![file readable $PDB] || ![file readable $RAD]} { puts "  SKIP  no 1GRM fixture"; done }
-if {![file executable $REF]} { puts "  SKIP  no reference binary at $REF"; done }
+if {![file readable $PDB] || ![file readable $RAD]} { puts "SKIP: hole_tcl_pore_methods - no 1GRM fixture"; done }
+if {![file executable $REF]} { puts "SKIP: hole_tcl_pore_methods - no reference binary at $REF"; done }
 set exe [::VMDHole::_hole_tcl_exe]
 set scr [::VMDHole::_hole_tcl_script]
-if {$exe eq "" || $scr eq ""} { puts "  SKIP  no tclsh for the fallback"; done }
+if {$exe eq "" || $scr eq ""} { puts "SKIP: hole_tcl_pore_methods - no tclsh for the fallback"; done }
 
 # One unit in HOLE's own last printed place: the plain columns are F12.5, the
 # three CONNOLLY ones F12.3. Anything real is orders of magnitude bigger - the

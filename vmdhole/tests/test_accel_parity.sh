@@ -17,6 +17,9 @@
 #   STOCK=<file> stock sph_process to diff against (optional; skipped if absent)
 #   SRC=<dir>    patched hole2/src tree to check Makefile invariants (optional)
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Honour VMDHOLE_HOLE_EXE_DIR like the rest of the suite (~/hole2/exe stays
+# the install default; an explicit EXE= wins over both).
+if [ -z "${EXE:-}" ] && [ -n "${VMDHOLE_HOLE_EXE_DIR:-}" ]; then EXE="$VMDHOLE_HOLE_EXE_DIR"; fi
 EXE="${EXE:-$HOME/hole2/exe}"
 # No default: a patched hole2/src tree is machine-local. Set SRC=<dir> to run
 # the Makefile-invariant checks; unset, they skip cleanly.
@@ -133,4 +136,10 @@ else
 fi
 
 echo "  -> $pass passed, $fail failed, $skip skipped"
+if [ "$pass" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$skip" -gt 0 ]; then
+    # Group-level form at column 0: with every check above skipped this group
+    # verified nothing, and run_tests.sh's release gate anchors on ^SKIP: to
+    # tell that from a real pass.
+    echo "SKIP: accel_parity - all $skip checks skipped (no binaries/fixtures found)"
+fi
 [ "$fail" -eq 0 ]

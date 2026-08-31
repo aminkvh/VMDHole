@@ -13,13 +13,13 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="${1:-}"
 if [ -z "$SRC" ]; then
-  for c in "$HERE/stock_build/hole2/src" "$HERE/sphproc_build/hole2/src" "$HOME/hole2/src"; do
+  for c in "$HERE/../stock_build/hole2/src" "$HERE/stock_build/hole2/src" \
+           "$HERE/sphproc_build/hole2/src" "$HOME/hole2/src"; do
     [ -f "$c/hcapen.f" ] && SRC="$c" && break
   done
 fi
 if [ -z "$SRC" ] || [ ! -f "$SRC/hcapen.f" ]; then
-  echo "hcapen_cache: SKIP - no hole2/src checkout with hcapen.f found."
-  echo "              pass one as \$1 to run this test."
+  echo "SKIP: hcapen_cache - no hole2/src checkout with hcapen.f found (pass one as \$1)."
   exit 0
 fi
 
