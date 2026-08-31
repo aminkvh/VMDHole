@@ -17577,8 +17577,8 @@ proc ::VMDHole::run_tunnel_analysis {} {
     # shell_quote each component at both interpolation sites below.
     if {!$auto_origin} {
         foreach _c $seed {
-            if {![string is double -strict $_c]} {
-                set state(status) "Tunnel: start point must be three numbers (got '$state(tunnel_start)')."
+            if {![_is_finite $_c]} {
+                set state(status) "Tunnel: start point must be three finite numbers (got '$state(tunnel_start)')."
                 set busy 0
                 _end_calc
                 return
