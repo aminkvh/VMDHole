@@ -94,6 +94,9 @@ jobs:
         working-directory: native
         run: sh build.sh
 
+      - name: unit regression tests (tests/unit - one defect each)
+        run: sh tests/unit/run_unit_tests.sh
+
       - name: hole_tcl fallback (byte-identity of the pure-Tcl engine)
         run: sh vmdhole/tests/test_hole_tcl_fallback.sh
 
