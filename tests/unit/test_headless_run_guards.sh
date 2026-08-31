@@ -124,15 +124,28 @@ if {($::ncalls_begin - $::ncalls_end) == $before_diff} {
 }
 
 # --- 3. the empty-selection branch must not delete the shared handle --------
-set i [string first {lappend _empty_sel_frames $frame} $src]
+# Source contract, not a behavioural run (the branch needs VMD's atomselect):
+# scan the WHOLE branch, from its `[$sel num] == 0` test to its `continue`,
+# so a delete reinserted anywhere inside it is caught - anchoring at the
+# lappend line alone missed a delete placed above it. An aliased delete
+# (`set s $sel; $s delete`) still escapes a text scan; the two legitimate
+# cleanup sites are counted below so their removal is caught too.
+set k [string first {lappend _empty_sel_frames $frame} $src]
+set i [expr {$k < 0 ? -1 : [string last {if {[$sel num] == 0}} [string range $src 0 $k]]}]
 if {$i < 0} { puts "BAD empty-selection branch not found in run_analysis" } else {
-    set j [string first "continue" $src $i]
+    set j [string first "continue" $src $k]
     set seg [string range $src $i $j]
-    if {[string first {$sel delete} $seg] < 0} {
+    if {[string first {sel delete} $seg] < 0} {
         puts "OK empty-selection branch keeps the shared atomselect alive"
     } else {
         puts "BAD empty-selection branch deletes the shared atomselect"
     }
+}
+set ncleanup [regexp -all {catch \{\$sel delete\}} $src]
+if {$ncleanup >= 2} {
+    puts "OK both post-loop cleanup sites still release the handle ($ncleanup found)"
+} else {
+    puts "BAD expected >=2 post-loop {catch {\$sel delete}} cleanups, found $ncleanup"
 }
 TCLEOF
 
