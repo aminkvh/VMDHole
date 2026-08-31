@@ -16221,6 +16221,10 @@ proc ::vmdhole_fb_tsv {rows path sample n xs ys zs rs {requivs {}} {t0 0.0}} {
         if {$_d0 < $zbest} { set zbest $_d0; set zero $cum }
         set prev [list $x $y $z]
     }
+    # Truncating open with no .part/rename: sound ONLY because every caller
+    # runs in a freshly created work dir and passes a relative -tsv path, so
+    # no older good TSV can sit at $path. A caller handing this an existing
+    # run_dir path must publish via a sibling temp instead (see parse_profile).
     set fh [open $path w]
     puts $fh "coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad"
     set F 0.0
@@ -16334,6 +16338,10 @@ proc ::vmdhole_fb_tsv_capsule {disc path sample cvect n xs ys zs rs} {
         }
     }
     set out [lsort -real -index 0 $out]
+    # Truncating open with no .part/rename: sound ONLY because every caller
+    # runs in a freshly created work dir and passes a relative -tsv path, so
+    # no older good TSV can sit at $path. A caller handing this an existing
+    # run_dir path must publish via a sibling temp instead (see parse_profile).
     set fh [open $path w]
     puts $fh "coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad"
     # Column 8 is the capsule half-width, the only radius in this table that is
@@ -36113,11 +36121,18 @@ proc ::VMDHole::run_analysis {} {
                 # now; it only appears on disk in run.sh's parse-failed fallback).
                 set fr_time [expr {[file exists $tsv_file] ? [file mtime $tsv_file] : \
                                    ([file exists $out_file] ? [file mtime $out_file] : [clock seconds])}]
-                # In the fallback case run.sh copied the raw hole_out.txt; it has
-                # now been parsed into hole_profile.tsv and is no longer needed, so
-                # remove it to reclaim disk. hole.inp is regenerable; drop it too.
-                catch {file delete [file join $run_dir hole_out.txt]}
-                catch {file delete [file join $run_dir hole.inp]}
+                # In the fallback case run.sh copied the raw hole_out.txt. Once
+                # parsed into hole_profile.tsv it is no longer needed - but only
+                # a parse that SUCCEEDED makes it so. run.sh preserves the raw
+                # text for a frame whose parse found no rows so its engine
+                # diagnostics survive for a later import; deleting it here right
+                # after a failed recovery leaves the run_dir with a header-only
+                # TSV and a generic message. hole.inp stays too on failure: it
+                # reproduces the failing run.
+                if {[dict exists $profile valid] && [dict get $profile valid]} {
+                    catch {file delete [file join $run_dir hole_out.txt]}
+                    catch {file delete [file join $run_dir hole.inp]}
+                }
             }
 
             dict set results $frame [dict create \
