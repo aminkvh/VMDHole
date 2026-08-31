@@ -221,6 +221,31 @@ static void surface_tunnel(mole_complex *Mp, const mole_params *Pp, int osrc,
     *resp = res; *nresp = nres; *ncapp = ncap;
 }
 
+/* A numeric argument must be a finite number, wholly consumed. Bare atof
+   turned "nan"/"inf"/trailing junk into a silently different run - the same
+   silence mole_read_atoms already refuses for coordinate FIELDS, applied here
+   to the command line that steers the search. */
+static double arg_num(const char *s, const char *what)
+{
+    char *end = NULL;
+    double v = strtod(s, &end);
+    if (end == s || *end || !isfinite(v)) {
+        fprintf(stderr, "--tunnel-mole: %s \"%s\" is not a finite number\n", what, s);
+        exit(2);
+    }
+    return v;
+}
+static int arg_int(const char *s, const char *what)
+{
+    char *end = NULL;
+    long v = strtol(s, &end, 10);
+    if (end == s || *end || v < -2147483647L || v > 2147483647L) {
+        fprintf(stderr, "--tunnel-mole: %s \"%s\" is not an integer\n", what, s);
+        exit(2);
+    }
+    return (int)v;
+}
+
 int main(int argc, char **argv)
 {
     /* zeroed: with the DH triangulation the dt_mesh is never built, and the
@@ -274,11 +299,11 @@ int main(int argc, char **argv)
        0 with no diagnostic. argv[9..11] were already guarded this way below;
        argv[3..8] were not. */
 #define POSN(i) ((argc > (i)) && strncmp(argv[i], "--", 2))
-    P.probe_radius       = POSN(3) ? atof(argv[3]) : 3.0;
-    P.interior_threshold = POSN(4) ? atof(argv[4]) : 1.25;
-    P.min_depth          = POSN(5) ? atoi(argv[5]) : 8;
-    P.min_depth_length   = POSN(6) ? atof(argv[6]) : 5.0;
-    P.min_tunnel_length  = POSN(7) ? atof(argv[7]) : 0.0;
+    P.probe_radius       = POSN(3) ? arg_num(argv[3], "probe radius") : 3.0;
+    P.interior_threshold = POSN(4) ? arg_num(argv[4], "interior threshold") : 1.25;
+    P.min_depth          = POSN(5) ? arg_int(argv[5], "min depth") : 8;
+    P.min_depth_length   = POSN(6) ? arg_num(argv[6], "min depth length") : 5.0;
+    P.min_tunnel_length  = POSN(7) ? arg_num(argv[7], "min tunnel length") : 0.0;
     P.weight             = POSN(8) ? (mole_weight_fn)atoi(argv[8]) : MOLE_W_VORONOI_SCALE;
     /* L9: an out-of-range weight silently ran MOLE's default, because
        mole_edge_cost's `default:` arm returns the same thing weight 0 selects -
@@ -296,10 +321,11 @@ int main(int argc, char **argv)
        flags and no start point must not have three of them read as x y z. */
     if (argc > 11 && strncmp(argv[9], "--", 2) && strncmp(argv[10], "--", 2)
         && strncmp(argv[11], "--", 2)) {
-        ox = atof(argv[9]); oy = atof(argv[10]); oz = atof(argv[11]); have_origin = 1;
+        ox = arg_num(argv[9], "origin x"); oy = arg_num(argv[10], "origin y");
+        oz = arg_num(argv[11], "origin z"); have_origin = 1;
     }
     if (have_origin && argc > 12 && strncmp(argv[12], "--", 2))
-        origin_radius = atof(argv[12]);
+        origin_radius = arg_num(argv[12], "origin radius");
     for (i = 3; i < argc; i++) {
         const char *a = argv[i], *v = strchr(a, '=');
         if (strncmp(a, "--", 2) || !v) continue;

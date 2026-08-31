@@ -49,7 +49,7 @@ proc lift {src name} {
     }
     return ""
 }
-foreach p {run_tunnel_analysis shell_quote} {
+foreach p {run_tunnel_analysis shell_quote _is_finite _op_in_progress} {
     set b [lift $src $p]
     if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
     namespace eval ::VMDHole $b
@@ -79,7 +79,7 @@ proc run_with_seed {seed} {
 
 # --- 1a. non-numeric third element is refused before anything runs ----------
 set rc [run_with_seed "12.3 4.5 nan_typo"]
-if {$rc == 0 && [string match "*must be three numbers*" $::VMDHole::state(status)]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
     puts "OK typo seed is refused with a clear status"
 } else {
     puts "BAD typo seed: rc=$rc status='$::VMDHole::state(status)'"
@@ -89,13 +89,27 @@ if {$::VMDHole::busy == 0} { puts "OK busy released after refusal" } else { puts
 # --- 1b. a shell-metacharacter element is refused, and nothing executes -----
 set marker [file join $T pwned]
 set rc [run_with_seed "0 0 {1; touch $marker}"]
-if {$rc == 0 && [string match "*must be three numbers*" $::VMDHole::state(status)] && ![file exists $marker]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)] && ![file exists $marker]} {
     puts "OK metacharacter seed is refused and no side effect ran"
 } else {
     puts "BAD metacharacter seed: rc=$rc marker=[file exists $marker] status='$::VMDHole::state(status)'"
 }
 
-# --- 1c. shell_quote really neutralises what the sites interpolate ----------
+# --- 1c. literal nan/inf pass [string is double] and must still be refused --
+set rc [run_with_seed "nan nan nan"]
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
+    puts "OK nan seed is refused (string-is-double alone accepts it)"
+} else {
+    puts "BAD nan seed: rc=$rc status='$::VMDHole::state(status)'"
+}
+set rc [run_with_seed "0.0 inf 1.0"]
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
+    puts "OK inf seed is refused"
+} else {
+    puts "BAD inf seed: rc=$rc status='$::VMDHole::state(status)'"
+}
+
+# --- 1d. shell_quote really neutralises what the sites interpolate ----------
 set q [::VMDHole::shell_quote "1; touch $T/sq_marker"]
 catch {exec sh -c "printf %s $q" } out
 if {![file exists $T/sq_marker] && $out eq "1; touch $T/sq_marker"} {
@@ -157,7 +171,7 @@ if [ "$rc" -ne 0 ] || printf '%s\n' "$out" | grep -q '^FATAL'; then
 fi
 nok=$(printf '%s\n' "$out" | grep -c '^OK ')
 nbad=$(printf '%s\n' "$out" | grep -c '^BAD ')
-if [ "$nbad" -eq 0 ] && [ "$nok" -ge 8 ]; then
+if [ "$nbad" -eq 0 ] && [ "$nok" -ge 10 ]; then
     echo "  PASS  headless run guards hold ($nok checks)"
     echo "  -> $nok passed, 0 failed"
 else
