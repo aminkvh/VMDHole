@@ -44,12 +44,13 @@ fi
 # carries a strongly negative normal; record 31 is the probe. In "short" form
 # it has 4 fields, in "zero" form an explicit "0 0 0" - the two files must be
 # indistinguishable to the triangulator.
-gen() { # $1 = short|zero for record 31, $2 = short|zero for record 0
-    awk -v m31="$1" -v r0="$2" 'BEGIN{
+gen() { # $1 = short|zero for record 31, $2 = short|zero for record 0,
+        # $3 = neg|zero for record 30's normal (default neg)
+    awk -v m31="$1" -v r0="$2" -v n30="${3:-neg}" 'BEGIN{
         for (i = 0; i < 60; i++) {
             line = sprintf("4 %g %g %g", i*0.5, (i%7)*0.25, (i%5)*0.75)
             if      (i == 0  && r0  == "short") print line
-            else if (i == 30)                   print line " -1 -1 -1"
+            else if (i == 30 && n30 == "neg")   print line " -1 -1 -1"
             else if (i == 31 && m31 == "short") print line
             else                                print line " 0 0 0"
         }
@@ -82,6 +83,18 @@ if cmp -s "$T/c.out" "$T/d.out"; then
     ok "first-record short record == explicit zero normal (no indeterminate value)"
 else
     bad "first-record short record differs from explicit zero"
+fi
+
+# The equality checks above are one-sided: a build that zeroed EVERY normal
+# (dropping file normals entirely) would pass them. Record 30 carrying
+# -1 -1 -1 vs 0 0 0 must therefore change the output - normals really do
+# reach reorder_triangle's vertex-order decision.
+gen zero zero zero > "$T/all_zero.sos"
+run "$T/all_zero.sos" > "$T/e.out"
+if cmp -s "$T/b.out" "$T/e.out"; then
+    bad "a nonzero file normal has no effect on output (normals dropped entirely?)"
+else
+    ok "a nonzero file normal changes the output (normals are consumed, not discarded)"
 fi
 
 echo "  -> $pass passed, $fail failed"
