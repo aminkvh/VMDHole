@@ -23592,7 +23592,12 @@ proc ::VMDHole::_thread_parse_initscript {} {
                 }
             }
             close $tsv; close $fh
-            catch {file rename -force $tsv_file $_tsv_pub}
+            # Publish only a parse that produced rows: see parse_profile.
+            if {$points == 0} {
+                catch {file delete $tsv_file}
+            } else {
+                catch {file rename -force $tsv_file $_tsv_pub}
+            }
             set tsv_file $_tsv_pub
             if {$points == 0} {
                 if {[llength $error_lines] > 0} {
@@ -24126,7 +24131,15 @@ proc ::VMDHole::parse_profile {output_file tsv_file {full 1}} {
     }
     close $tsv
     close $fh
-    catch {file rename -force $tsv_file $_tsv_pub}
+    # Publish only a parse that produced rows. Renaming unconditionally hands a
+    # header-only .part to the destination on the no-rows path below, which is
+    # the same truncation hazard the .part scheme exists to prevent - the
+    # zero-point return is a failed parse, not a success with an empty table.
+    if {$points == 0} {
+        catch {file delete $tsv_file}
+    } else {
+        catch {file rename -force $tsv_file $_tsv_pub}
+    }
     set tsv_file $_tsv_pub
     if {$points == 0} {
         if {[llength $error_lines] > 0} {
@@ -35735,7 +35748,6 @@ proc ::VMDHole::run_analysis {} {
                             # and returned an empty result_frames.
                             lappend _empty_sel_frames $frame
                             incr hole_failures
-                            $sel delete
                             continue
                         }
                         # HOLE reads the residue number with I4, four columns.
