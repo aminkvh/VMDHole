@@ -49,6 +49,17 @@ if [ ! -x "$ENGINE" ] || [ ! -f "$PDB" ]; then
 fi
 
 VMD=${VMD:-vmd}
+if ! command -v "$VMD" >/dev/null 2>&1; then
+    # Same group-level form as the engine check above, for the same reason:
+    # the runtime half checks nothing without vmd, and the release gate must
+    # see that. Failing instead (the previous behaviour: the silenced vmd
+    # invocation left no output file, reported as "script produced no output")
+    # made the whole suite red on any machine without vmd.
+    echo "SKIP: no vmd on PATH - runtime checks not run"
+    echo "  -> $pass passed, $fail failed"
+    [ "$fail" -eq 0 ]
+    exit $?
+fi
 OUT=$(mktemp)
 WORK=$(mktemp -d)
 cat > "$OUT.tcl" <<EOF
