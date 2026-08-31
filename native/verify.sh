@@ -74,7 +74,13 @@ else
     [ -d "$EXDIR/$d" ] || continue
     w=$(mktemp -d); cp "$EXDIR/$d"/*.pdb "$w"/ 2>/dev/null || true
     inp=$(ls "$EXDIR/$d"/*.inp | head -1)
-    sed "s|radius .*|radius $RAD|; s|sphpdb .*|sphpdb hole_out.sph|" "$inp" > "$w/h.inp"
+    # Stage the radius file INTO the workdir and reference it bare: HOLE reads
+    # card filenames into a fixed-length Fortran field, so a long absolute
+    # $RAD is silently truncated ("Cannot open bond/vdw radius input file")
+    # while hole still exits 0 - every example then reports "no .sos
+    # produced" with nothing pointing at the cause.
+    cp "$RAD" "$w/simple.rad"
+    sed "s|radius .*|radius simple.rad|; s|sphpdb .*|sphpdb hole_out.sph|" "$inp" > "$w/h.inp"
     ( cd "$w" && "$HOLE_EXE/hole" < h.inp >/dev/null 2>&1; \
       "$HOLE_EXE/sph_process" -sos -dotden 15 hole_out.sph hole.sos >/dev/null 2>&1 ) || true
     [ -s "$w/hole.sos" ] || { echo "  $d: no .sos produced (skipped)"; rm -rf "$w"; continue; }
