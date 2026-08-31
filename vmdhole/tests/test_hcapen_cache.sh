@@ -9,4 +9,7 @@ if [ ! -x "$T" ]; then
     echo "SKIP: native/connolly_patches/test_hcapen_cache.sh not found"
     exit 0
 fi
-exec "$T"
+# Forward the arguments: the underlying test takes a hole2/src checkout as $1
+# and its SKIP message says to pass one - swallowing "$@" here made that advice
+# a no-op and the group unrunnable through this wrapper.
+exec "$T" "$@"
