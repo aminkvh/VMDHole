@@ -3010,8 +3010,16 @@ proc ::VMDHole::_tunnel_gear_click_cid {cid} {
     # for a tunnel that is not on screen this frame - step to a frame where
     # it IS present (traffic light green) to edit it.
     variable tunnel_xrank
+    variable state
+    variable w
     set fr [_tunnel_display_frame]
-    if {$fr eq "" || ![info exists tunnel_xrank($cid,$fr)]} { return }
+    if {$fr eq "" || ![info exists tunnel_xrank($cid,$fr)]} {
+        # Say so instead of a silent no-op - and close a popup left open for
+        # ANOTHER route, which otherwise reads as this click's result.
+        catch {destroy $w.tunnel_gear}
+        set state(status) "Tunnel settings: this route is absent from the displayed frame - step to a frame where its Seen cell is green."
+        return
+    }
     show_tunnel_gear_settings $tunnel_xrank($cid,$fr)
 }
 
@@ -3753,6 +3761,11 @@ proc ::VMDHole::_on_tunnel_selection_changed {} {
     # The lining rep is scoped to the SELECTED tunnel, so it has to follow the
     # selection. Self-gates on its checkbox, so this is a no-op when off.
     catch {update_tunnel_lining_rep}
+    # ...and so does the Lining WINDOW's residue table, which was refreshed
+    # only on open and by its own "show all" checkbox - selecting another
+    # route left the previous route's residues on display. Self-gates on the
+    # window existing.
+    catch {_refresh_tunnel_lining_body}
     # The averaged 3D tube is scoped to the selected CLUSTER, not the landed
     # frame - unlike Pore Profile/Trends/Heatmap above, its data does not
     # change on a plain frame step. _on_tunnel_selection_changed itself runs
@@ -5769,7 +5782,7 @@ proc ::VMDHole::draw_tunnel_trends_plot {} {
     variable minr_geo
     set minr_geo [dict create \
         margin_l $ml margin_t $mt plot_w $pw plot_h $ph \
-        xmin $xmin xspan [expr {$xmax - $xmin}] \
+        xmin $xmin xspan [expr {double($xmax - $xmin)}] \
         ymin $ymin yspan [expr {$ymax - $ymin}] \
         canvas_w $cw frames $fs minr_vals $bs]
     # ...and place it now, exactly as HOLE's Trends does at the end of its own
@@ -7527,6 +7540,17 @@ proc ::VMDHole::show_tunnel_gear_settings {i} {
     # row's gear while one is already open must show that tunnel's own
     # state, not reuse whatever the previous tunnel's dialog had on screen.
     catch {destroy $d}
+    # Remember which CLUSTER this popup was opened for. Every menu entry
+    # carries the RANK captured now, and _tunnel_gear_set re-resolves that
+    # rank through the frame on screen AT APPLY TIME - so a popup left open
+    # across a scrub or re-run wrote its edits onto whatever route holds the
+    # rank by then. _tunnel_gear_set refuses when the resolution no longer
+    # matches this record.
+    variable _gear_open_cid
+    variable tunnel_xcid
+    set _gof [_tunnel_display_frame]
+    set _gear_open_cid [expr {$_gof ne "" && [info exists tunnel_xcid($_gof,$i)] \
+        ? $tunnel_xcid($_gof,$i) : ""}]
     toplevel $d
     wm withdraw $d
     # $i is a rank in the displayed frame; the list row that opened this
@@ -7791,6 +7815,16 @@ proc ::VMDHole::_tunnel_gear_set {i field value} {
         # selected cluster, which is exactly what the readers consult
         # (_tunnel_selected_cluster prefers state(tunnel_selected_cid)).
         set _gcid $state(tunnel_selected_cid)
+    }
+    # A popup opened for one route must not write to another: the rank it
+    # captured can point at a different cluster after a scrub or re-run.
+    variable _gear_open_cid
+    if {[info exists _gear_open_cid] && $_gear_open_cid ne "" \
+            && $_gcid ne "" && $_gcid ne $_gear_open_cid} {
+        variable w
+        catch {destroy $w.tunnel_gear}
+        set state(status) "Tunnel settings: the routes changed since this gear was opened - reopen it from the row."
+        return
     }
     if {$_gcid ne ""} {
         set tunnel_gear_cid($_gcid,$field) $value
@@ -17660,6 +17694,19 @@ proc ::VMDHole::run_tunnel_analysis {} {
     # the clear import_tunnel_results_from_folder must also do.
     array unset tunnel_gear_cid
     array set tunnel_gear_cid {}
+    # The averaged tube is cluster-keyed the same way. Its build key is
+    # 'cid|colormode|prop|material|color', identical across runs whenever the
+    # fresh run pins cid 1 again - so without this reset the PREVIOUS run's
+    # tube stayed on screen over the new results. The per-route gear popup
+    # carries a rank from the previous run's list; close it with the rest.
+    variable _tunnel_mean_built_cid
+    unset -nocomplain _tunnel_mean_built_cid
+    variable tunnel_mean_surface_mol
+    if {$tunnel_mean_surface_mol >= 0} { catch {mol delete $tunnel_mean_surface_mol} }
+    set tunnel_mean_surface_mol -1
+    unset -nocomplain _gear_open_cid
+    variable w
+    catch {destroy $w.tunnel_gear}
     set tunnel_result_frames {}
 
     set nfr [llength $frames]
@@ -20576,8 +20623,10 @@ proc ::VMDHole::close_gui {} {
     # here, and their controls - the only ones that apply immediately with no
     # Redraw button - went dead after one close/reopen. The window is
     # withdrawn, never destroyed, so their handlers' widget writes stay valid.
+    variable tunnel_result_frames
     set have_vis [expr {($current_surface_mol >= 0 && \
-        ![catch {molinfo $current_surface_mol get name}]) || [dict size $results] > 0}]
+        ![catch {molinfo $current_surface_mol get name}]) || [dict size $results] > 0 \
+        || [llength $tunnel_result_frames] > 0}]
     if {$state(keep_visualization) && $have_vis} {
         # Leave the surface molecule, the frame-sync trace, and the cached
         # results in place so the user can keep scrubbing/playing the trajectory
@@ -23120,6 +23169,18 @@ proc ::VMDHole::import_tunnel_results_from_folder {root} {
     # that cid, instead of the tunnel it was actually set on.
     array unset tunnel_shown_cid;    array set tunnel_shown_cid {}
     array unset tunnel_gear_cid;     array set tunnel_gear_cid {}
+    # Same as run_tunnel_analysis's reset: the averaged tube's build key
+    # matches across result sets whenever cid 1 is re-pinned, and an open
+    # per-route gear popup names a rank from the previous set.
+    variable _tunnel_mean_built_cid
+    unset -nocomplain _tunnel_mean_built_cid
+    variable tunnel_mean_surface_mol
+    if {$tunnel_mean_surface_mol >= 0} { catch {mol delete $tunnel_mean_surface_mol} }
+    set tunnel_mean_surface_mol -1
+    variable _gear_open_cid
+    unset -nocomplain _gear_open_cid
+    variable w
+    catch {destroy $w.tunnel_gear}
     # Same rationale as run_tunnel_analysis: a remembered selected-cluster or a
     # curated show/hide default from the previous result set is meaningless
     # once the clusters themselves are rebuilt, and (tunnel_shown_default in
@@ -29641,8 +29702,9 @@ proc ::VMDHole::_conn_trim_escaped_enabled {} {
 proc ::VMDHole::_conn_pore_margin {} {
     # How far past the pore wall a CONNOLLY dot may sit and still count as pore.
     variable state
-    set m [expr {[info exists state(conn_pore_margin)] ? [string trim $state(conn_pore_margin)] : ""}]
-    if {![string is double -strict $m] || $m < 0} { return 2.0 }
+    set m ""
+    if {[info exists state(conn_pore_margin)]} { set m [string trim $state(conn_pore_margin)] }
+    if {![_is_finite $m] || $m < 0} { return 2.0 }
     return $m
 }
 
@@ -31953,8 +32015,9 @@ proc ::VMDHole::_conn_lobe_min_seen {} {
     # frames, 3 in exactly one. 25% keeps 8 openings plus the pore and drops the
     # one-frame flukes.
     variable state
-    set v [expr {[info exists state(conn_lobe_minseen)] ? [string trim $state(conn_lobe_minseen)] : ""}]
-    if {![string is double -strict $v] || $v < 0 || $v > 100} { return 25.0 }
+    set v ""
+    if {[info exists state(conn_lobe_minseen)]} { set v [string trim $state(conn_lobe_minseen)] }
+    if {![_is_finite $v] || $v < 0 || $v > 100} { return 25.0 }
     return $v
 }
 
@@ -32485,10 +32548,11 @@ proc ::VMDHole::_conn_lobe_tol {} {
     # PERSISTENT sites holds at 5-6 anywhere from 4 A/20 deg to 10 A/60 deg;
     # only the one-frame tail moves, which is why the Seen column is shown.
     variable state
-    set z [expr {[info exists state(conn_lobe_tolz)] ? $state(conn_lobe_tolz) : ""}]
-    set a [expr {[info exists state(conn_lobe_tola)] ? $state(conn_lobe_tola) : ""}]
-    if {![string is double -strict $z] || $z <= 0} { set z 6.0 }
-    if {![string is double -strict $a] || $a <= 0} { set a 35.0 }
+    set z ""; set a ""
+    if {[info exists state(conn_lobe_tolz)]} { set z $state(conn_lobe_tolz) }
+    if {[info exists state(conn_lobe_tola)]} { set a $state(conn_lobe_tola) }
+    if {![_is_finite $z] || $z <= 0} { set z 6.0 }
+    if {![_is_finite $a] || $a <= 0} { set a 35.0 }
     return [list $z $a]
 }
 
@@ -41237,6 +41301,9 @@ proc ::VMDHole::_run_permeation {} {
         lassign [_trend_series conductance] _cfr _cvs
         lassign [_trend_series ellipse_conductance] _efr _evs
         lassign [_trend_series ellipse_conductance_corrected] _ecfr _ecvs
+        # Both trend pulls pump the event loop; the dialog can be closed by the
+        # time they return, and every write below targets its widgets.
+        if {![winfo exists $d.body]} { return }
         set _rows {}
         foreach {_lbl _vals} [list "Circular (HOLE Gmacro)" $_cvs "Ellipse (π·a·b)" $_evs "Ellipse, corrected" $_ecvs] {
             set _mv [_series_mean $_vals]
@@ -49530,7 +49597,7 @@ proc ::VMDHole::_mean_vol_thresh {{sid 0}} {
     set _core [expr {$sid eq "interior" || $sid == 0}]
     set k [expr {$_core ? "mean_vol_thresh" : "mean_vol_thresh_open"}]
     set t [expr {$_core ? 0.5 : 0.3}]
-    if {[info exists state($k)] && [string is double -strict $state($k)]} { set t $state($k) }
+    if {[info exists state($k)] && [_is_finite $state($k)]} { set t $state($k) }
     if {$t < 0.05} { set t 0.05 }
     if {$t > 0.95} { set t 0.95 }
     return $t
@@ -56045,7 +56112,7 @@ proc ::VMDHole::on_heatmap_property_compute {} {
     # cannot strand busy=1 - a stranded busy blocks EVERY future Compute (and the
     # main HOLE Run) with "Another operation is already in progress" for the rest
     # of the session. The reset after the catch always runs.
-    catch {
+    set _otc_rc [catch {
     set _scheme [expr {[info exists state(hm_prop_scheme)] ? \
         $state(hm_prop_scheme) : $state(hydro_scheme)}]
     vmdcon -info "VMDHole: Over Time Compute clicked - scheme=$_scheme (forcing recalculation)"
@@ -56141,9 +56208,15 @@ proc ::VMDHole::on_heatmap_property_compute {} {
         }
     }
     draw_heatmap
-    }
+    } _otc_err]
     set busy 0
     _end_calc
+    if {$_otc_rc} {
+        # A swallowed throw here read as "Compute does nothing": no status, no
+        # log, and the stale map stayed on screen as if it were the answer.
+        set state(status) "Over Time compute failed: $_otc_err"
+        catch {vmdcon -err "VMDHole: Over Time property compute failed - $_otc_err"}
+    }
 }
 
 proc ::VMDHole::_heatmap_resample_row {xv yv nbins gmin_z z_step fallback} {
