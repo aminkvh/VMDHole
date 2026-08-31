@@ -2634,8 +2634,11 @@ proc ::VMDHole::run_current_mode {} {
     variable busy
     variable state
     if {[catch {run_tunnel_analysis} _rterr]} {
-        set busy 0
-        catch {_end_calc}
+        # No release here: run_tunnel_analysis's own catch wrapper restores
+        # busy and calls _end_calc on every throw before rethrowing, so a
+        # second _end_calc from this backstop double-decremented _calc_depth
+        # and stole an enclosing bracket's abort control. This arm only
+        # reports.
         set state(status) "Tunnel: $_rterr"
         vmdcon -err "VMDHole: tunnel run failed - $_rterr"
     }
@@ -17533,7 +17536,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
     # pool calls [update], so a second Run click could otherwise re-enter here,
     # clear the shared tunnel_* arrays mid-run and launch a second set of
     # engines against the very same output directories.
-    if {$busy} {
+    if {[_op_in_progress]} {
         set state(status) "A run is already in progress."
         return
     }
@@ -20564,16 +20567,15 @@ proc ::VMDHole::close_gui {} {
             set $_av ""
         }
     }
-    # Most UI traces are registered idempotently (_trace_once) and need no removal
-    # on close. These four are removed here because their handlers touch scale-bar /
-    # display widgets directly; _trace_once re-adds them cleanly on the next open.
-    foreach var {display_mode hydro_scheme show_hydro_scalebar scalebar_font_color} {
-        foreach t [trace info variable ::VMDHole::state($var)] {
-            if {[lindex $t 0] eq "write"} {
-                catch {trace remove variable ::VMDHole::state($var) write [lindex $t 1]}
-            }
-        }
-    }
+    # UI traces are deliberately NOT removed here - none of them. All are
+    # registered by _trace_once inside the GUI BUILD code, and show_gui's
+    # reopen path returns at `winfo exists $w` before any of that runs (VMD's
+    # Extensions re-map bypasses show_gui entirely), so a trace removed on
+    # close is gone for the rest of the session. Four of them (display_mode,
+    # hydro_scheme, show_hydro_scalebar, scalebar_font_color) were stripped
+    # here, and their controls - the only ones that apply immediately with no
+    # Redraw button - went dead after one close/reopen. The window is
+    # withdrawn, never destroyed, so their handlers' widget writes stay valid.
     set have_vis [expr {($current_surface_mol >= 0 && \
         ![catch {molinfo $current_surface_mol get name}]) || [dict size $results] > 0}]
     if {$state(keep_visualization) && $have_vis} {
@@ -20620,6 +20622,13 @@ proc ::VMDHole::close_gui {} {
     # same reason $w itself is withdrawn - several of these are rebuilt-on-open
     # (the region gear destroys and recreates itself) but others just deiconify
     # what already exists, and destroying those strands the state they hold.
+    # A modal confirm may be mid-tkwait (Run's overwrite prompt holds a grab
+    # and an unanswered ::VMDHole::_overwrite_ans). Withdrawing it without
+    # answering leaves the tkwait pending and the application grab pointing at
+    # an unmapped window: every Tk surface VMD owns goes mouse-dead and busy
+    # stays 1. Closing the window IS the answer - Cancel - and setting it lets
+    # tkwait return, the dialog release its own grab, and the caller unwind.
+    catch {set ::VMDHole::_overwrite_ans 0}
     _withdraw_child_dialogs
     if {[winfo exists $w]} { catch {wm withdraw $w} }
     # And the entry is a toggle, so VMD also has to be told it is off, or its
@@ -20633,8 +20642,20 @@ proc ::VMDHole::close_gui {} {
     # list came up empty having computed nothing - reliably, from the first
     # close onward, which is what "sometimes it works" was.
     variable _calc_depth
-    set _calc_depth 0
-    catch {set state(abort_requested) 0}
+    variable busy
+    if {(![info exists busy] || !$busy) && $_calc_depth <= 0} {
+        set _calc_depth 0
+        catch {set state(abort_requested) 0}
+    } else {
+        # Work is in flight: leave the abort RAISED, or the pool suspended
+        # inside this very call's [update] resumes, never sees it, and runs
+        # every remaining frame against a closed window - the reported
+        # wont-exit defect quoted at the top of this proc. The aborted
+        # run unwinds through _end_calc, whose depth<=0 arm lowers the flag,
+        # and _begin_calc clears it on the next 0->1 transition - so the
+        # reopen-poison this synchronous lower was written for stays fixed
+        # for the idle-close case above, the only case it ever applied to.
+    }
 }
 
 proc ::VMDHole::_axg_unit {v} {
@@ -21847,7 +21868,23 @@ proc ::VMDHole::do_align_trajectory {} {
     # In-place superposition of the trajectory - the standard, expected behaviour of
     # VMD's RMSD Trajectory Tool, so no confirmation prompt (only errors are shown).
     variable state
-    if {[catch {align_trajectory} res]} {
+    variable busy
+    # Minutes of coordinate rewriting that pumps the full event loop: without
+    # the guard and the busy/_begin_calc bracket, Run passed its own guard
+    # mid-align and analysed a half-aligned trajectory, and align's abort
+    # poll was unreachable because no Abort button was ever shown. The
+    # bracket is held HERE, not in align_trajectory, which run_tunnel_analysis
+    # calls while already holding busy itself.
+    if {[_op_in_progress]} {
+        set state(status) "Another operation is already in progress."
+        return
+    }
+    set busy 1
+    _begin_calc
+    set _rc [catch {align_trajectory} res]
+    set busy 0
+    _end_calc
+    if {$_rc} {
         tk_messageBox -icon error -type ok -title "Align trajectory" -message $res
         return
     }
@@ -22215,6 +22252,17 @@ proc ::VMDHole::resolve_molid {} {
     return $id
 }
 
+proc ::VMDHole::resolve_molid_or {fallback} {
+    # resolve_molid THROWS when state(molid) names a deleted molecule, and
+    # when nothing is loaded at all (molinfo top returns -1, which then fails
+    # the name lookup). Redraw, readout and button entry points want "no
+    # molecule" as a VALUE they can branch on - several of them tested `< 0`
+    # against a helper that never returns it, leaving their own friendly
+    # error branches unreachable and a raw background error in their place.
+    if {[catch {resolve_molid} id]} { return $fallback }
+    return $id
+}
+
 proc ::VMDHole::activate_molecule {molid} {
     # Make `molid` the live molecule: stash the outgoing molecule's results,
     # restore this one's cached set (empty if never analyzed), re-point the
@@ -22272,8 +22320,9 @@ proc ::VMDHole::on_molid_changed {args} {
     # Commit handler for the Molecule field (Return / focus-out): switch the
     # live view to the chosen molecule. Bound on commit, not per keystroke.
     variable busy
-    # Don't swap the live result set out from under an in-progress run.
-    if {$busy} { return }
+    # Don't swap the live result set out from under an in-progress run or
+    # bracketed read pass.
+    if {[_op_in_progress]} { return }
     if {[catch {resolve_molid} molid]} { return }
     activate_molecule $molid
 }
@@ -22713,6 +22762,10 @@ proc ::VMDHole::find_existing_asset {run_dir sph_file {molid -1} {frame 0}} {
 
 proc ::VMDHole::import_results_from_folder {{dialog {}}} {
     variable state
+    if {[_op_in_progress]} {
+        set state(status) "Another operation is already in progress."
+        return
+    }
     variable results
     variable result_frames
 
@@ -23222,6 +23275,10 @@ proc ::VMDHole::import_all_results_from_folder {{dialog {}}} {
     # single parent - an explicit work_dir, or the common source directory -
     # can hold both as sibling/nested trees).
     variable state
+    if {[_op_in_progress]} {
+        set state(status) "Another operation is already in progress."
+        return
+    }
     set chosen [string trim $state(import_dir)]
     if {$chosen eq "" || ![file isdirectory $chosen]} {
         # Let import_results_from_folder's own validation produce the
@@ -23331,6 +23388,15 @@ proc ::VMDHole::reset_session {} {
     # caches and return the analysis tabs to empty, WITHOUT touching the user's settings
     # (exec paths, selection text, display prefs). For recovering from a bad import or a
     # wedged state ("I need to reset to be able to use it").
+    # Refused mid-run: the pool pumps the full event loop, so this dialog was
+    # deliverable while frames were still landing - a confirmed Reset wiped
+    # results and caches out from under the run, which then reported frames
+    # added that no longer exist.
+    if {[_op_in_progress]} {
+        variable state
+        set state(status) "Another operation is already in progress."
+        return
+    }
     variable results
     variable result_frames
     variable mol_results
@@ -35086,6 +35152,20 @@ proc ::VMDHole::tk_messageBox {args} {
     }
 }
 
+proc ::VMDHole::_op_in_progress {} {
+    # THE guard question for every long or destructive entry point: is any
+    # run or bracketed pass still working? `busy` covers the two Run
+    # pipelines; `_calc_depth` covers the _begin_calc-bracketed read passes
+    # (openings table, property fills, mean-3D average), which pump the full
+    # event loop the same way and are just as unsafe to mutate under - a Run
+    # click that passes on `busy` alone lands mid-pass and rewrites the very
+    # results the pass is reading.
+    variable busy
+    variable _calc_depth
+    if {[info exists busy] && $busy} { return 1 }
+    if {[info exists _calc_depth] && $_calc_depth > 0} { return 1 }
+    return 0
+}
 proc ::VMDHole::_begin_calc {} {
     variable _calc_depth
     variable state
@@ -35396,7 +35476,7 @@ proc ::VMDHole::run_analysis {} {
 
     # Re-entrancy guard: the progress loop calls [update], so a second Run click
     # (or frame-trace callback) could otherwise re-enter this proc mid-run.
-    if {$busy} {
+    if {[_op_in_progress]} {
         set state(status) "A HOLE run is already in progress."
         return 0
     }
@@ -40075,7 +40155,11 @@ proc ::VMDHole::_run_ion_flow {} {
     variable state
     variable ion_flow_raw
     variable ion_flow_cache
-    set molid [resolve_molid]
+    if {[_op_in_progress]} {
+        set state(status) "Another operation is already in progress."
+        return
+    }
+    set molid [resolve_molid_or -1]
     if {$molid < 0} { set state(status) "Load a molecule first."; return }
     if {[traj_numframes] < 2} { set state(status) "Ion Flow needs a trajectory (>= 2 frames)."; return }
     # The reference frame is whichever mode's results define the axis - HOLE's
@@ -40997,7 +41081,8 @@ proc ::VMDHole::show_permeation_dialog {} {
     if {$state(perm_axis) ni {pore}} { set state(perm_axis) pore }
     # auto-fill bulk-plane bounds from the pore extent if empty
     if {$state(perm_zlo) eq "" || $state(perm_zhi) eq ""} {
-        set b [_permeation_auto_bounds [resolve_molid] $state(selected_result_frame)]
+        set _pmid [resolve_molid_or -1]
+        set b [expr {$_pmid < 0 ? "" : [_permeation_auto_bounds $_pmid $state(selected_result_frame)]}]
         if {$b ne ""} { set state(perm_zlo) [lindex $b 0]; set state(perm_zhi) [lindex $b 1] }
     }
     # Short, plain-language explainer. This is the ONLY explainer in the dialog - a per-control
@@ -41014,7 +41099,11 @@ proc ::VMDHole::show_permeation_dialog {} {
     label $d.cfg.r1.zd -text "to"
     entry $d.cfg.r1.zhi -textvariable ::VMDHole::state(perm_zhi) -width 6
     button $d.cfg.r1.auto -text "Auto" -command {
-        set ::b [::VMDHole::_permeation_auto_bounds [::VMDHole::resolve_molid] $::VMDHole::state(selected_result_frame)]
+        set ::b ""
+        set ::bmid [::VMDHole::resolve_molid_or -1]
+        if {$::bmid >= 0} {
+            set ::b [::VMDHole::_permeation_auto_bounds $::bmid $::VMDHole::state(selected_result_frame)]
+        }
         if {$::b ne ""} { set ::VMDHole::state(perm_zlo) [lindex $::b 0]; set ::VMDHole::state(perm_zhi) [lindex $::b 1] }
     }
     pack $d.cfg.r1.zl $d.cfg.r1.zlo $d.cfg.r1.zd $d.cfg.r1.zhi $d.cfg.r1.auto -side left -padx 2
@@ -41058,8 +41147,8 @@ proc ::VMDHole::_run_permeation {} {
     if {![_have_tk]} { return }
     if {![winfo exists $d.body]} { return }
     foreach c [winfo children $d.body] { destroy $c }
-    set molid [resolve_molid]
-    set ions [detect_ions $molid]
+    set molid [resolve_molid_or -1]
+    set ions [expr {$molid < 0 ? {} : [detect_ions $molid]}]
     if {[llength $ions] == 0} {
         pack [label $d.body.none -anchor w -justify left -wraplength 560 -text \
             "No ions in this system. Use Passability for the geometric estimate."] -fill x
@@ -41302,7 +41391,7 @@ proc ::VMDHole::_show_ellipse_conductance {} {
     set _passability_ellipse_shown 1
     set state(status) "Computing ellipse-shape conductance..."
     catch {update idletasks}
-    set molid [resolve_molid]
+    set molid [resolve_molid_or -1]
     set kappa [metrics_kappa]
     set G ""; set Gc ""; set Vol ""
     catch {lassign [compute_ellipse_metrics_both $molid $frame $kappa] G Gc Vol}
@@ -41346,7 +41435,7 @@ proc ::VMDHole::show_passability_dialog {} {
     variable KAPPA_PRESETS
     variable _passability_ellipse_shown
     set d $w.passability
-    if {[winfo exists $d]} { raise $d; _refresh_passability_full; return }
+    if {[winfo exists $d]} { catch {wm deiconify $d}; raise $d; _refresh_passability_full; return }
     if {![info exists _passability_ellipse_shown]} { set _passability_ellipse_shown 0 }
     toplevel $d
     wm withdraw $d
@@ -41406,7 +41495,7 @@ proc ::VMDHole::show_passability_dialog {} {
     # this even on a cold frame, paying the ray-cast on every reopen; the "Ellipse
     # G" button remains for an explicit cold compute.
     set _pf $state(selected_result_frame)
-    if {$_pf ne "" && [_ellipse_fit_is_cached [resolve_molid] $_pf 36]} {
+    if {$_pf ne "" && ![catch {_ellipse_fit_is_cached [resolve_molid] $_pf 36} _pc] && $_pc} {
         _show_ellipse_conductance
     }
     _center_toplevel $d
@@ -42289,7 +42378,7 @@ proc ::VMDHole::_2dmap_prepare {frame work} {
     # a message. Shared by the on-demand build and the parallel prebuild so the
     # two cannot drift into computing different maps.
     variable state
-    set molid [resolve_molid]
+    if {[catch {resolve_molid} molid]} { return "No molecule is available." }
     if {[catch {atomselect $molid $state(selection) frame $frame} sel]} {
         return "Selection '$state(selection)' is invalid."
     }
@@ -42807,7 +42896,7 @@ proc ::VMDHole::draw_profile_plot {frame} {
     }
     if {$psph ne ""} {
         set pmolid [expr {[dict exists $results $frame draw_molid] ? \
-            [dict get $results $frame draw_molid] : [resolve_molid]}]
+            [dict get $results $frame draw_molid] : [resolve_molid_or -1]}]
         set _psch [expr {[info exists state(profile_color_scheme)] ? $state(profile_color_scheme) : $state(hydro_scheme)}]
         if {$_psch eq "esp"} {
             if {![catch {esp_profile $pmolid $frame $psph} etr] && [llength $etr] >= 2} {
@@ -42900,7 +42989,7 @@ proc ::VMDHole::draw_profile_plot {frame} {
     # add a curve to the plot the user didn't ask to see.
     set _show_overlay [expr {[info exists state(show_asymmetry)] && $state(show_asymmetry)}]
     set _ellipse_molid [expr {[dict exists $results $frame draw_molid] ? \
-        [dict get $results $frame draw_molid] : [resolve_molid]}]
+        [dict get $results $frame draw_molid] : [resolve_molid_or -1]}]
     if {$_show_overlay || [_ellipse_fit_is_cached $_ellipse_molid $frame 36]} {
         lassign [_asymmetry_for_frame $frame] _asym _asym_centers
         if {[llength $_asym] >= 2} {
@@ -43313,7 +43402,7 @@ proc ::VMDHole::_draw_metrics_readout {cv frame ml mt pw ph {asym_vol ""} {asym_
     # along the pore, per frame. The sum is ~260 ms so it's memoised, and NEVER
     # computed mid-playback (cache-only there) - shows "…" until playback stops and a
     # full redraw fills it in. Skipped entirely if no molecule is resolvable.
-    set _mid [resolve_molid]
+    set _mid [resolve_molid_or -1]
     if {$_mid >= 0} {
         set _compute [expr {!([info exists ::VMDHole::playing] && $::VMDHole::playing)}]
         set _esp [electrostatic_potential_for_frame_cached $_mid $frame $_compute]
@@ -48415,6 +48504,11 @@ proc ::VMDHole::on_show_mean_surface_toggled {} {
             }
             set _bcode [catch {build_and_show_mean_surface} err]
         }
+        # Captured before the fallback below can rewrite mean_3d_mode. This
+        # was read WITHOUT ever being set, so every failed build - including
+        # the plain no-results refusal - died on the read and the whole
+        # documented Volume-recovery branch under it was unreachable.
+        set _volmode [expr {[info exists state(mean_3d_mode)] && $state(mean_3d_mode) eq "Volume"}]
         if {$_bcode} {
             # A refused VOLUME must fall back to Isosurface, not just untick.
             # Unticking alone hid the 3D-mode dropdown (it is only packed while
@@ -53110,7 +53204,7 @@ proc ::VMDHole::run_hydration {} {
     # Same re-entrancy concern as run_analysis's own guard: compute_hydration
     # calls `update` in its per-frame loop, so a fast double-click on Compute
     # could re-enter mid-batch.
-    if {$busy} {
+    if {[_op_in_progress]} {
         set state(status) "Another operation is already in progress."
         return
     }
@@ -55941,7 +56035,7 @@ proc ::VMDHole::on_heatmap_property_compute {} {
     # heatmap_property_bundle calls `update` in its progress loop, so a fast
     # double-click on Compute (or clicking it while a main HOLE run is still
     # going) could re-enter mid-batch and corrupt the shared caches below.
-    if {$busy} {
+    if {[_op_in_progress]} {
         set state(status) "Another operation is already in progress."
         return
     }
