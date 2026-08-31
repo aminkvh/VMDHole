@@ -57,6 +57,21 @@ else
     ok "a flag in a positional slot leaves the defaults intact ($(sed -n 's/.*tetrahedra, //p' "$T/l10.log" | head -1))"
 fi
 
+# --- non-finite or junk numerics must be refused, not silently reshaped -----
+for probe in "nan 1.25 8" "3.0 inf 8" "3.0 1.25 8x"; do
+    # shellcheck disable=SC2086
+    "$ENG" "$AT" "$T/o.out" $probe 5 0 0 >/dev/null 2>"$T/nf.log"
+    rc=$?
+    if [ "$rc" -eq 2 ] && grep -Eq 'not (a finite number|an integer)' "$T/nf.log"; then
+        ok "argv '$probe' is refused with a diagnostic (exit 2)"
+    else bad "argv '$probe': exit $rc, stderr: $(head -1 "$T/nf.log")"; fi
+done
+"$ENG" "$AT" "$T/o.out" 3.0 1.25 8 5 0 0 nan 28.9 1.1 >/dev/null 2>"$T/nf2.log"
+rc=$?
+if [ "$rc" -eq 2 ] && grep -q 'origin x' "$T/nf2.log"; then
+    ok "a nan origin component is refused naming the field (exit 2)"
+else bad "nan origin: exit $rc, stderr: $(head -1 "$T/nf2.log")"; fi
+
 # --- the science must not have moved ----------------------------------------
 "$ENG" "$AT" "$T/ref.out" 3.0 1.25 8 5 0 0 23.577 28.862 1.087 >/dev/null 2>&1
 if [ -s "$T/ref.out" ] && [ "$(grep -c '^T ' "$T/ref.out")" -gt 0 ]; then
