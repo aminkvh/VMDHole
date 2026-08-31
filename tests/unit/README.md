@@ -46,6 +46,7 @@ sh tests/unit/test_sos_nonfinite_input.sh    # or one at a time
 | `test_headless_scratch_reclaim.sh` | Scratch-directory reclaim being reachable only through the GUI, so headless jobs killed by a scheduler leaked `/dev/shm` directories until reboot. |
 | `test_headless_run_guards.sh` | Three headless run-path guards: a non-numeric or shell-metacharacter start point must be refused before it reaches `run.sh`/`exec sh -c`; an error escaping `run_tunnel_analysis` must restore `busy` and balance `_end_calc`; the empty-selection branch in `run_analysis` must not delete the atomselect handle shared across frames. |
 | `test_tsv_reader_parity.sh` | The threaded TSV reader skipping `_resolve_conn_radii`, so a CONNOLLY trajectory's bottleneck differed 2.5x between the serial and threaded paths. |
+| `test_gui_smoke.sh` | The GUI itself, without VMD: vmdhole.tcl sourced under plain tclsh+Tk with VMD stubbed, the real widget tree built, and 24 scripted user actions asserting the close-path (abort survives an in-flight close, traces survive reopen, a pending modal is answered), the busy guards, the deleted-molecule dialog class, the tunnel gear-popup route pinning, and nan-tolerant option fields. Skips without Tk or a display (CI runs it under xvfb). |
 | `test_tsv_publish_on_failure.sh` | A failed profile parse (zero rows, or a throw) truncating the good `hole_profile.tsv` beside it. Both TSV writers must publish by rename only after a parse that produced rows. |
 
 ## Wiring
