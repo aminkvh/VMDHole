@@ -3303,7 +3303,26 @@ proc ::VMDHole::refresh_tunnel_tab {} {
     # floor outright (same convention as MinTunnelLength's own _num_or use).
     set _floor [_num_or tunnel_seen_floor 40 0]
     set _showall [expr {[info exists state(tunnel_list_show_all)] && $state(tunnel_list_show_all)}]
+    # Establish the pin BEFORE the filter reads it. On the first refresh after
+    # a run the pin is still empty, so the selected-route exemption below
+    # never applied, and a short trajectory whose every route sits under the
+    # floor rendered an EMPTY list while the plots showed the route the later
+    # sync pinned. Idempotent; the post-filter call below keeps rank in step.
+    _tunnel_sync_selected_id $frame
     set _selcid [expr {[info exists state(tunnel_selected_cid)] ? $state(tunnel_selected_cid) : ""}]
+    # Seed per-route visibility for EVERY tracked cluster, not only the rows
+    # the floor keeps: an unlisted route has no tunnel_shown_cid entry and
+    # inherits tunnel_shown_default - which flips to 0 the first time any one
+    # listed row is unchecked, silently hiding every floor-hidden route in
+    # the 3D viewer on the next redraw.
+    variable tunnel_shown_cid
+    foreach _srow $rows {
+        set _scid [dict get $_srow cid]
+        if {![info exists tunnel_shown_cid($_scid)]} {
+            set tunnel_shown_cid($_scid) \
+                [expr {[info exists state(tunnel_shown_default)] ? $state(tunnel_shown_default) : 1}]
+        }
+    }
     set _nbelow 0
     if {$_floor > 0} {
         foreach row $rows {
@@ -3571,6 +3590,18 @@ proc ::VMDHole::refresh_tunnel_tab {} {
                 -foreground [expr {$_present ? "#2a9d3f" : "#c0392b"}] -background $rowbg
             grid $f.rv${r}_$_cov_col -row $r -column $_cov_col -sticky e -padx 2
             bind $f.rv${r}_$_cov_col <Button-1> [list ::VMDHole::_tunnel_select_row $cid]
+        }
+        if {$_cov_col < 0} {
+            # A kept row from a previous multi-frame build still holds its
+            # Seen cell in a higher column - the trimmer clears surplus ROWS
+            # only - and it landed exactly where the gear goes in the
+            # single-frame layout, eating the gear's clicks.
+            foreach _lw [grid slaves $f -row $r] {
+                if {[string match "rv${r}_*" [winfo name $_lw]] \
+                        && [dict get [grid info $_lw] -column] > $col} {
+                    grid forget $_lw
+                }
+            }
         }
         # Step PAST the Seen column, not just one past charge. The header lays
         # out charge, Seen (now carrying presence color), then the gear; a
@@ -4268,6 +4299,14 @@ proc ::VMDHole::_tunnel_select_step {dir} {
         set pos [lsearch -exact $cands $cur]
         if {$pos < 0} { set pos 0 } else { set pos [expr {($pos + $dir) % [llength $cands]}] }
         set state(tunnel_selected_id) [lindex $cands $pos]
+        # Keep the cluster pin in step: Pore Profile reads the rank, the
+        # Over Time/Mean/Histogram/Trends tabs follow the pinned cluster,
+        # and moving one without the other shows two routes as one selection.
+        variable tunnel_xcid
+        set _swf [_tunnel_display_frame]
+        if {$_swf ne "" && [info exists tunnel_xcid($_swf,$state(tunnel_selected_id))]} {
+            set state(tunnel_selected_cid) $tunnel_xcid($_swf,$state(tunnel_selected_id))
+        }
         _on_tunnel_selection_changed
         return
     }
@@ -5691,6 +5730,8 @@ proc ::VMDHole::draw_tunnel_trends_plot {} {
     set id [expr {[info exists state(tunnel_selected_id)] ? $state(tunnel_selected_id) : ""}]
     if {$cid eq ""} {
         $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -text "No tunnel selected."
+        variable minr_geo
+        set minr_geo ""
         return
     }
     # Follow the tunnel's CROSS-FRAME cluster, exactly as Over Time / Mean
@@ -5722,6 +5763,8 @@ proc ::VMDHole::draw_tunnel_trends_plot {} {
         # blank rank number.
         $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -width [expr {$cw-40}] -justify center \
             -text "The selected tunnel does not appear in at least 2 analysed frames\n(too few occurrences to plot a trend)."
+        variable minr_geo
+        set minr_geo ""
         return
     }
     set ml 55; set mr 20; set mt 34; set mb 40
@@ -20636,6 +20679,15 @@ proc ::VMDHole::close_gui {} {
         set state(status) "Visualization kept - scrub or play frames to animate the pore."
     } else {
         remove_frame_trace
+        # A settle timer armed by the last scrub outlives the trace removal
+        # and would re-run the profile/surface pipeline against the torn-down
+        # session 150 ms after the window disappears. Kept, deliberately,
+        # in the keep_visualization branch above.
+        variable frame_changed_after
+        if {[info exists frame_changed_after] && $frame_changed_after ne ""} {
+            catch {after cancel $frame_changed_after}
+            set frame_changed_after ""
+        }
         catch {remove_ellipse_surface}
         clear_surface
         # Remove every other molecule's surface track too (clear_surface only
@@ -20646,6 +20698,16 @@ proc ::VMDHole::close_gui {} {
                 catch {mol delete $surface_mols($k)}
             }
             unset surface_mols($k)
+        }
+        # Marker spheres (CPOINT / tunnel start) live in their own mols and
+        # were the one visual left floating in the viewer after every
+        # surface, centerline and scale bar was cleaned up.
+        variable point_marker_mols
+        if {[info exists point_marker_mols]} {
+            dict for {_mk _mm} $point_marker_mols {
+                if {$_mm ne "" && ![catch {molinfo $_mm get name}]} { catch {mol delete $_mm} }
+            }
+            set point_marker_mols [dict create]
         }
         cleanup_temporary_outputs
     }
@@ -23208,7 +23270,11 @@ proc ::VMDHole::import_tunnel_results_from_folder {root} {
         set frame [tunnel_frame_from_dir $fd $fb]; incr fb
         if {$_iprog && ($fb % 10 == 1)} {
             set state(status) "Importing tunnel results: frame $fb of $_nfd..."
-            catch {update idletasks}
+            # Full update, not idletasks: idletasks delivers no button events,
+            # so the Abort click this progress loop exists to honour sat in
+            # the queue for the whole pass. Re-entry is covered by the
+            # _op_in_progress guards (this loop runs inside _begin_calc).
+            catch {update}
             if {[_abort_requested]} { break }
         }
         set of [file join $fd out.dat]
@@ -35269,6 +35335,13 @@ proc ::VMDHole::request_abort {} {
     # The Abort button's ONLY action - deliberately dumb (flag-set + status) so it
     # is safe to fire from inside a compute loop's own `update`. No cleanup here.
     variable state
+    if {![_op_in_progress]} {
+        # A click that lands after the pass already finished: raising the flag
+        # here would strand it (nothing is running to consume and lower it)
+        # and leave "Aborting..." as the standing status.
+        set state(status) "Nothing is running."
+        return
+    }
     set state(abort_requested) 1
     set state(status) "Aborting — finishing the current frame(s)…"
 }
@@ -40371,7 +40444,15 @@ proc ::VMDHole::draw_ion_flow_tab {} {
     update idletasks
     if {[winfo width $cv] <= 1} {
         after cancel {::VMDHole::draw_ion_flow_tab}
-        after 100    {::VMDHole::draw_ion_flow_tab}
+        # Retry only while this tab is the one on screen: a gridded but
+        # never-mapped canvas keeps width 1 forever, so an unconditional
+        # reschedule became a permanent 10 Hz poll behind other tabs.
+        # <<NotebookTabChanged>> redraws on the first real visit.
+        catch {
+            if {[string match "*.ionflow" [$w.plotframe.nb select]]} {
+                after 100 {::VMDHole::draw_ion_flow_tab}
+            }
+        }
         return
     }
     if {[info exists state(ion_flow_view)] && $state(ion_flow_view) eq "passage"} {
@@ -47818,7 +47899,15 @@ proc ::VMDHole::_draw_mean_profile_body {} {
     update idletasks
     if {[winfo width $cv] <= 1} {
         after cancel {::VMDHole::draw_mean_profile}
-        after 100    {::VMDHole::draw_mean_profile}
+        # Retry only while this tab is the one on screen: a gridded but
+        # never-mapped canvas keeps width 1 forever, so an unconditional
+        # reschedule became a permanent 10 Hz poll behind other tabs.
+        # <<NotebookTabChanged>> redraws on the first real visit.
+        catch {
+            if {[string match "*.mean" [$w.plotframe.nb select]]} {
+                after 100 {::VMDHole::draw_mean_profile}
+            }
+        }
         return
     }
 
@@ -48158,7 +48247,15 @@ proc ::VMDHole::draw_histogram_tab {args} {
     update idletasks
     if {[winfo width $cv] <= 1} {
         after cancel {::VMDHole::draw_histogram_tab}
-        after 100    {::VMDHole::draw_histogram_tab}
+        # Retry only while this tab is the one on screen: a gridded but
+        # never-mapped canvas keeps width 1 forever, so an unconditional
+        # reschedule became a permanent 10 Hz poll behind other tabs.
+        # <<NotebookTabChanged>> redraws on the first real visit.
+        catch {
+            if {[string match "*.hist" [$w.plotframe.nb select]]} {
+                after 100 {::VMDHole::draw_histogram_tab}
+            }
+        }
         return
     }
 
@@ -55782,6 +55879,9 @@ proc ::VMDHole::update_minr_indicator {frame} {
     variable w
     variable minr_geo
     if {![info exists minr_geo]} { return }
+    # "" means the trends canvas is showing a message, not a plot: the last
+    # real draw's geometry must not place a playhead over it.
+    if {$minr_geo eq ""} { return }
     set cv $w.plotframe.nb.minr.cv
     # Headless guard - see _have_tk.
     if {![_have_tk]} { return }
@@ -57189,6 +57289,8 @@ proc ::VMDHole::draw_heatmap {} {
         incr nvalid
     }
     set _hmt_pre [expr {[clock milliseconds] - $_hmt0}]
+    set _hmb0 [clock milliseconds]
+    set _hmt_bundle 0
     if {$nvalid < 2} {
         if {[winfo exists $hf.cv]}          { grid remove $hf.cv }
         if {[winfo exists $hf.placeholder]} {
@@ -57378,6 +57480,7 @@ proc ::VMDHole::draw_heatmap {} {
             set bundle [heatmap_bundle $ncols $nbins]
         }
     }
+    set _hmt_bundle [expr {[clock milliseconds] - $_hmb0}]
     set disp_matrix  [dict get $bundle disp_matrix]
     set valid_frames [dict get $bundle valid_frames]
     set nframes      [dict get $bundle nframes]
