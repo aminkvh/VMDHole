@@ -286,10 +286,63 @@ set rc [catch {::VMDHole::_on_tunnel_selection_changed} err]
 puts "SELCHANGE rc=$rc [expr {$rc==0 ? {OK} : "BAD $err"}]"
 S4_EOF
 
+cat > "$T/s5.tcl" <<'S5_EOF'
+# 1. inf/nan in _num_or fields fall back
+set ::VMDHole::state(mole_bottleneck) inf
+puts "NUMOR [::VMDHole::_num_or mole_bottleneck 3.0 1] [expr {[::VMDHole::_num_or mole_bottleneck 3.0 1]==3.0 ? {OK} : {BAD}}]"
+# 2. water probe survives an emptied/mistyped field
+set ::VMDHole::state(metrics_water_probe) ""
+set a [::VMDHole::_metrics_water_probe]
+set ::VMDHole::state(metrics_water_probe) "1,15"
+set b [::VMDHole::_metrics_water_probe]
+puts "WPROBE '$a' '$b' [expr {$a==1.15 && $b==1.15 ? {OK} : {BAD}}]"
+# 3. show_gui must not clear a live run's abort
+::VMDHole::_begin_calc
+set ::VMDHole::state(abort_requested) 1
+::VMDHole::show_gui
+puts "SHOWGUI-LIVE abort=$::VMDHole::state(abort_requested) [expr {$::VMDHole::state(abort_requested)==1 ? {OK} : {BAD}}]"
+::VMDHole::_end_calc
+# 4. save publishes by rename; no .tmp litter
+set cfg $::VMDHole::config_file
+::VMDHole::save_config
+set tmps [glob -nocomplain "$cfg.tmp*"]
+puts "SAVECFG exists=[file exists $cfg] tmps=[llength $tmps] [expr {[file exists $cfg] && ![llength $tmps] ? {OK} : {BAD}}]"
+# 5. reopen must not revert a saved rename-atoms setting
+set fh [open $cfg w]; puts $fh "hole_fix_atom_names = 1"; puts $fh "ion_radius_fallback = 0"; close $fh
+::VMDHole::load_config
+puts "MIRROR fix=$::VMDHole::state(hole_fix_atom_names) [expr {$::VMDHole::state(hole_fix_atom_names)==1 ? {OK} : {BAD}}]"
+# 6. torn boolean must not blow up close_gui
+set fh [open $cfg w]; puts $fh "keep_visualization ="; close $fh
+::VMDHole::load_config
+set rc [catch {::VMDHole::close_gui} err]
+puts "TORNBOOL rc=$rc [expr {$rc==0 ? {OK} : "BAD $err"}]"
+# 7. unreadable config: GUI still opens
+set ::VMDHole::config_file [file join [pwd] .harness_cfg_dir]
+file mkdir $::VMDHole::config_file
+set rc [catch {::VMDHole::load_config} err]
+puts "UNREADABLE rc=$rc [expr {$rc==0 ? {OK} : "BAD $err"}]"
+set ::VMDHole::config_file $cfg
+# 8. the weight the combobox writes is what save persists
+set ::VMDHole::state(mole_weight_disp) "Length"
+::VMDHole::save_config
+set fh [open $cfg r]; set t [read $fh]; close $fh
+puts "WEIGHTKEY [expr {[string match "*mole_weight_disp = Length*" $t] ? {OK} : {BAD}}]"
+# 9. a caller-preset engine path is not persisted by init_executables
+set eng [file join [pwd] .harness_fake_hole]
+set fh [open $eng w]; puts $fh "#!/bin/sh"; close $fh
+file attributes $eng -permissions 0755
+file delete -force $cfg
+set ::VMDHole::state(hole_exec) $eng
+::VMDHole::init_executables
+set saved [expr {[file exists $cfg] ? [string match "*$eng*" [read [open $cfg r]]] : 0}]
+puts "PRESETSAVE saved=$saved [expr {!$saved ? {OK} : {BAD}}]"
+S5_EOF
+
 run_section close-path "$T/s1.tcl"
 run_section guards     "$T/s2.tcl"
 run_section molid      "$T/s3.tcl"
 run_section tunnel-opts "$T/s4.tcl"
+run_section config-fields "$T/s5.tcl"
 
 echo "  -> $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
