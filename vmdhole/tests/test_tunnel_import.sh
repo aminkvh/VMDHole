@@ -42,6 +42,13 @@ if [ ! -x "$ENGINE" ] || [ ! -f "$PDB" ]; then
 fi
 
 VMD=${VMD:-vmd}
+if ! command -v "$VMD" >/dev/null 2>&1; then
+    # Nothing below runs without vmd; the silenced invocation used to leave no
+    # output file and the group failed with "script produced no output" on any
+    # machine without vmd, instead of skipping like every other vmd group.
+    echo "SKIP: no vmd on PATH"
+    exit 0
+fi
 OUT=$(mktemp)
 WORK=$(mktemp -d)
 cat > "$OUT.tcl" <<EOF
