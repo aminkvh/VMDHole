@@ -430,7 +430,9 @@ namespace eval ::VMDHole:: {
     # see _stab_init / frame_axis.
     variable _track_txt ""
     variable _track_offset {}
-    variable config_file [file join [file normalize ~] .vmdhole_config]
+    variable config_file [expr {[info exists ::env(VMDHOLE_CONFIG_FILE)] \
+        && $::env(VMDHOLE_CONFIG_FILE) ne "" \
+        ? $::env(VMDHOLE_CONFIG_FILE) : [file join [file normalize ~] .vmdhole_config]}]
     variable state
     # NOTE (below is a plain Tcl list literal, not a script - "#" comments can't be
     # interleaved between its key/value pairs, hence these notes live here):
@@ -877,6 +879,18 @@ proc ::VMDHole::load_config {} {
     if {[info exists state(pore_lining_view)]} {
         _sync_pore_lining_view_disp
     }
+    # A persisted engine path whose binary is GONE (a deleted checkout, an
+    # unloaded module tree) must not outrank discovery or the Tcl fallback:
+    # kept, it surfaced as a run-time "sph_process not found" against a ghost
+    # path. Lives HERE so the source-time load at the end of this file is
+    # covered too, not only init_executables; caller presets are safe because
+    # init_executables restores them after this returns.
+    foreach _k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec} {
+        if {$state($_k) ne "" && ![file executable $state($_k)]} {
+            catch {vmdcon -warn "VMDHole: ignoring persisted $_k = $state($_k) (not executable)"}
+            set state($_k) ""
+        }
+    }
     set _loading_config 0
 }
 
@@ -939,6 +953,14 @@ proc ::VMDHole::save_config {} {
 }
 
 proc ::VMDHole::find_hole_exe {} {
+    # The env dir first: the same override the test suite and batch recipes
+    # already use to point one run at one tree. Six individual tests honour
+    # it; the plugin itself did not, so any tree whose engines are not in the
+    # four fixed install paths below was undiscoverable.
+    if {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne ""} {
+        set p [file join $::env(VMDHOLE_HOLE_EXE_DIR) hole]
+        if {[file executable $p]} { return $p }
+    }
     foreach candidate {
         ~/hole2/exe/hole
         /usr/local/bin/hole
@@ -17622,6 +17644,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
     # in headless_smoke.tcl which read `info body run_tunnel_analysis` still
     # see the code they are checking.
     variable busy
+    variable w
     set _rc [catch {
     # Tunnel mode's Run. Deliberately parallel to run_analysis but sharing none
     # of its storage: separate results, separate output root, separate surface
@@ -35721,8 +35744,7 @@ proc ::VMDHole::run_analysis {} {
             # GUI the existing results are left alone and the run proceeds -
             # never destroy data no one was asked about.
             variable w
-            if {[llength $existing_frames] > 0 && $state(overwrite_results) \
-                    && [_have_tk] && [winfo exists $w]} {
+            if {[llength $existing_frames] > 0 && $state(overwrite_results) && [_have_tk] && [winfo exists $w]} {
                 if {![confirm_overwrite_dialog $root_dir [llength $existing_frames]]} {
                     set state(status) "Run cancelled — existing results preserved."
                     set _cancelled 1

@@ -1698,7 +1698,9 @@ chk "...so no empty coordinate reaches the point list" $_empty 0
 # on _have_tk; run_analysis did NOT, so a headless or scripted rerun into an
 # existing output root either blocked on a dialog nobody can answer or died on
 # `toplevel`. Both now refuse to prompt without a GUI, leaving the results alone
-# and proceeding - never destroy data no one was asked about.
+# and proceeding - never destroy data no one was asked about. Both also require
+# the plugin's own window: VMD's Tk Console has Tk but not $w, and the modal
+# builds its toplevel under $w.
 #
 # Asserted SEPARATELY because the two guard differently: HOLE gates on the same
 # `if` as the overwrite test, tunnel gates on an enclosing one. A single generic
@@ -1709,9 +1711,9 @@ chk "both run paths still prompt before clobbering" \
     [expr {[string first {confirm_overwrite_dialog} $_rab] >= 0
            && [string first {confirm_overwrite_dialog} $_rtb] >= 0}] 1
 chk "run_analysis gates its prompt on the SAME if as overwrite_results" \
-    [string match {*$state(overwrite_results) && \[_have_tk\]*} $_rab] 1
+    [string match {*$state(overwrite_results) && \[_have_tk\] && \[winfo exists $w\]*} $_rab] 1
 chk "run_tunnel_analysis gates its prompt on an enclosing _have_tk" \
-    [string match {*!$is_tmp && \[_have_tk\]*} $_rtb] 1
+    [string match {*!$is_tmp && \[_have_tk\] && \[winfo exists $w\]*} $_rtb] 1
 
 # --- the accel manifest must record sph_process's own patch -----------------
 # apply_patches.py has ALWAYS applied sphqpu_par.f (its patch list and
