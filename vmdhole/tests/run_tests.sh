@@ -92,6 +92,15 @@
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 fails=0; ran=0; skipped=""; missing=""
 RELEASE="${VMDHOLE_RELEASE:-0}"
+# Hermetic config: every group that drives the real plugin would otherwise
+# read the USER'S ~/.vmdhole_config (stale engine paths from another checkout
+# broke groups here) and - worse - REWRITE it via init_executables' auto-save.
+# The plugin honours this override; a caller-set value is respected.
+if [ -z "${VMDHOLE_CONFIG_FILE:-}" ]; then
+    VMDHOLE_CONFIG_FILE=$(mktemp); export VMDHOLE_CONFIG_FILE
+    trap 'rm -f "$VMDHOLE_CONFIG_FILE"' EXIT INT TERM
+fi
+
 GROUPS="test_headless_smoke test_accel_parity test_hydro_qco_parity test_hole_tcl_fallback test_hole_tcl_pore_methods test_hole_tcl_fallback_e2e test_hole_fast_coord test_capsule_incomplete test_ellipse_parity test_h2dmap_parity test_release_integrity test_tcl_pitfalls test_tunnel_separation test_tunnel_clustering test_tunnel_import test_mole_tcl_port test_hcapen_cache test_inline_current test_adapter_schema test_gui_reachable"
 EXPECTED=$(echo $GROUPS | wc -w)
 for t in $GROUPS; do
