@@ -20812,23 +20812,62 @@ proc ::VMDHole::use_selection_center {} { _set_point_to_selection_center cpoint 
 proc ::VMDHole::tunnel_use_selection_center {} { _set_point_to_selection_center tunnel_start "Tunnel start point" }
 
 proc ::VMDHole::_ensure_axis_refs {molid} {
-    # _stab_init captures the reference frame and scoped selections that CPOINT
-    # Track/Stabilize need, and run_analysis is the only thing that ever called
-    # it - at run start. So before a run, frame_axis had no refs for CPOINT and
-    # silently returned the STATIC point, while CVECT's Exact branch (which
-    # re-resolves its own two selections and needs no refs) did move: the arrow
-    # visibly stabilised and the sphere sat still, which is what the cue looked
-    # like it was ignoring Track/Stabilize. Initialise on demand so the cue
-    # shows the real per-frame point without requiring a run first.
+    # Track/Stabilize CPOINT and Stabilize-CVECT derive their per-frame
+    # point/direction from refs _stab_init captures once, so the cue is only
+    # live if those refs both exist and still match CPOINT, CVECT-def-p1/p2
+    # and the molecule - all four are independently editable. Initialised
+    # here on demand (run_analysis is the only other caller, at run start).
+    #
+    # Debounced: reached from a per-keystroke write trace on state(cpoint)
+    # (_sync_point_marker); _stab_init's atomselect + measure-center calls
+    # are too costly to repeat per character. run_analysis's own call to
+    # _stab_init (line ~35649) is separate and stays synchronous.
     variable state
     variable _track_offset
     variable _stab_cp_ref_xyz
+    variable _stab_p1_ref_xyz
+    variable _stab_p2_ref_xyz
+    variable _axis_refs_cp; variable _axis_refs_molid
+    variable _axis_refs_p1; variable _axis_refs_p2
+    set do_cv [expr {$state(stabilize_cvect) \
+        && !([info exists state(cvect_exact)] && $state(cvect_exact))}]
     set need 0
-    if {[info exists state(track_cpoint)] && $state(track_cpoint) && \
-            (![info exists _track_offset] || $_track_offset eq {})} { set need 1 }
-    if {[info exists state(stabilize_cpoint)] && $state(stabilize_cpoint) && \
-            (![info exists _stab_cp_ref_xyz] || $_stab_cp_ref_xyz eq {})} { set need 1 }
-    if {$need} { catch {_stab_init $molid} }
+    if {$state(track_cpoint) && (![info exists _track_offset] || $_track_offset eq {})} {
+        set need 1
+    }
+    if {$state(stabilize_cpoint) && (![info exists _stab_cp_ref_xyz] || $_stab_cp_ref_xyz eq {})} {
+        set need 1
+    }
+    if {$do_cv && (![info exists _stab_p1_ref_xyz] || $_stab_p1_ref_xyz eq {} \
+            || ![info exists _stab_p2_ref_xyz] || $_stab_p2_ref_xyz eq {})} {
+        set need 1
+    }
+    if {!$need && ($state(track_cpoint) || $state(stabilize_cpoint) || $do_cv)} {
+        set _cp_now [string trim $state(cpoint)]
+        set _p1_now [string trim $state(cvect_def_p1)]
+        set _p2_now [string trim $state(cvect_def_p2)]
+        if {![info exists _axis_refs_cp]    || $_axis_refs_cp ne $_cp_now}    { set need 1 }
+        if {![info exists _axis_refs_p1]    || $_axis_refs_p1 ne $_p1_now}    { set need 1 }
+        if {![info exists _axis_refs_p2]    || $_axis_refs_p2 ne $_p2_now}    { set need 1 }
+        if {![info exists _axis_refs_molid] || $_axis_refs_molid ne $molid}   { set need 1 }
+    }
+    if {!$need} { return }
+    variable _axis_refs_after
+    if {[info exists _axis_refs_after] && $_axis_refs_after ne ""} {
+        after cancel $_axis_refs_after
+    }
+    set _axis_refs_after [after 150 [list ::VMDHole::_axis_refs_settle $molid]]
+}
+
+proc ::VMDHole::_axis_refs_settle {molid} {
+    # Debounced tail of _ensure_axis_refs: run the real (expensive) re-init,
+    # then redraw the cue with the fresh refs - it drew immediately on the
+    # triggering keystroke using whatever refs it had, so it needs a second
+    # nudge once the settled ones are ready.
+    variable _axis_refs_after
+    set _axis_refs_after ""
+    catch {_stab_init $molid}
+    catch {_sync_point_marker cpoint show_cpoint_marker}
 }
 
 proc ::VMDHole::_sync_point_marker {key show_key args} {
@@ -21195,6 +21234,14 @@ proc ::VMDHole::_stab_init {molid} {
     variable _stab_txt_cp; variable _stab_txt_p1; variable _stab_txt_p2
     variable _stab_cp_ref_xyz; variable _stab_p1_ref_xyz; variable _stab_p2_ref_xyz
     _stab_cleanup
+    # What CPOINT/CVECT-def/molecule these refs are captured for - see
+    # _ensure_axis_refs, which re-inits when any of the four drift.
+    variable _axis_refs_cp; variable _axis_refs_molid
+    variable _axis_refs_p1; variable _axis_refs_p2
+    set _axis_refs_cp [expr {[info exists state(cpoint)] ? [string trim $state(cpoint)] : ""}]
+    set _axis_refs_molid $molid
+    set _axis_refs_p1 [string trim $state(cvect_def_p1)]
+    set _axis_refs_p2 [string trim $state(cvect_def_p2)]
     set now [molinfo $molid get frame]
     set _stab_ref_frame $now
     set hsel [string trim $state(selection)]
@@ -36292,8 +36339,12 @@ proc ::VMDHole::_redisplay_results_list {} {
     variable result_frames
     # New/changed results can make a tab actionable (or empty it again).
     catch {_sync_exportbars_for_data}
-    variable _method_mismatch_summary
-    set _method_mismatch_summary [_result_frames_method_summary]
+    # _method_mismatch_summary is no longer computed here - a reopen or mode
+    # switch that leaves plot_data_version unchanged would otherwise pay a
+    # full per-frame .sph scan (_result_frames_method_summary) to overwrite
+    # a value _draw_method_mismatch_note's own version-gated memo never
+    # reads back, since its version token is also unchanged. It self-
+    # computes there instead, on first draw after the data actually moves.
 
     # Enable/disable the trajectory-only analyses (Hydration, Permeation) now that
     # the frame set may have changed.
@@ -44686,6 +44737,63 @@ proc ::VMDHole::update_frame_trace {} {
     set traced_molid all
 }
 
+proc ::VMDHole::_panel_is_open {} {
+    # Is the plugin window on screen? close_gui WITHDRAWS the toplevel (it must
+    # never destroy it - see the note there), so existence alone is not enough.
+    variable w
+    if {![_have_tk]} { return 0 }
+    if {[catch {expr {[winfo exists $w] && [winfo ismapped $w]}} r]} { return 0 }
+    return $r
+}
+
+proc ::VMDHole::_any_live_surface_mol {} {
+    # Does this plugin still own a surface track in VMD right now? Covers the
+    # active HOLE surface, every per-molecule HOLE track, the tunnel-mode
+    # tracks, and the reshaped-ellipse surface, so a user who deletes one but
+    # not another is not mistaken for having deleted all of them.
+    variable current_surface_mol
+    variable surface_mols
+    variable tunnel_surface_mols
+    variable ellipse_surface_mol
+    if {[info exists current_surface_mol] && $current_surface_mol >= 0 \
+            && ![catch {molinfo $current_surface_mol get name}]} { return 1 }
+    if {[info exists ellipse_surface_mol] && $ellipse_surface_mol >= 0 \
+            && ![catch {molinfo $ellipse_surface_mol get name}]} { return 1 }
+    foreach _a {surface_mols tunnel_surface_mols} {
+        if {![info exists $_a]} continue
+        foreach _k [array names $_a] {
+            set _m [set ${_a}($_k)]
+            if {![catch {molinfo $_m get name}]} { return 1 }
+        }
+    }
+    return 0
+}
+
+proc ::VMDHole::_any_surface_ever_assigned {} {
+    # Was a surface track EVER created this session, live or not? All four
+    # tracking variables init to -1 or an empty array and are never reset
+    # back to that once a real molid lands in them (even a later `mol
+    # delete` leaves the stale id behind, in the keep-visualization path
+    # that leaves them alone on close). So "assigned but not live" means
+    # exactly one thing: a track this plugin built was deleted out from
+    # under it - the case frame_changed's self-teardown guard exists for.
+    # "Never assigned" (display_mode none, or no run yet) must NOT match
+    # that guard, or every non-surface per-frame update (the results-list
+    # selection, the transport bar, tunnel traffic lights) stops working
+    # the moment the panel closes, regardless of whether a surface was
+    # ever in the picture.
+    variable current_surface_mol
+    variable surface_mols
+    variable tunnel_surface_mols
+    variable ellipse_surface_mol
+    if {[info exists current_surface_mol] && $current_surface_mol >= 0} { return 1 }
+    if {[info exists ellipse_surface_mol] && $ellipse_surface_mol >= 0} { return 1 }
+    foreach _a {surface_mols tunnel_surface_mols} {
+        if {[info exists $_a] && [array size $_a] > 0} { return 1 }
+    }
+    return 0
+}
+
 proc ::VMDHole::remove_frame_trace {} {
     variable traced_molid
     if {$traced_molid eq ""} { return }
@@ -44777,6 +44885,17 @@ proc ::VMDHole::frame_changed {name index op} {
     # other than the one this is tracking so this never react to an unrelated
     # trajectory the user happens to be animating in another molecule slot.
     if {$index ne "" && $index ne $molid} { return }
+    # Stop tracing once the panel is closed and a surface track this plugin
+    # built is no longer live: past that point load_surface_for_frame would
+    # recreate a molecule the user just deleted and keep rebuilding it every
+    # frame. "Keep visualization on close" (the default) is why the trace
+    # survives close at all - it must go on tracking a KEPT surface. Gated
+    # on _any_surface_ever_assigned too - see that proc's own comment for
+    # why "no surface exists" and "no surface exists YET" must not collapse
+    # into the same case here.
+    if {![_panel_is_open] && [_any_surface_ever_assigned] && ![_any_live_surface_mol]} {
+        remove_frame_trace; return
+    }
     # This write reached us with syncing_frame off, so the frame was driven from
     # VMD (its slider, the animate controls, a script) - not by the plugin.
     variable vmd_last_frame_ms
@@ -55048,7 +55167,19 @@ proc ::VMDHole::_draw_method_mismatch_note {cv cw} {
     # differently-laid-out centered titles/captions each of those three tabs
     # already draws near the top. Full detail goes to the console instead of
     # fighting for canvas space.
+    # Computed here, the only writer, so every caller - Over Time, Mean
+    # Profile, Trends, an import, a re-run that reuses frames - sees the
+    # current result set, never a value some other path forgot to refresh.
+    # Memoised on plot_data_version (the same token the binned caches key
+    # on), so this costs one pass per data change, not one per redraw -
+    # _frame_pore_method reads each frame's .sph.
     variable _method_mismatch_summary
+    variable _method_mismatch_ver
+    variable plot_data_version
+    if {![info exists _method_mismatch_ver] || $_method_mismatch_ver ne $plot_data_version} {
+        set _method_mismatch_summary [_result_frames_method_summary]
+        set _method_mismatch_ver $plot_data_version
+    }
     if {$_method_mismatch_summary eq ""} { return }
     catch {vmdcon -info "VMDHole: mixed pore methods in this result set - $_method_mismatch_summary. Re-run the odd frame(s) out under a consistent method."}
     $cv create text [expr {$cw - 6}] 6 \
