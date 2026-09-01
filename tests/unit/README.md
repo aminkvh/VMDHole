@@ -1,5 +1,8 @@
 # `tests/unit/` — small, self-contained regression tests
 
+(The full testing-system overview, all three tiers and the native
+verifications, lives in [docs/testing.md](../../docs/testing.md).)
+
 Deliberately separate from the two existing suites so they can be wired into the
 right runner on purpose rather than by accident:
 

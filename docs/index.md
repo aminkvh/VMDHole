@@ -44,6 +44,7 @@ reporting an analysis.
 | Page | Scope |
 |---|---|
 | [Troubleshooting](troubleshooting.md) | Symptom-based diagnosis |
+| [Testing](testing.md) | The test tiers, every group and unit test, and the conventions they enforce |
 | [References](references.md) | Methods, property scales, and required citations |
 
 ## Before interpreting a result
