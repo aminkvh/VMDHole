@@ -115,7 +115,14 @@ for t in $GROUPS; do
     _log=$(mktemp)
     ( "$DIR/$t.sh" 2>&1; echo "__RC__$?" ) | tee "$_log" | grep -v '^__RC__'
     _rc=$(sed -n 's/^__RC__//p' "$_log")
-    [ "${_rc:-1}" -eq 0 ] || fails=$((fails+1))
+    # NAME a failing group. A group can exit nonzero with every visible line
+    # green (a cleanup error, a miscounted tail) - without this line the only
+    # trace was the final count, and finding WHICH group meant re-running all
+    # twenty by hand.
+    if [ "${_rc:-1}" -ne 0 ]; then
+        fails=$((fails+1))
+        echo "  >>> $t: FAILED (exit ${_rc:-none})"
+    fi
     # Anchored to the GROUP-level form ("SKIP: no vmd on PATH"), not a bare
     # substring. An unanchored match also caught the per-assertion form
     # ("  SKIP  Ion Flow's axial window - this structure has no ions"), which
