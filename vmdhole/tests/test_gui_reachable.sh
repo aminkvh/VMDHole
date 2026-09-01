@@ -74,6 +74,16 @@ if [ -z "${GUI_TEST_PDB:-}" ] && [ -f "$REF/1ERI.pdb" ]; then
     HETLOG="$LOG.het"
     LOG_SAVE="$LOG"; LOG="$HETLOG"
     run_gui "$REF/1ERI.pdb" "DA" "protein or nucleic" "23.577 28.862 1.087"
+    # VMD sometimes dies mid-pass under load, right after the tunnel-run
+    # block (the exit-path crash the comment below the verdict already
+    # documents, striking earlier) - the pass is fine when it completes:
+    # verified 3x directly and via this wrapper. One retry, SAID out loud,
+    # only when the first attempt provably died before finishing.
+    if ! grep -q 'ALL CHECKS COMPLETE' "$HETLOG" 2>/dev/null; then
+        echo "  NOTE  het pass died mid-run (VMD crash under load) - retrying once"
+        : > "$HETLOG"
+        run_gui "$REF/1ERI.pdb" "DA" "protein or nucleic" "23.577 28.862 1.087"
+    fi
     LOG="$LOG_SAVE"
     if [ -s "$HETLOG" ]; then
         grep -E "HET residue|the run produced tunnels" "$HETLOG"
