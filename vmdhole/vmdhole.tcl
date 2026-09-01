@@ -940,7 +940,11 @@ proc ::VMDHole::save_config {} {
     # load_config in the same user's batch job could read a torn file.
     set _cfg_pub $config_file
     set config_file "$_cfg_pub.tmp[pid]"
-    set fh [open $config_file w]
+    if {[catch {open $config_file w} fh]} {
+        catch {vmdcon -warn "VMDHole: could not write $config_file ($fh) - settings not saved."}
+        set config_file $_cfg_pub
+        return
+    }
     puts $fh "# VMDHole configuration - auto-generated"
     foreach key $persistent_keys {
         if {[info exists state($key)]} {
@@ -7464,7 +7468,7 @@ proc ::VMDHole::_tunnel_layer_kr {layer} {
     # rule pore mode uses: |q| < 0.25 e when charges are loaded, kr_static from
     # the atom name when they are not.
     variable state
-    set molid [resolve_molid]
+    set molid [resolve_molid_or -1]
     if {$molid eq "" || $molid < 0} { return "" }
     set sel {}
     foreach r [dict get $layer residues] {
@@ -33635,7 +33639,7 @@ proc ::VMDHole::_capsule_slice_property {rings} {
     # {cx cy cz eff} tuples. Empty list if the property cannot be resolved, so
     # the caller falls back to the radius bands.
     variable state
-    set molid [resolve_molid]
+    set molid [resolve_molid_or -1]
     if {$molid eq "" || ![string is integer -strict $molid] || $molid < 0} { return {} }
     # Sample the QC1-QC2 segment: a capsule is exactly the points within R of
     # that segment, so these spheres reproduce its surface rather than standing
