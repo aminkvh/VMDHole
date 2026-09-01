@@ -4406,6 +4406,69 @@ chk "...and said out loud in the openings panel" \
     [expr {[string first {_conn_lobe_frame_drop_note} \
         [info body ::VMDHole::_refresh_conn_lobes_panel]] >= 0}] 1
 
+# The CPOINT cue must follow the field even with Track/Stabilize on, and the
+# CVECT arrow with Stabilize-CVECT on. All three derive the per-frame value
+# from refs _stab_init captured from CPOINT/CVECT-def-p1/p2/the molecule in
+# force at the time, so a later edit to ANY of the four left the cue drawing
+# a stale one - CVECT-def and the molecule are independently editable from
+# CPOINT, so tracking CPOINT drift alone missed both.
+set _ear [info body ::VMDHole::_ensure_axis_refs]
+chk "the axis refs remember which CPOINT they were built from" \
+    [expr {[string first {_axis_refs_cp} $_ear] >= 0}] 1
+chk "...and are rebuilt when the field no longer matches" \
+    [expr {[string first {$_axis_refs_cp ne $_cp_now} $_ear] >= 0}] 1
+chk "...tracking CVECT-Stabilize's def points too" \
+    [expr {[string first {_axis_refs_p1} $_ear] >= 0 \
+        && [string first {_axis_refs_p2} $_ear] >= 0}] 1
+chk "...and the molecule the refs were resolved against" \
+    [expr {[string first {_axis_refs_molid} $_ear] >= 0}] 1
+chk "...debounced, since a keystroke trace reaches this" \
+    [expr {[string first {after 150} $_ear] >= 0 \
+        && [string first {after cancel} $_ear] >= 0}] 1
+set _sti [info body ::VMDHole::_stab_init]
+chk "...with _stab_init stamping all four values it captured" \
+    [expr {[string first {_axis_refs_cp} $_sti] >= 0 \
+        && [string first {_axis_refs_molid} $_sti] >= 0 \
+        && [string first {_axis_refs_p1} $_sti] >= 0 \
+        && [string first {_axis_refs_p2} $_sti] >= 0}] 1
+
+# The per-frame trace must not outlive both the panel AND the surface it draws
+# - but must also not die BEFORE any surface has ever existed (display_mode
+# none, or headless with no run yet): those are the same "no live surface"
+# state but need opposite outcomes, so a THIRD check (was one ever assigned
+# at all) has to separate them. "Keep visualization on close" leaves the
+# trace installed on purpose so a kept surface still follows frames; once the
+# user deletes that surface, load_surface_for_frame would recreate the
+# molecule and rebuild a surface every frame forever.
+set _fc [info body ::VMDHole::frame_changed]
+chk "the frame trace stops when the panel is shut and no surface is left" \
+    [expr {[string first {![_panel_is_open] && [_any_surface_ever_assigned] && ![_any_live_surface_mol]} $_fc] >= 0 \
+        && [string first {remove_frame_trace; return} $_fc] >= 0}] 1
+chk "...and a withdrawn panel counts as shut, not merely destroyed" \
+    [expr {[string first {winfo ismapped} [info body ::VMDHole::_panel_is_open]] >= 0}] 1
+chk "...checking tunnel tracks too, not just the HOLE one" \
+    [expr {[string first {tunnel_surface_mols} [info body ::VMDHole::_any_live_surface_mol]] >= 0}] 1
+chk "...and the reshaped-ellipse surface, a fourth independent track" \
+    [expr {[string first {ellipse_surface_mol} [info body ::VMDHole::_any_live_surface_mol]] >= 0}] 1
+chk "...distinguishing 'never had one' from 'had one, now gone'" \
+    [expr {[string first {ellipse_surface_mol} \
+        [info body ::VMDHole::_any_surface_ever_assigned]] >= 0}] 1
+
+# The mixed-pore-method badge has to be true at DRAW time, not trusted from
+# whatever a caller last wrote - an import or a dropped frame left it stale
+# (or unset) over a curve that really did average two methods together.
+# Matched against the actual assignment statements, not a bare mention of
+# either proc name: both names also appear in this proc's own comments, so
+# a weaker [string first] here would still pass with the assignments deleted.
+set _mmn [info body ::VMDHole::_draw_method_mismatch_note]
+chk "the mixed-method badge computes itself when it draws" \
+    [expr {[string first {set _method_mismatch_summary [_result_frames_method_summary]} $_mmn] >= 0}] 1
+chk "...memoised on plot_data_version, not recomputed per redraw" \
+    [expr {[string first {set _method_mismatch_ver $plot_data_version} $_mmn] >= 0}] 1
+chk "...and _redisplay_results_list no longer duplicates that work" \
+    [expr {[string first {set _method_mismatch_summary} \
+        [info body ::VMDHole::_redisplay_results_list]] < 0}] 1
+
 # An UNTICKED opening must still be MESHED. _split_conn_mesh_by_region assigns
 # every triangle to its nearest classified dot among the regions it is handed,
 # so omitting a region does not remove its geometry - it redistributes it into
