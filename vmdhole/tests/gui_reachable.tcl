@@ -691,6 +691,14 @@ if {[file exists $PDB] && [file executable [::VMDHole::_mole_engine_path]]} {
         # loaded so _tunnel_xframe_build has something real to pool.
         set _sv_trf $::VMDHole::tunnel_result_frames
         set _sv_tr [array get ::VMDHole::tunnel_results]
+        # The checks below toggle rows of the SYNTHETIC cluster set; those ids
+        # are cluster-keyed and survive the results restore, and on a fixture
+        # whose real clusters reuse the same low ids (1ERI: clusters 1 and 2)
+        # the leaked OFF entries hid every real tunnel for the rest of the run
+        # - which is what silently emptied the true-3D render downstream.
+        set _sv_shown_cid [array get ::VMDHole::tunnel_shown_cid]
+        set _sv_shown_def $::VMDHole::state(tunnel_shown_default)
+        set _sv_shown_all $::VMDHole::state(tunnel_shown_all)
         set ::VMDHole::tunnel_results(90001) $::VMDHole::tunnel_results($_cfr)
         set ::VMDHole::tunnel_results(90002) $::VMDHole::tunnel_results($_cfr)
         set ::VMDHole::tunnel_result_frames {90001 90002}
@@ -1012,6 +1020,10 @@ if {[file exists $PDB] && [file executable [::VMDHole::_mole_engine_path]]} {
         array unset ::VMDHole::tunnel_results 90002
         set ::VMDHole::tunnel_result_frames $_sv_trf
         array set ::VMDHole::tunnel_results $_sv_tr
+        array unset ::VMDHole::tunnel_shown_cid
+        array set ::VMDHole::tunnel_shown_cid $_sv_shown_cid
+        set ::VMDHole::state(tunnel_shown_default) $_sv_shown_def
+        set ::VMDHole::state(tunnel_shown_all) $_sv_shown_all
         ::VMDHole::_tunnel_xframe_build
 
         # NEW (redesign): presence used to be its own traffic-light column,
@@ -2350,10 +2362,10 @@ if {[file exists $PDB] && [file executable [::VMDHole::_mole_engine_path]]} {
             # "Accurate 3D" is wired to nothing.
             set _c3d {}
             set _c2d {}
-            foreach _e [::VMDHole::plot_cache_entries $_cplot3d] {
+            foreach _e [expr {[file exists $_cplot3d] ? [::VMDHole::plot_cache_entries $_cplot3d] : {}}] {
                 if {[lindex $_e 0] eq "c"} { lappend _c3d [lindex $_e 1] }
             }
-            foreach _e [::VMDHole::plot_cache_entries $_cplot2d] {
+            foreach _e [expr {[file exists $_cplot2d] ? [::VMDHole::plot_cache_entries $_cplot2d] : {}}] {
                 if {[lindex $_e 0] eq "c"} { lappend _c2d [lindex $_e 1] }
             }
             report "Accurate 3D actually changes the rendered colors (not just the cache filename)" \
