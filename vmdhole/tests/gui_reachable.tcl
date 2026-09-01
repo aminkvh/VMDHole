@@ -1600,7 +1600,7 @@ if {[file exists $PDB] && [file executable [::VMDHole::_mole_engine_path]]} {
         # wide), so assert its ORDER instead: the delete has to come after the
         # 100 ms re-arm, or that round-trip leaves the tab blank again.
         set _b [info body ::VMDHole::_draw_mean_profile_body]
-        set _ir [string first "after 100    {::VMDHole::draw_mean_profile}" $_b]
+        set _ir [string first "after 100 {::VMDHole::draw_mean_profile}" $_b]
         set _id [string first "delete meancalc" [string range $_b $_ir end]]
         report "the cue outlives the 1px reschedule (delete comes after it)" \
                [expr {$_ir > 0 && $_id > 0}] "(rearm=$_ir delete-after=$_id)"
