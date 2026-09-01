@@ -239,7 +239,7 @@ static int arg_int(const char *s, const char *what)
 {
     char *end = NULL;
     long v = strtol(s, &end, 10);
-    if (end == s || *end || v < -2147483647L || v > 2147483647L) {
+    if (end == s || *end || v < -2147483648L || v > 2147483647L) {
         fprintf(stderr, "--tunnel-mole: %s \"%s\" is not an integer\n", what, s);
         exit(2);
     }
@@ -304,7 +304,10 @@ int main(int argc, char **argv)
     P.min_depth          = POSN(5) ? arg_int(argv[5], "min depth") : 8;
     P.min_depth_length   = POSN(6) ? arg_num(argv[6], "min depth length") : 5.0;
     P.min_tunnel_length  = POSN(7) ? arg_num(argv[7], "min tunnel length") : 0.0;
-    P.weight             = POSN(8) ? (mole_weight_fn)atoi(argv[8]) : MOLE_W_VORONOI_SCALE;
+    /* arg_int, not atoi: atoi("abc") is 0, which equals MOLE_W_VORONOI_SCALE -
+       a non-numeric weight silently ran the same default the range check just
+       below exists to refuse for an out-of-range NUMERIC one. */
+    P.weight             = POSN(8) ? (mole_weight_fn)arg_int(argv[8], "weight") : MOLE_W_VORONOI_SCALE;
     /* L9: an out-of-range weight silently ran MOLE's default, because
        mole_edge_cost's `default:` arm returns the same thing weight 0 selects -
        a faithful rendering of a C# switch over an enum that could not be out of
@@ -330,20 +333,25 @@ int main(int argc, char **argv)
         const char *a = argv[i], *v = strchr(a, '=');
         if (strncmp(a, "--", 2) || !v) continue;
         v++;
-        if      (!strncmp(a, "--cover=", 8))       surf_cover = atof(v);
-        else if (!strncmp(a, "--autocover=", 12))  auto_cover = atof(v);
-        else if (!strncmp(a, "--maxorigins=", 13)) max_origins = atoi(v);
-        else if (!strncmp(a, "--bottleneck=", 13)) bottleneck = atof(v);
-        else if (!strncmp(a, "--bottletol=", 12))  bottle_tol = atof(v);
-        else if (!strncmp(a, "--maxsim=", 9))      max_sim = atof(v);
-        else if (!strncmp(a, "--fbl=", 6))         filter_boundary = atoi(v);
-        else if (!strncmp(a, "--strict-interior=", 18)) P.strict_interior = atoi(v);
+        /* arg_num/arg_int, not bare atof/atoi: these come straight from GUI
+           entry-widget text (_mole_cfg_flags in vmdhole.tcl), unvalidated, so
+           a blank or malformed field silently became 0.0/0 - the same class
+           of silent-wrong-run the positional arguments above were hardened
+           against, just reached from a flag instead of a position. */
+        if      (!strncmp(a, "--cover=", 8))       surf_cover = arg_num(v, "cover");
+        else if (!strncmp(a, "--autocover=", 12))  auto_cover = arg_num(v, "autocover");
+        else if (!strncmp(a, "--maxorigins=", 13)) max_origins = arg_int(v, "maxorigins");
+        else if (!strncmp(a, "--bottleneck=", 13)) bottleneck = arg_num(v, "bottleneck");
+        else if (!strncmp(a, "--bottletol=", 12))  bottle_tol = arg_num(v, "bottletol");
+        else if (!strncmp(a, "--maxsim=", 9))      max_sim = arg_num(v, "maxsim");
+        else if (!strncmp(a, "--fbl=", 6))         filter_boundary = arg_int(v, "fbl");
+        else if (!strncmp(a, "--strict-interior=", 18)) P.strict_interior = arg_int(v, "strict-interior");
         else if (!strncmp(a, "--exit=", 7)) {
             if (sscanf(v, "%lf,%lf,%lf", &exitp[0], &exitp[1], &exitp[2]) == 3)
                 have_exit = 1;
             else { fprintf(stderr, "--tunnel-mole: --exit needs x,y,z\n"); return 2; }
         }
-        else if (!strncmp(a, "--exitsonly=", 12)) exits_only = atoi(v);
+        else if (!strncmp(a, "--exitsonly=", 12)) exits_only = arg_int(v, "exitsonly");
         else if (!strncmp(a, "--path=", 7)) {
             if (sscanf(v, "%lf,%lf,%lf,%lf,%lf,%lf", &patha[0], &patha[1], &patha[2],
                        &pathb[0], &pathb[1], &pathb[2]) == 6) have_path = 1;
