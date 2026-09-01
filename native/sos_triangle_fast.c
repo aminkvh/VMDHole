@@ -1620,6 +1620,28 @@ static void hydro_thin_spheres(void)
   }
 }
 
+/* Safe replacement for `(int)((v-origin)/cell)` in the atom/sphere grid
+ * below: the same NaN/Inf-cast UB cell_index() closes for .sos dot cells
+ * (see its own comment above), reached here from a corrupt atom or sphere
+ * coordinate instead of a corrupt dot.
+ *
+ * Keeps the exact truncating cast - not floor() - for every finite result,
+ * so binning and lookup stay bit-identical for real coordinates including
+ * ones outside the atom bounding box (spheres are not bbox-clamped, and
+ * truncation of a negative quotient already differs from floor there; this
+ * must not add a second difference). GRID_OOR is a huge, clearly-outside
+ * sentinel, not a clamp into [0,dim): the +-1 neighbour walk's own
+ * `ni<0||ni>=gx` bounds check already discards a real coordinate that far
+ * outside the grid, so a NaN/Inf one is discarded the identical way.
+ */
+#define GRID_OOR (1<<28)
+static int hydro_cell(double v, double origin, double cell)
+{
+  double q = (v - origin) / cell;
+  if (!(q > -(double)GRID_OOR && q < (double)GRID_OOR)) return GRID_OOR;
+  return (int)q;
+}
+
 static void hydro_compute_sphere_h(void)
 {
   int i, j;
@@ -1647,23 +1669,40 @@ static void hydro_compute_sphere_h(void)
       if (atom_z[j]<zlo) zlo=atom_z[j]; else if (atom_z[j]>zhi) zhi=atom_z[j];
     }
     ox = xlo; oy = ylo; oz = zlo;
-    gx = (int)((xhi-xlo)/cell) + 1;
-    gy = (int)((yhi-ylo)/cell) + 1;
-    gz = (int)((zhi-zlo)/cell) + 1;
-    if (gx < 1) gx = 1;
-    if (gy < 1) gy = 1;
-    if (gz < 1) gz = 1;
-    ncells = (long)gx * gy * gz;
-    ghead = xa_malloc(ncells * sizeof(int));
-    gnext = xa_malloc(n_atom * sizeof(int));
+    /* atom_x[0] etc. seeded xlo/xhi before any finiteness check ran; a NaN
+       seed makes every later `<`/`>` comparison in the bbox scan above false,
+       so xlo/xhi silently stay NaN instead of being overwritten by the next
+       finite atom. Route that the same place OOM already goes: no grid,
+       direct O(n_atom) scan below, which has no cast to be undefined. */
+    if (isfinite(xhi-xlo) && isfinite(yhi-ylo) && isfinite(zhi-zlo)) {
+      gx = (int)((xhi-xlo)/cell) + 1;
+      gy = (int)((yhi-ylo)/cell) + 1;
+      gz = (int)((zhi-zlo)/cell) + 1;
+      if (gx < 1) gx = 1;
+      if (gy < 1) gy = 1;
+      if (gz < 1) gz = 1;
+      ncells = (long)gx * gy * gz;
+      ghead = xa_malloc(ncells * sizeof(int));
+      gnext = xa_malloc(n_atom * sizeof(int));
+    }
     if (ghead && gnext) {
       long c;
       for (c = 0; c < ncells; c++) ghead[c] = -1;
       for (j = 0; j < n_atom; j++) {
-        int ai = (int)((atom_x[j]-ox)/cell);
-        int aj = (int)((atom_y[j]-oy)/cell);
-        int ak = (int)((atom_z[j]-oz)/cell);
-        long idx = ((long)ak*gy + aj)*gx + ai;
+        int ai = hydro_cell(atom_x[j], ox, cell);
+        int aj = hydro_cell(atom_y[j], oy, cell);
+        int ak = hydro_cell(atom_z[j], oz, cell);
+        long idx;
+        /* ai/aj/ak land in [0,gx)/[0,gy)/[0,gz) for every finite atom_x[j]
+           by construction (xlo<=atom_x[j]<=xhi, same as gx's own derivation
+           above) - this only ever fires for the GRID_OOR sentinel, i.e. a
+           non-finite coordinate on THIS atom specifically (xlo/xhi can be
+           finite while one later atom still isn't). Unlike the sphere
+           lookup below, there is no bounds check downstream of the index
+           write, so a corrupt atom must be excluded from the grid here,
+           not merely have its cast made safe. */
+        if (ai < 0 || ai >= gx || aj < 0 || aj >= gy || ak < 0 || ak >= gz) continue;
+        idx = ((long)ak*gy + aj)*gx + ai;
         gnext[j] = ghead[idx];
         ghead[idx] = j;
       }
@@ -1685,9 +1724,15 @@ static void hydro_compute_sphere_h(void)
     double probe2 = probe * probe;
     double sum = 0.0; int cnt = 0;
     if (ghead) {
-      int ci = (int)((sph_x[i]-ox)/cell);
-      int cj = (int)((sph_y[i]-oy)/cell);
-      int ck = (int)((sph_z[i]-oz)/cell);
+      /* Spheres are not bbox-clamped like the atoms above (a probe can sit
+         outside the atom cloud), so ci/cj/ck legitimately land outside
+         [0,gx) for real coordinates too - the `ni<0||ni>=gx` check just
+         below already discards every cell that's out of range, whatever
+         the reason. GRID_OOR from a NaN/Inf sphere coordinate is discarded
+         the same way, so no separate check is needed here. */
+      int ci = hydro_cell(sph_x[i], ox, cell);
+      int cj = hydro_cell(sph_y[i], oy, cell);
+      int ck = hydro_cell(sph_z[i], oz, cell);
       int di, dj, dk;
       for (dk = -1; dk <= 1; dk++) for (dj = -1; dj <= 1; dj++) for (di = -1; di <= 1; di++) {
         int ni = ci+di, nj = cj+dj, nk = ck+dk;
