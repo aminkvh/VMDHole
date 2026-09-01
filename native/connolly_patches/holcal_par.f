@@ -973,8 +973,17 @@ C scratch file and returns REQUIV. Pass 2 copies these in order.
         DO IDX = -P1NON, P1NOP
           CN_HIT(IDX) = .FALSE.
         ENDDO
+C LERR is only ever assigned .TRUE. inside this region (concal_par.f:357,
+C 454 and coarea_fast.f:538 - none of the three ever reset it, and nothing
+C in the CONCAL/COAREA call chain reads it back for control flow), so the
+C shared write DEFAULT(SHARED) left racing is monotonic: every thread that
+C writes it writes the same value. REDUCTION(.OR.:LERR) is the idiomatic
+C OpenMP construct for exactly that shape - it removes the race formally
+C (each thread reduces into its own copy, seeded .FALSE., merged with .OR.
+C at the join) without changing which planes trip it or what value comes
+C out the far side.
 !$OMP   PARALLEL DO SCHEDULE(DYNAMIC) DEFAULT(SHARED)
-!$OMP&    PRIVATE(IDX,SCRU,TNUM,SCRNAM,REQ2)
+!$OMP&    PRIVATE(IDX,SCRU,TNUM,SCRNAM,REQ2) REDUCTION(.OR.:LERR)
         DO IDX = -P1NON, P1NOP
           TNUM = 0
 !$        TNUM = OMP_GET_THREAD_NUM()
