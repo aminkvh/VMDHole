@@ -225,6 +225,18 @@ static int mole_read_atoms_packed(FILE *f, mole_atoms *A, int cap,
             double v;
             if (fread(&v, 8, 1, f) != 1) return -1;
             snprintf(buf, sizeof buf, "%.3f", v);
+            /* Same refusal the text reader makes at mole_coord_ok's call site
+               below: a NaN/Inf coordinate here renders as "nan"/"inf" and
+               reaches the Delaunay predicates as a real non-finite value in
+               exact mode, or silently snaps to the origin via
+               mole_parse_double otherwise - both outcomes this reader is
+               supposed to refuse, not just its text-parsing sibling. */
+            if (!mole_coord_ok(buf)) {
+                fprintf(stderr, "mole_read_atoms: %s atom %d has a coordinate "
+                        "that is not a finite number - refusing rather than "
+                        "analysing a corrupted structure\n", path, j + 1);
+                return -1;
+            }
             A->xyz[3*j+i] = exact ? strtod(buf, NULL) : mole_parse_double(buf);
         }
     }
