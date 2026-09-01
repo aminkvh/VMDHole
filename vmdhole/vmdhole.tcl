@@ -45355,6 +45355,13 @@ proc ::VMDHole::frame_changed {name index op} {
     # timer fires) while this're still building the previous frame - ignore that nested
     # write and let the in-flight render finish (it drew the frame it was given).
     if {[info exists _frame_render_busy] && $_frame_render_busy} { return }
+    # A long _begin_calc-bracketed pass (an import, a batch property fill) pumps
+    # the event loop the same way to keep Abort responsive, and can be
+    # part-way through rewriting the very result set (tunnel_results and its
+    # sibling arrays) this proc reads to render. _op_in_progress is exactly
+    # the guard several of those passes' own comments already claim covers
+    # this; it did not until this check existed.
+    if {[_op_in_progress]} { return }
     if {[catch {set molid [resolve_molid]}]} { return }
     # `index` is the molid whose frame changed. Ignore writes for any molecule
     # other than the one this is tracking so this never react to an unrelated
