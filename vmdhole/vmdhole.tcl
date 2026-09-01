@@ -7628,10 +7628,10 @@ proc ::VMDHole::show_tunnel_gear_settings {i} {
     # state, not reuse whatever the previous tunnel's dialog had on screen.
     catch {destroy $d}
     # Remember which CLUSTER this popup was opened for. Every menu entry
-    # carries the RANK captured now, and _tunnel_gear_set re-resolves that
+    # carries the RANK captured now, and the setter re-resolves that
     # rank through the frame on screen AT APPLY TIME - so a popup left open
     # across a scrub or re-run wrote its edits onto whatever route holds the
-    # rank by then. _tunnel_gear_set refuses when the resolution no longer
+    # rank by then. _tunnel_gear_set_from_popup refuses when the resolution no longer
     # matches this record.
     variable _gear_open_cid
     variable tunnel_xcid
@@ -7673,10 +7673,10 @@ proc ::VMDHole::show_tunnel_gear_settings {i} {
     menu $d.rep.m -tearoff 0
     $d.rep.m add radiobutton -label [_tunnel_inherited_repr_label $i] \
         -value [_tunnel_inherited_repr_label $i] -variable ::VMDHole::_tgear_rep_disp \
-        -command [list ::VMDHole::_tunnel_gear_set $i wire ""]
+        -command [list ::VMDHole::_tunnel_gear_set_from_popup $i wire ""]
     foreach lbl {Isosurface Wireframe Centerline} {
         $d.rep.m add radiobutton -label $lbl -value $lbl -variable ::VMDHole::_tgear_rep_disp \
-            -command [list ::VMDHole::_tunnel_gear_set $i wire \
+            -command [list ::VMDHole::_tunnel_gear_set_from_popup $i wire \
                 [expr {$lbl eq "Wireframe" ? 1 : ($lbl eq "Centerline" ? "centerline" : 0)}]]
     }
     grid $d.rep -row $row -column 1 -sticky w -padx 8 -pady 3
@@ -7695,10 +7695,10 @@ proc ::VMDHole::show_tunnel_gear_settings {i} {
     menu $d.mat.m -tearoff 0
     $d.mat.m add radiobutton -label [_tunnel_inherited_material_label $i] \
         -value [_tunnel_inherited_material_label $i] -variable ::VMDHole::_tgear_mat_disp \
-        -command [list ::VMDHole::_tunnel_gear_set $i material ""]
+        -command [list ::VMDHole::_tunnel_gear_set_from_popup $i material ""]
     foreach mv $mats {
         $d.mat.m add radiobutton -label $mv -value $mv -variable ::VMDHole::_tgear_mat_disp \
-            -command [list ::VMDHole::_tunnel_gear_set $i material $mv]
+            -command [list ::VMDHole::_tunnel_gear_set_from_popup $i material $mv]
     }
     _menu_apply_column_breaks $d.mat.m
     grid $d.mat -row $row -column 3 -sticky w -padx 8 -pady 3
@@ -7748,11 +7748,11 @@ proc ::VMDHole::show_tunnel_gear_settings {i} {
     menu $d.pm.m -tearoff 0
     $d.pm.m add radiobutton -label [_tunnel_inherited_prop_label $i] \
         -value [_tunnel_inherited_prop_label $i] -variable ::VMDHole::_tgear_prop_disp \
-        -command [list ::VMDHole::_tunnel_gear_set $i prop ""]
+        -command [list ::VMDHole::_tunnel_gear_set_from_popup $i prop ""]
     foreach tok [_tunnel_prop_tokens] {
         set lbl [_tunnel_prop_label_short $tok]
         $d.pm.m add radiobutton -label $lbl -value $lbl -variable ::VMDHole::_tgear_prop_disp \
-            -command [list ::VMDHole::_tunnel_gear_set $i prop $tok]
+            -command [list ::VMDHole::_tunnel_gear_set_from_popup $i prop $tok]
     }
     _menu_two_columns $d.pm.m
     grid $d.pm -row $row -column 3 -sticky w -padx 8 -pady 3
@@ -7818,7 +7818,7 @@ proc ::VMDHole::_tunnel_gear_color_pick {i label} {
 }
 
 proc ::VMDHole::_tunnel_gear_color_set {i value} {
-    _tunnel_gear_set $i colormode $value
+    _tunnel_gear_set_from_popup $i colormode $value
     variable w
     catch { _sync_tunnel_gear_prop_row $w.tunnel_gear $i }
 }
@@ -7867,6 +7867,29 @@ proc ::VMDHole::_sync_tunnel_profile_prop_picker {id} {
     catch {$eb.tprop configure -state [expr {$id ne "" ? "normal" : "disabled"}]}
 }
 
+proc ::VMDHole::_tunnel_gear_set_from_popup {i field value} {
+    # The gear popup's own writes come through HERE: its menu entries carry
+    # the RANK captured at open time, and the rank can point at a different
+    # cluster after a scrub or re-run - an open popup then edited whichever
+    # route inherited the number. Refused against the cluster recorded at
+    # open. Direct _tunnel_gear_set callers (the Pore Profile property
+    # picker) resolve their rank at call time and bypass this on purpose.
+    variable _gear_open_cid
+    variable tunnel_xcid
+    variable state
+    set _pf [_tunnel_display_frame]
+    set _pcid [expr {$_pf ne "" && [info exists tunnel_xcid($_pf,$i)] \
+        ? $tunnel_xcid($_pf,$i) : ""}]
+    if {[info exists _gear_open_cid] && $_gear_open_cid ne "" \
+            && $_pcid ne "" && $_pcid ne $_gear_open_cid} {
+        variable w
+        catch {destroy $w.tunnel_gear}
+        set state(status) "Tunnel settings: the routes changed since this gear was opened - reopen it from the row."
+        return
+    }
+    _tunnel_gear_set $i $field $value
+}
+
 proc ::VMDHole::_tunnel_gear_set {i field value} {
     # Reconfigures only THIS row's gear glyph in place (not a full
     # refresh_tunnel_tab) - same fast-path idea as
@@ -7902,16 +7925,6 @@ proc ::VMDHole::_tunnel_gear_set {i field value} {
         # selected cluster, which is exactly what the readers consult
         # (_tunnel_selected_cluster prefers state(tunnel_selected_cid)).
         set _gcid $state(tunnel_selected_cid)
-    }
-    # A popup opened for one route must not write to another: the rank it
-    # captured can point at a different cluster after a scrub or re-run.
-    variable _gear_open_cid
-    if {[info exists _gear_open_cid] && $_gear_open_cid ne "" \
-            && $_gcid ne "" && $_gcid ne $_gear_open_cid} {
-        variable w
-        catch {destroy $w.tunnel_gear}
-        set state(status) "Tunnel settings: the routes changed since this gear was opened - reopen it from the row."
-        return
     }
     if {$_gcid ne ""} {
         set tunnel_gear_cid($_gcid,$field) $value

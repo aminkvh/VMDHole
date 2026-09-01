@@ -247,12 +247,12 @@ set ::VMDHole::_gear_open_cid 5
 array set ::VMDHole::tunnel_xcid {1,2 7}
 proc ::VMDHole::_tunnel_display_frame {} { return 1 }
 set ::VMDHole::state(status) ""
-catch {::VMDHole::_tunnel_gear_set 2 material Glass} err
+catch {::VMDHole::_tunnel_gear_set_from_popup 2 material Glass} err
 set wrote [info exists ::VMDHole::tunnel_gear_cid(7,material)]
 puts "GEARGUARD wrote=$wrote status='[string range $::VMDHole::state(status) 0 30]' [expr {!$wrote && [string match {*reopen it*} $::VMDHole::state(status)] ? {OK} : {BAD}}]"
 # same-route write still works
 set ::VMDHole::_gear_open_cid 7
-catch {::VMDHole::_tunnel_gear_set 2 material Glass} err
+catch {::VMDHole::_tunnel_gear_set_from_popup 2 material Glass} err
 puts "GEARSAME wrote=[info exists ::VMDHole::tunnel_gear_cid(7,material)] [expr {[info exists ::VMDHole::tunnel_gear_cid(7,material)] ? {OK} : "BAD $err"}]"
 
 # 2. absent-route gear click reports and cleans up
