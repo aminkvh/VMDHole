@@ -3354,19 +3354,6 @@ proc ::VMDHole::refresh_tunnel_tab {} {
     # sync pinned. Idempotent; the post-filter call below keeps rank in step.
     _tunnel_sync_selected_id $frame
     set _selcid [expr {[info exists state(tunnel_selected_cid)] ? $state(tunnel_selected_cid) : ""}]
-    # Seed per-route visibility for EVERY tracked cluster, not only the rows
-    # the floor keeps: an unlisted route has no tunnel_shown_cid entry and
-    # inherits tunnel_shown_default - which flips to 0 the first time any one
-    # listed row is unchecked, silently hiding every floor-hidden route in
-    # the 3D viewer on the next redraw.
-    variable tunnel_shown_cid
-    foreach _srow $rows {
-        set _scid [dict get $_srow cid]
-        if {![info exists tunnel_shown_cid($_scid)]} {
-            set tunnel_shown_cid($_scid) \
-                [expr {[info exists state(tunnel_shown_default)] ? $state(tunnel_shown_default) : 1}]
-        }
-    }
     set _nbelow 0
     if {$_floor > 0} {
         foreach row $rows {
@@ -4438,6 +4425,16 @@ proc ::VMDHole::on_tunnel_visibility_changed {{cid ""}} {
     foreach row [_tunnel_cluster_rows] {
         set _c [dict get $row cid]
         if {![info exists tunnel_shown_cid($_c)] || !$tunnel_shown_cid($_c)} { set all_on 0; break }
+    }
+    if {!$all_on && (![info exists state(tunnel_shown_default)] || $state(tunnel_shown_default))} {
+        # The default is about to flip OFF because one row was unchecked.
+        # Clusters with no recorded state - the floor-hidden ones included -
+        # were being SHOWN under the old default; pin that before the flip,
+        # or they all silently vanish from the viewer on the next redraw.
+        foreach row [_tunnel_cluster_rows] {
+            set _c [dict get $row cid]
+            if {![info exists tunnel_shown_cid($_c)]} { set tunnel_shown_cid($_c) 1 }
+        }
     }
     set state(tunnel_shown_all) $all_on
     # ...and this is what clusters that were never explicitly touched
