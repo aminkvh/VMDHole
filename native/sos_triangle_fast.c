@@ -3144,16 +3144,20 @@ int main (int argc, char *argv[])
 	        strncpy(hydro3d_props_path, out_path, sizeof(hydro3d_props_path)-1);
 	        hydro3d_mode = 1;
 	        hydro_load();
-	        sf = fopen(sos_path, "r");
+	        /* freopen(), not fopen()+"stdin = sf": stdin is a plain assignable
+	           FILE* on glibc but a non-lvalue macro on the Windows CRT, so a
+	           direct assignment fails to compile there. freopen() redirects
+	           the stream portably and is meant to be re-called like this every
+	           iteration; the reopened stream is closed by the next freopen()
+	           (or at exit), so it is not fclose()'d here. */
+	        sf = freopen(sos_path, "r", stdin);
 	        if (!sf) {
 	          fprintf(stderr, "\nbatch-hydro3d-props[%d]: cannot open sos file: %s - skipping\n",
 	                  job_num, sos_path);
 	          job_num++;
 	          continue;
 	        }
-	        stdin = sf;
 	        read_cord();
-	        fclose(sf);
 	        cull_coords();
 	        /* n_res3d==0 (no qualifying contributors this frame) is NOT skipped:
 	           hydro3d_write_props then writes n_sph zeros (hydro_at_point_3d

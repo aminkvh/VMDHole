@@ -190,6 +190,12 @@ native/mole_complex_dump
 native/mole_dt_dump
 native/mole_tunnel_dump
 native/mole_tunnel_engine
+native/sos_triangle_fast
+# Same three, as built by native/build.sh on Windows (MinGW-w64 always
+# appends .exe; the extensionless names above never match there).
+native/hydro_project.exe
+native/mole_tunnel_engine.exe
+native/sos_triangle_fast.exe
 
 # --- Benchmark/case-study DATA moved to the data deposit (paper/
 # DATA.md names the DOI). Scripts and the small result CSVs stay tracked;

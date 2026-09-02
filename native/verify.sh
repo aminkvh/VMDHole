@@ -37,7 +37,7 @@ fi
 $CC $CFLAGS -o "$T/stock" "$UP" -lm
 sed 's/#define MAX_COORD 30000/#define MAX_COORD 200000/' "$UP" > "$T/big.c"
 $CC $CFLAGS -o "$T/stockplus" "$T/big.c" -lm
-$CC $CFLAGS -o "$T/fast" sos_triangle_fast.c -lm
+$CC $CFLAGS -o "$T/fast" sos_triangle_fast.c -lm -lpthread
 
 pass=0; fail=0; overflow=0
 diff_one () {   # $1 = .sos file ; reference picked automatically
@@ -143,12 +143,17 @@ vtx_tri () { awk '/draw trinorm/{for(i=1;i<=NF;i++)gsub(/[{}]/,"",$i); n=0;
 vtx_pts () { awk '/draw point/{for(i=1;i<=NF;i++)gsub(/[{}]/,"",$i); n=0;
   for(i=1;i<=NF;i++) if($i ~ /^-?[0-9.]+$/) c[n++]=$i;
   printf "%.3f %.3f %.3f\n",c[0],c[1],c[2]}' "$1" | sort -u; }
-for s in benchmarks/fixtures/*.sos; do
-  "$T/fast" -s          < "$s" > "$T/tri" 2>/dev/null
-  "$T/fast" -s --points < "$s" > "$T/pts" 2>/dev/null
-  vtx_tri "$T/tri" > "$T/tv"; vtx_pts "$T/pts" > "$T/pv"
-  if diff -q "$T/tv" "$T/pv" >/dev/null; then dp=$((dp+1)); else df=$((df+1)); echo "  MISMATCH: $s"; fi
-done
+if [ -e benchmarks/fixtures/d15.sos ] || ls benchmarks/fixtures/*.sos >/dev/null 2>&1; then
+  for s in benchmarks/fixtures/*.sos; do
+    [ -f "$s" ] || continue
+    "$T/fast" -s          < "$s" > "$T/tri" 2>/dev/null
+    "$T/fast" -s --points < "$s" > "$T/pts" 2>/dev/null
+    vtx_tri "$T/tri" > "$T/tv"; vtx_pts "$T/pts" > "$T/pv"
+    if diff -q "$T/tv" "$T/pv" >/dev/null; then dp=$((dp+1)); else df=$((df+1)); echo "  MISMATCH: $s"; fi
+  done
+else
+  echo "  skipped: no local corpus in benchmarks/fixtures/ (it is gitignored)."
+fi
 echo "  vertex-set identical: $dp   mismatched: $df"
 [ "$df" -eq 0 ] || { echo "RESULT: dots mismatch(es)."; exit 1; }
 
