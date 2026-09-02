@@ -17076,8 +17076,11 @@ proc ::VMDHole::_mole_engine_path {} {
         return $state(mole_engine_exec)
     }
     if {[info exists state(sos_triangle_exec)]} {
-        set c [file join [file dirname $state(sos_triangle_exec)] mole_tunnel_engine]
-        if {[file executable $c]} { return $c }
+        # _find_exe, not a bare [file executable]: same .exe-suffix resolution
+        # find_hole_exe and init_executables' sibling backfill already use -
+        # this fallback walk was the one mole-engine path still missing it.
+        set c [_find_exe [file join [file dirname $state(sos_triangle_exec)] mole_tunnel_engine]]
+        if {$c ne ""} { return $c }
     }
     set c [auto_execok mole_tunnel_engine]
     if {$c ne ""} { return [lindex $c 0] }
@@ -52092,8 +52095,12 @@ proc ::VMDHole::_hydro_project_path {} {
     foreach _d [list [file dirname $state(sos_triangle_exec)] \
                      [file dirname $state(hole_exec)]] {
         if {$_d eq "" || $_d eq "."} { continue }
-        set _c [file join $_d hydro_project]
-        if {[file executable $_c]} { set _hydro_project_exe $_c; break }
+        # _find_exe: hydro_project has no init_executables backfill, so this
+        # walk is its ONLY discovery beside PATH - a bare name here left the
+        # whole Accurate-3D feature silently undiscoverable on Windows, where
+        # native/build.sh always produces hydro_project.exe.
+        set _c [_find_exe [file join $_d hydro_project]]
+        if {$_c ne ""} { set _hydro_project_exe $_c; break }
     }
     if {$_hydro_project_exe eq ""} {
         if {![catch {auto_execok hydro_project} _a] && $_a ne ""} {
