@@ -44566,6 +44566,22 @@ proc ::VMDHole::toggle_tunnel_surface_visibility {} {
         catch {set state(show_mean_surface) 0}
         catch {_update_surface_vis_buttons}
     }
+    if {$_vis_tunnel_shown} {
+        # Frames may have moved while the track was hidden (the per-frame
+        # render is gated on tunnel_surface_is_hidden), so what the mol holds
+        # can belong to whatever frame was showing when it was hidden. Redraw
+        # the landed frame now; blank it if that frame was never searched.
+        variable tunnel_results
+        set _landed ""
+        catch {set _landed [molinfo $molid get frame]}
+        if {$_landed ne ""} {
+            if {[info exists tunnel_results($_landed)]} {
+                catch {render_tunnels_for_frame $_landed}
+            } else {
+                catch {_blank_tunnels_for_frame $_landed}
+            }
+        }
+    }
 }
 
 proc ::VMDHole::toggle_mean_surface_visibility {} {
@@ -45311,6 +45327,22 @@ proc ::VMDHole::surface_is_hidden {} {
     return [expr {$d == 0 ? 1 : 0}]
 }
 
+proc ::VMDHole::tunnel_surface_is_hidden {} {
+    # Tunnel-mode twin of surface_is_hidden: true only when a live tunnel track
+    # exists AND the user has turned it off (the status-row T toggle or VMD
+    # Main's D column - both are `mol off` on it). Gates the per-frame tunnel
+    # render exactly like the pore's gate: hiding the track must also stop the
+    # per-frame mesh/draw work, or playback with tunnels "off" stays as slow as
+    # with them on. No live track counts as NOT hidden, so the first render can
+    # still create it.
+    variable tunnel_surface_mols
+    if {[catch {resolve_molid} molid]} { return 0 }
+    if {![info exists tunnel_surface_mols($molid)]} { return 0 }
+    set m $tunnel_surface_mols($molid)
+    if {[catch {molinfo $m get displayed} d]} { return 0 }
+    return [expr {$d == 0 ? 1 : 0}]
+}
+
 proc ::VMDHole::_frame_render_wanted {} {
     # Does ANY per-frame surface need rendering as motion passes this frame? The pore
     # (display on + visible) OR the reshaped-ellipse surface (which solos the pore OFF, so
@@ -45427,7 +45459,14 @@ proc ::VMDHole::frame_changed {name index op} {
         # (same cost class as HOLE's draft render), so it gets the same
         # render-paced treatment here.
         variable tunnel_results
-        if {[info exists tunnel_results($frame)]} {
+        if {[info exists tunnel_results($frame)] && [tunnel_surface_is_hidden]} {
+            # Track hidden: skip the mesh/draw work entirely (the pore's
+            # _frame_render_wanted gate, applied to tunnels - meshing and
+            # drawing into an invisible molecule was the whole slowdown).
+            # The panel updates below still run; they are frame data, not
+            # geometry. Rendering resumes via the T toggle (which redraws
+            # the landed frame) or the next frame move after a mol on.
+        } elseif {[info exists tunnel_results($frame)]} {
             set _frame_render_busy 1
             # ALWAYS draft while the frame is moving, not just while `playing`:
             # a full render of every shown tunnel takes long enough that, since
@@ -45603,7 +45642,11 @@ proc ::VMDHole::frame_changed_settle {} {
             # signature-gated rather than unconditional.
             catch {refresh_tunnel_tab_if_stale}
             catch {update idletasks}
-            catch {render_tunnels_for_frame $_tf}
+            # Same hidden-track gate as frame_changed's draft path: a settled
+            # scrub onto an unmeshed frame is seconds of meshing, all invisible.
+            if {![tunnel_surface_is_hidden]} {
+                catch {render_tunnels_for_frame $_tf}
+            }
             catch {_on_tunnel_selection_changed}
         }
         return
