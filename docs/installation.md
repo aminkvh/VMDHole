@@ -5,7 +5,9 @@
 - VMD with Tcl/Tk support for the graphical interface
 - A supported VMDHole release for your operating system
 - For a local binary rebuild: a POSIX shell, `make`, Python 3, Git, and C and
-  Fortran compilers with OpenMP and legacy-Fortran support
+  Fortran compilers with OpenMP and legacy-Fortran support (on Windows,
+  MSYS2/MinGW-w64 provides all of these; there is no other Windows-specific
+  step)
 
 VMDHole can run without external executables, but the Tcl fallbacks are much
 slower and are discouraged for trajectories and production work.
