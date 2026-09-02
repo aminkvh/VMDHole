@@ -33,6 +33,11 @@ printf 'hole_exec = \nsph_process_exec = \nsos_triangle_exec = \n' > "$T/cfg"
 mkdir -p "$T/winenv"
 printf '#!/bin/sh\nexit 0\n' > "$T/winenv/hole.exe";        chmod +x "$T/winenv/hole.exe"
 printf '#!/bin/sh\nexit 0\n' > "$T/winenv/sph_process.exe"; chmod +x "$T/winenv/sph_process.exe"
+printf '#!/bin/sh\nexit 0\n' > "$T/winenv/sos_triangle.exe"; chmod +x "$T/winenv/sos_triangle.exe"
+printf '#!/bin/sh\nexit 0\n' > "$T/winenv/mole_tunnel_engine.exe"; chmod +x "$T/winenv/mole_tunnel_engine.exe"
+# hydro_project must answer --hole-features with "hydroproject" - the proc
+# probes it to rule out an unrelated same-named executable.
+printf '#!/bin/sh\necho hydroproject\n' > "$T/winenv/hydro_project.exe"; chmod +x "$T/winenv/hydro_project.exe"
 printf 'hole_exec = \nsph_process_exec = \nsos_triangle_exec = \n' > "$T/wincfg"
 
 cat > "$T/drv.tcl" <<'TCLEOF'
@@ -52,7 +57,8 @@ proc lift {src name} {
     }
     return ""
 }
-foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe save_config _note} {
+foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe \
+           _mole_engine_path _hydro_project_path save_config _note} {
     set b [lift $src $p]
     if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
     namespace eval ::VMDHole $b
@@ -111,6 +117,32 @@ if {$::VMDHole::state(sph_process_exec) eq $wantSph} {
     puts "OK .exe discovery backfilled the sph_process.exe sibling"
 } else {
     puts "BAD .exe sibling backfill: sph_process_exec = '$::VMDHole::state(sph_process_exec)', wanted '$wantSph'"
+}
+
+# --- the two discovery walks OUTSIDE init_executables -----------------------
+# _mole_engine_path's fallback beside sos_triangle: clear the state hit that
+# init_executables just backfilled, so the sibling WALK itself is what runs.
+set ::VMDHole::state(mole_engine_exec) ""
+set ::VMDHole::state(sos_triangle_exec) [file join $WINENV sos_triangle.exe]
+set wantMole [file join $WINENV mole_tunnel_engine.exe]
+set gotMole [::VMDHole::_mole_engine_path]
+if {$gotMole eq $wantMole} {
+    puts "OK _mole_engine_path's sibling walk found mole_tunnel_engine.exe"
+} else {
+    puts "BAD _mole_engine_path sibling walk: got '$gotMole', wanted '$wantMole'"
+}
+
+# _hydro_project_path: no init_executables backfill exists for it, so this
+# walk is its only non-PATH discovery. It also execs the found binary with
+# --hole-features and requires "hydroproject" in the reply (the fixture
+# answers that). Unset the memo first or a previous "" would be returned.
+catch {unset ::VMDHole::_hydro_project_exe}
+set wantHydro [file join $WINENV hydro_project.exe]
+set gotHydro [::VMDHole::_hydro_project_path]
+if {$gotHydro eq $wantHydro} {
+    puts "OK _hydro_project_path found hydro_project.exe beside sos_triangle"
+} else {
+    puts "BAD _hydro_project_path: got '$gotHydro', wanted '$wantHydro'"
 }
 TCLEOF
 
