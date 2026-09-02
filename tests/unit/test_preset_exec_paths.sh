@@ -28,9 +28,17 @@ printf '#!/bin/sh\nexit 0\n' > "$T/hole"; chmod +x "$T/hole"
 # a config that persists an EMPTY hole_exec - the shape that triggers the bug
 printf 'hole_exec = \nsph_process_exec = \nsos_triangle_exec = \n' > "$T/cfg"
 
+# A Windows-shaped engine dir: bare "hole"/"sph_process" never exist there,
+# only the .exe-suffixed builds native/build.sh actually produces.
+mkdir -p "$T/winenv"
+printf '#!/bin/sh\nexit 0\n' > "$T/winenv/hole.exe";        chmod +x "$T/winenv/hole.exe"
+printf '#!/bin/sh\nexit 0\n' > "$T/winenv/sph_process.exe"; chmod +x "$T/winenv/sph_process.exe"
+printf 'hole_exec = \nsph_process_exec = \nsos_triangle_exec = \n' > "$T/wincfg"
+
 cat > "$T/drv.tcl" <<'TCLEOF'
 namespace eval ::VMDHole {}
 set SRC [lindex $argv 0]; set CFG [lindex $argv 1]; set ENG [lindex $argv 2]
+set WINCFG [lindex $argv 3]; set WINENV [lindex $argv 4]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 proc lift {src name} {
@@ -44,7 +52,7 @@ proc lift {src name} {
     }
     return ""
 }
-foreach p {load_config _config_skip_keys init_executables find_hole_exe save_config _note} {
+foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe save_config _note} {
     set b [lift $src $p]
     if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
     namespace eval ::VMDHole $b
@@ -83,17 +91,39 @@ if {[regexp {hole_exec\s*=\s*$} [string trim $cfgtext "\n"]] || [string match "*
 } else {
     puts "BAD fixture config no longer triggers the overwrite"
 }
+
+# --- .exe discovery: bare names never exist on Windows, only *.exe does ----
+foreach k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file} {
+    set ::VMDHole::state($k) ""
+}
+set ::VMDHole::config_file $WINCFG
+set ::env(VMDHOLE_HOLE_EXE_DIR) $WINENV
+::VMDHole::init_executables
+
+set wantHole [file join $WINENV hole.exe]
+set wantSph  [file join $WINENV sph_process.exe]
+if {$::VMDHole::state(hole_exec) eq $wantHole} {
+    puts "OK .exe discovery found hole.exe via VMDHOLE_HOLE_EXE_DIR"
+} else {
+    puts "BAD .exe discovery: hole_exec = '$::VMDHole::state(hole_exec)', wanted '$wantHole'"
+}
+if {$::VMDHole::state(sph_process_exec) eq $wantSph} {
+    puts "OK .exe discovery backfilled the sph_process.exe sibling"
+} else {
+    puts "BAD .exe sibling backfill: sph_process_exec = '$::VMDHole::state(sph_process_exec)', wanted '$wantSph'"
+}
 TCLEOF
 
-out=$(timeout 60 tclsh "$T/drv.tcl" "$SRC" "$T/cfg" "$T/hole" 2>&1); rc=$?
+out=$(timeout 60 tclsh "$T/drv.tcl" "$SRC" "$T/cfg" "$T/hole" "$T/wincfg" "$T/winenv" 2>&1); rc=$?
 printf '%s\n' "$out" | sed 's/^/    /'
 if [ "$rc" -eq 3 ] || printf '%s\n' "$out" | grep -q '^FATAL'; then
     echo "  FAIL  the check could not run (see FATAL above)"
     echo "  -> 0 passed, 1 failed"; exit 1
 fi
+nok=$(printf '%s\n' "$out" | grep -c '^OK ')
 nbad=$(printf '%s\n' "$out" | grep -c '^BAD ')
 if [ "$nbad" -eq 0 ]; then
-    echo "  PASS  a caller-set engine path is not clobbered by the persisted config"
+    echo "  PASS  a caller-set engine path survives init_executables, and .exe discovery works ($nok checks)"
     echo "  -> 1 passed, 0 failed"
 else
     echo "  FAIL  $nbad check(s) failed"

@@ -956,14 +956,28 @@ proc ::VMDHole::save_config {} {
     set config_file $_cfg_pub
 }
 
+proc ::VMDHole::_find_exe {path} {
+    # Resolves a bare engine path to the actual executable, trying $path.exe
+    # after $path. Windows builds (native/build.sh, build-vmdhole-optimized.sh)
+    # always produce a .exe-suffixed binary, and unlike `exec`, Tcl's
+    # `file executable` does NOT search PATHEXT-style suffixes - it is a plain
+    # existence+attribute check. Every path this plugin auto-discovers assumes
+    # a bare "hole"/"sph_process"/... name, so without this every one of them
+    # silently fails to find its own binaries on Windows. Checking $path.exe is
+    # a harmless no-op on POSIX, where that file never exists.
+    if {[file executable $path]} { return $path }
+    if {[file executable "$path.exe"]} { return "$path.exe" }
+    return {}
+}
+
 proc ::VMDHole::find_hole_exe {} {
     # The env dir first: the same override the test suite and batch recipes
     # already use to point one run at one tree. Six individual tests honour
     # it; the plugin itself did not, so any tree whose engines are not in the
     # four fixed install paths below was undiscoverable.
     if {[info exists ::env(VMDHOLE_HOLE_EXE_DIR)] && $::env(VMDHOLE_HOLE_EXE_DIR) ne ""} {
-        set p [file join $::env(VMDHOLE_HOLE_EXE_DIR) hole]
-        if {[file executable $p]} { return $p }
+        set p [_find_exe [file join $::env(VMDHOLE_HOLE_EXE_DIR) hole]]
+        if {$p ne ""} { return $p }
     }
     foreach candidate {
         ~/hole2/exe/hole
@@ -971,8 +985,8 @@ proc ::VMDHole::find_hole_exe {} {
         /usr/bin/hole
         /opt/hole2/exe/hole
     } {
-        set p [file normalize $candidate]
-        if {[file executable $p]} { return $p }
+        set p [_find_exe [file normalize $candidate]]
+        if {$p ne ""} { return $p }
     }
     return {}
 }
@@ -1017,8 +1031,8 @@ proc ::VMDHole::init_executables {} {
         foreach {key name} {sph_process_exec sph_process sos_triangle_exec sos_triangle \
                 mole_engine_exec mole_tunnel_engine} {
             if {$state($key) eq "" || ![file executable $state($key)]} {
-                set sib [file join $dir $name]
-                if {[file executable $sib]} { set state($key) $sib }
+                set sib [_find_exe [file join $dir $name]]
+                if {$sib ne ""} { set state($key) $sib }
             }
         }
         if {$state(radius_file) eq "" || ![file exists $state(radius_file)]} {
