@@ -671,6 +671,8 @@ namespace eval ::VMDHole:: {
         ion_flow_species_disp {All}
         ion_flow_view density
         ion_flow_view_disp {Occupancy %}
+        ion_flow_passage_show crossings
+        ion_flow_passage_show_disp {Crossings}
         ion_flow_swap_xy 0
         ion_flow_flip_z 0
         trends_metric min_r
@@ -783,6 +785,7 @@ proc ::VMDHole::_config_skip_keys {} {
         hydration_view
         trends_metric trends_metric_disp
         ion_flow_species ion_flow_species_disp ion_flow_view ion_flow_view_disp
+        ion_flow_passage_show ion_flow_passage_show_disp
         tunnel_cluster_on}
 }
 
@@ -2424,14 +2427,28 @@ proc ::VMDHole::build_gui {w} {
     menu $fb.vwm.m -tearoff 0
     $fb.vwm.m add radiobutton -label "Occupancy %" -value density \
         -variable ::VMDHole::state(ion_flow_view) -command ::VMDHole::_on_ion_flow_view_changed
-    $fb.vwm.m add radiobutton -label "Ion Passage" -value passage \
+    $fb.vwm.m add radiobutton -label "Passage" -value passage \
         -variable ::VMDHole::state(ion_flow_view) -command ::VMDHole::_on_ion_flow_view_changed
+    $fb.vwm.m add radiobutton -label "Count vs frame" -value count \
+        -variable ::VMDHole::state(ion_flow_view) -command ::VMDHole::_on_ion_flow_view_changed
+    # Passage "Show" picker, offered for Water only (tens of thousands of
+    # molecules enter; the ions are few enough to always draw in full):
+    # Crossings = only molecules that crossed the constriction, Entered =
+    # every molecule that entered the pore. Packed/forgotten by _ion_flow_sync_bar_vis.
+    menubutton $fb.shw -textvariable ::VMDHole::state(ion_flow_passage_show_disp) \
+        -menu $fb.shw.m -relief raised -indicatoron 1 -width 9
+    menu $fb.shw.m -tearoff 0
+    $fb.shw.m add radiobutton -label "Crossings" -value crossings \
+        -variable ::VMDHole::state(ion_flow_passage_show) -command ::VMDHole::_on_ion_flow_show_changed
+    $fb.shw.m add radiobutton -label "Entered" -value entered \
+        -variable ::VMDHole::state(ion_flow_passage_show) -command ::VMDHole::_on_ion_flow_show_changed
+    add_tooltip $fb.shw "Passage view, water only: Crossings draws just the molecules that crossed the constriction; Entered draws every molecule that entered the pore (tens of thousands of lines for water)."
     # The wall curve's caption used to carry this explanation inline, which made
     # the figure chatty. It is real information - the curve is a trajectory MEAN
     # per slice, so at the narrowest point it reads systematically wider than
     # Mean Profile's bottleneck-anchored minimum (measured 0.18-0.26 A on a
     # 394-cluster fixture) - so it moved here rather than being dropped.
-    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nIon Passage: one line per ion that entered the pore.\n\nThe pore-wall curve r(z) is a trajectory MEAN per slice, not bottleneck-anchored like Mean Profile, so it reads slightly wider at the narrowest point."
+    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore; a molecule that crossed the constriction is coloured by direction and drawn on top.\nCount vs frame: how many are inside the pore at each frame.\n\nThe pore-wall curve r(z) is a trajectory MEAN per slice, not bottleneck-anchored like Mean Profile, so it reads slightly wider at the narrowest point."
     menubutton $fb.spm -textvariable ::VMDHole::state(ion_flow_species_disp) \
         -menu $fb.spm.m -relief raised -indicatoron 1 -width 6
     menu $fb.spm.m -tearoff 0
@@ -2441,11 +2458,11 @@ proc ::VMDHole::build_gui {w} {
     button $fb.gear -text "⚙" -width 2 -relief flat -command ::VMDHole::show_ion_flow_settings
     button $fb.perm -text "Permeation" -command ::VMDHole::show_permeation_dialog
     add_tooltip $fb.go   "Maps ion occupancy and flow through the pore over the trajectory, and counts crossings of the constriction. PBC-safe."
-    add_tooltip $fb.vwm  "Occupancy %: one aggregate map of all ions, with flow. Ion Passage: one trace per ion\
-        that came near the pore axis. Neither is the Permeation count, which needs a full bulk-to-bulk\
-        crossing."
+    add_tooltip $fb.vwm  "Occupancy %: one aggregate map of all ions, with flow. Passage: one trace per ion\
+        that came near the pore axis, crossings coloured by direction. Count vs frame: molecules inside\
+        the pore per frame. None is the Permeation count, which needs a full bulk-to-bulk crossing."
     add_tooltip $fb.perm "Ions that fully cross the pore, bulk to bulk.
-Stricter than Ion Passage, which counts ions that merely entered."
+Stricter than Passage, which counts ions that merely entered."
     add_tooltip $fb.spm  "Show one ion type, All (every ion type together - never water), or Water: one oxygen per molecule from the Hydration tab's water selection, scanned the first time it is picked."
     add_tooltip $fb.gear "Ion Flow settings: the shell (how far beyond the pore wall the map reaches) and the flip-Z toggle."
     # Left-to-right: the INPUTS first (View, Species) then the Compute action, then
@@ -2605,7 +2622,9 @@ Stricter than Ion Passage, which counts ions that merely entered."
     # "How to cite" sits on the LEFT of the same row, opposite Run/Close: it opens
     # the Help window straight on its Citations tab (the same window as Help >
     # Guide & Citations..., just landing on the other tab).
-    button $w.actions.cite  -text "How to cite" -command [list ::VMDHole::show_about_dialog cite]
+    button $w.actions.cite  -text "How to cite" -command [list ::VMDHole::show_about_dialog cite] \
+        -font {Helvetica 9 bold} -background "#f6e7a6" -activebackground "#f0d97a" \
+        -foreground "#3d2f00" -activeforeground "#3d2f00"
     pack $w.actions.run $w.actions.close -side right -padx 4
     pack $w.actions.cite -side left -padx 4
     add_tooltip $w.actions.run "Run the selected mode's analysis on the chosen frame(s)."
@@ -6248,13 +6267,20 @@ proc ::VMDHole::_ion_flow_sync_bar_vis {} {
         catch {pack $eb.export -side right -padx 4 -before $eb.gear}
         catch {pack $eb.vwm -side left -padx {6 4} -before $eb.go}
         catch {pack $eb.spm -side left -padx {0 6} -before $eb.go}
+        variable state
+        if {[info exists state(ion_flow_species)] && $state(ion_flow_species) eq "Water" \
+                && [info exists state(ion_flow_view)] && $state(ion_flow_view) eq "passage"} {
+            catch {pack $eb.shw -side left -padx {0 6} -before $eb.go}
+        } else {
+            catch {pack forget $eb.shw}
+        }
         if {$_hole} {
             catch {pack $eb.perm -side left -padx {4 0}}
         } else {
             catch {pack forget $eb.perm}
         }
     } else {
-        foreach _c {export vwm spm perm} { catch {pack forget $eb.$_c} }
+        foreach _c {export vwm spm shw perm} { catch {pack forget $eb.$_c} }
     }
 }
 
@@ -20465,7 +20491,7 @@ proc ::VMDHole::_about_fill_guide {t version} {
     $t insert end "Hydration      " mono
     $t insert end "from an explicit-water trajectory, the water density and free energy G(z) = -kT ln(rho/rho_bulk) along the axis. High G(z) means water is depleted (a dry, hydrophobic gate); low or negative means water is enriched. rho_bulk is MEASURED from your own trajectory (reported in the VMD console), not assumed, so it reflects your water model and conditions; if the system has too little free water to measure, the plugin says so and falls back to 0.0334 A^-3.\n"
     $t insert end "Ion Flow       " mono
-    $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions. Species lists each ion type plus Water (one oxygen per molecule, the Hydration tab's water selection); All is the ion types together, never water.\n\n"
+    $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions. Species lists each ion type plus Water (one oxygen per molecule, the Hydration tab's water selection); All is the ion types together, never water. Views: Occupancy %, Passage (one line per molecule that entered; constriction crossings coloured by direction, red up / blue down, drawn on top) and Count vs frame (molecules inside the pore per frame).\n\n"
 
     $t insert end "Channel shape beyond a circle\n" h2
     $t insert end "HOLE's radius assumes a circular cross-section, but real pores are often slit-like. The Ellipse fit and asymmetry tools fit the largest ellipse that fits each pore slice, giving a truer cross-section plus a slit-aware conductance and volume.\n\n"
@@ -40653,6 +40679,11 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
     array set _occ_seen {}
     set occ_cnt {}
     for {set i 0} {$i < $N} {incr i} { lappend occ_cnt 0 }
+    # Per-frame count of DISTINCT molecules inside the pore (occupancy-shell
+    # membership, same gate as the map) - the Count vs frame view.
+    array set _cnt_seen {}
+    array set _cnt {}
+    set n_cross_up 0; set n_cross_down 0
     set species_water [expr {$species eq "Water"}]
     foreach tr [dict get $raw traces] {
         set _trsp [dict get $tr species]
@@ -40665,6 +40696,8 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
         set d3s [expr {[dict exists $tr d3] ? [dict get $tr d3] : {}}]
         set n [llength $fs]
         set d_z {}; set d_r {}; set d_f {}   ;# in-membership samples for the passage plot / CSV
+        set _tr_up 0; set _tr_down 0          ;# this molecule's own constriction crossings
+        set _tidx [dict get $tr idx]
         for {set i 0} {$i < $n} {incr i} {
             set z [lindex $zs $i]; set R [lindex $rs $i]; set f [lindex $fs $i]
             # Membership against the real per-frame union-of-spheres surface (`d3`,
@@ -40683,6 +40716,10 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
                 if {$row >= $nz} { set row [expr {$nz-1}] }; if {$row < 0} { set row 0 }
                 set bi [expr {$row*$nr+$col}]
                 lset dens $bi [expr {[lindex $dens $bi]+1.0}]
+                if {![info exists _cnt_seen($f,$_tidx)]} {
+                    set _cnt_seen($f,$_tidx) 1
+                    incr _cnt($f)
+                }
                 if {![info exists _occ_seen($bi,$f)]} {
                     set _occ_seen($bi,$f) 1
                     lset occ_cnt $bi [expr {[lindex $occ_cnt $bi]+1}]
@@ -40701,16 +40738,22 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
                         lset cnt $bi [expr {[lindex $cnt $bi]+1.0}]
                     }
                     if {$R < $flux_r} {
-                        if {$zp <= $zc && $z > $zc} { incr up } \
-                        elseif {$zp >= $zc && $z < $zc} { incr down }
+                        if {$zp <= $zc && $z > $zc} { incr up; incr _tr_up } \
+                        elseif {$zp >= $zc && $z < $zc} { incr down; incr _tr_down }
                     }
                 }
             }
         }
         if {[llength $d_f] > 0} {
             lappend out_traces [dict create idx [dict get $tr idx] species [dict get $tr species] \
-                z $d_z r $d_r frame $d_f]
+                z $d_z r $d_r frame $d_f ncross_up $_tr_up ncross_down $_tr_down]
+            if {$_tr_up > $_tr_down} { incr n_cross_up } elseif {$_tr_down > $_tr_up} { incr n_cross_down } \
+            elseif {$_tr_up > 0} { incr n_cross_up; incr n_cross_down }
         }
+    }
+    set count_per_frame {}
+    for {set f 0} {$f < $nf} {incr f} {
+        lappend count_per_frame [expr {[info exists _cnt($f)] ? $_cnt($f) : 0}]
     }
     # Volume-normalise the raw (R,z) tallies into a true ion NUMBER DENSITY (Å⁻³). In
     # cylindrical coordinates a cell at larger R spans a larger annulus, dV = π(R_out²−R_in²)·Δz,
@@ -40743,6 +40786,7 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
     return [dict create nr $nr nz $nz zmin $zmin zmax $zmax r_cut $r_cut r_pass $r_pass zc $zc flux_r $flux_r \
         dens $dens dens_vol $dens_vol occ_pct $occ_pct vr $vrs vz $vzs cnt $cnt up $up down $down net [expr {$up-$down}] \
         nions $_ncount noun [expr {$species_water ? "waters" : "ions"}] \
+        count_per_frame $count_per_frame n_cross_up $n_cross_up n_cross_down $n_cross_down \
         nframes $nf nused $nf rmin_hole $rmin_hole rmax_hole [dict get $raw rmax_hole] \
         species $species_label traces $out_traces stride 1 protein_wrapped [dict get $raw protein_wrapped] box_lz $box_lz \
         rprof [expr {[dict exists $raw rprof] ? [dict get $raw rprof] : {}}] \
@@ -40823,6 +40867,7 @@ proc ::VMDHole::_select_ion_species {name} {
     variable state
     set state(ion_flow_species) $name
     if {$name eq "Water"} { _ion_flow_ensure_water }
+    catch {_ion_flow_sync_bar_vis}
     _ion_flow_refilter
 }
 
@@ -40959,7 +41004,20 @@ proc ::VMDHole::_on_ion_flow_view_changed {} {
     # Both views read the SAME ion_flow_cache, so switching the view is a pure redraw -
     # no recompute (and no re-filter) needed, same as _on_hydration_view_changed.
     variable state
-    set state(ion_flow_view_disp) [expr {$state(ion_flow_view) eq "passage" ? "Ion Passage" : "Occupancy %"}]
+    set state(ion_flow_view_disp) [switch -- $state(ion_flow_view) {
+        passage { expr {"Passage"} }
+        count   { expr {"Count vs frame"} }
+        default { expr {"Occupancy %"} }
+    }]
+    catch {_ion_flow_sync_bar_vis}
+    draw_ion_flow_tab
+}
+
+proc ::VMDHole::_on_ion_flow_show_changed {} {
+    # Passage "Show" picker (water): pure redraw, the cache already holds
+    # every entered trace with its crossing counts.
+    variable state
+    set state(ion_flow_passage_show_disp) [expr {$state(ion_flow_passage_show) eq "entered" ? "Entered" : "Crossings"}]
     draw_ion_flow_tab
 }
 
@@ -40976,6 +41034,42 @@ proc ::VMDHole::_ipv_y {z zmin zspan mt ph} {
         set t [expr {1.0 - $t}]
     }
     return [expr {$mt + $t*$ph}]
+}
+
+proc ::VMDHole::_ion_trace_dir {tr} {
+    # A drawn trace's constriction-crossing direction: "up", "down", "both"
+    # (crossed and came back, net zero) or "" (entered, never crossed).
+    set u [expr {[dict exists $tr ncross_up] ? [dict get $tr ncross_up] : 0}]
+    set d [expr {[dict exists $tr ncross_down] ? [dict get $tr ncross_down] : 0}]
+    if {$u > $d} { return up }
+    if {$d > $u} { return down }
+    if {$u > 0} { return both }
+    return ""
+}
+
+proc ::VMDHole::_ion_dir_color {dir} {
+    # Direction palette for crossing traces: the same on every species, so a
+    # figure reads without a species key once one species is shown.
+    switch -- $dir {
+        up   { return "#d62728" }
+        down { return "#1f5fbf" }
+        both { return "#7b3fa0" }
+        default { return "#b7c1c9" }
+    }
+}
+
+proc ::VMDHole::_ion_species_color_light {sp} {
+    # The species colour mixed ~55% towards white: what non-crossing traces are
+    # drawn in when several species share the plot, so the direction-coloured
+    # crossings on top stay the loudest thing. Tk's canvas has no alpha.
+    set c [_ion_species_color $sp]
+    if {![regexp {^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$} $c -> r g b]} { return $c }
+    set out "#"
+    foreach h [list $r $g $b] {
+        scan $h %x v
+        append out [format %02x [expr {int($v + (255-$v)*0.55)}]]
+    }
+    return $out
 }
 
 proc ::VMDHole::_ion_species_color {sp} {
@@ -41070,8 +41164,11 @@ proc ::VMDHole::draw_ion_flow_tab {} {
         }
         return
     }
-    if {[info exists state(ion_flow_view)] && $state(ion_flow_view) eq "passage"} {
+    set _v [expr {[info exists state(ion_flow_view)] ? $state(ion_flow_view) : "density"}]
+    if {$_v eq "passage"} {
         _draw_ion_passage_view
+    } elseif {$_v eq "count"} {
+        _draw_ion_count_view
     } else {
         _draw_ion_flow_occupancy
     }
@@ -41500,15 +41597,51 @@ proc ::VMDHole::_draw_ion_passage_view {} {
     # break the polyline there so a box-edge flip is never drawn as a full-height jump line.
     set _blz [expr {[dict exists $d box_lz] ? [dict get $d box_lz] : 0.0}]
     set zflip [expr {$_blz > 0 ? $_blz/2.0 : 1e30}]
-    set species_seen {}
+    # Two passes: entered-but-never-crossed traces first, faint; crossings last,
+    # coloured by direction, so they are never buried. With several species on
+    # the plot the faint traces keep a light species colour (the species is
+    # information there); with one species they are plain grey.
+    variable state
+    set _sp_sel [expr {[dict exists $d species] ? [dict get $d species] : "All"}]
+    set _multi [expr {$_sp_sel eq "All"}]
+    set _water [expr {$_sp_sel eq "Water"}]
+    set _show [expr {[info exists state(ion_flow_passage_show)] ? $state(ion_flow_passage_show) : "crossings"}]
+    set plain {}; set cross {}
     foreach tr $traces {
+        if {[_ion_trace_dir $tr] eq ""} { lappend plain $tr } else { lappend cross $tr }
+    }
+    set n_entered [llength $traces]
+    set n_cross [llength $cross]
+    set _only_cross_segs 0
+    if {$_water && $_show eq "crossings"} {
+        set plain {}
+        # ...and of each crossing molecule, only the contiguous stretch(es) in
+        # which it actually crossed - its unrelated visits at other times were
+        # the scatter of stray dots that made the crossings view noisy.
+        set _only_cross_segs 1
+    }
+    set drawn [concat $plain $cross]
+    set species_seen {}
+    foreach tr $drawn {
         set sp [dict get $tr species]
         if {$sp ni $species_seen} { lappend species_seen $sp }
-        set col [_ion_species_color $sp]
+        set _dir [_ion_trace_dir $tr]
+        if {$_dir ne ""} {
+            set col [_ion_dir_color $_dir]
+        } elseif {$_multi} {
+            set col [_ion_species_color_light $sp]
+        } else {
+            set col [_ion_dir_color ""]
+        }
         set frames [dict get $tr frame]; set zs [dict get $tr z]
         set seg {}
+        set seg_cross 0
         set prevf {}; set prevz {}
         foreach f $frames z $zs {
+            if {$prevf ne "" && (($prevz <= $zc && $z > $zc) || ($prevz >= $zc && $z < $zc)) \
+                    && ($f - $prevf) <= $gap_bridge && abs($z - $prevz) <= $zflip} {
+                set seg_cross 1
+            }
             if {$prevf ne "" && (($f - $prevf) > $gap_bridge || abs($z - $prevz) > $zflip)} {
                 # Flush the segment ending at the gap via the shared helper -
                 # a single isolated sample (seg has exactly one point, 2
@@ -41519,13 +41652,14 @@ proc ::VMDHole::_draw_ion_passage_view {} {
                 # reported it present - "no ion in the plot but there is a
                 # sodium there". Measured on a real 100-frame run: 440 such
                 # isolated samples across 259 traces.
-                _ion_passage_flush_seg $cv $seg $col
+                if {!$_only_cross_segs || $seg_cross} { _ion_passage_flush_seg $cv $seg $col }
                 set seg {}
+                set seg_cross 0
             }
             lappend seg [_ipv_x $f $nf $ml $pw] [_ipv_y $z $zmin $zspan $mt $ph]
             set prevf $f; set prevz $z
         }
-        _ion_passage_flush_seg $cv $seg $col
+        if {!$_only_cross_segs || $seg_cross} { _ion_passage_flush_seg $cv $seg $col }
     }
     # --- constriction plane + frame/Z axes ---
     set yc [_ipv_y $zc $zmin $zspan $mt $ph]
@@ -41565,14 +41699,17 @@ proc ::VMDHole::_draw_ion_passage_view {} {
     # Permeation dialog's stricter bulk-to-bulk traversal count (count_permeation).
     # The two numbers measure different things by design and are not expected to
     # agree; see the Permeation/Ion Passage tooltips.
-    set _splabel [expr {[dict exists $d species] ? [dict get $d species] : "All"}]
+    set _splabel $_sp_sel
     set _rc [_ion_flow_rpass_note $d]
+    set _nu [expr {[dict exists $d n_cross_up] ? [dict get $d n_cross_up] : 0}]
+    set _nd [expr {[dict exists $d n_cross_down] ? [dict get $d n_cross_down] : 0}]
+    set _shown [expr {($_water && $_show eq "crossings") ? "crossings only, " : ""}]
     # -width wraps onto a second line instead of overflowing the canvas when the
     # panel is narrow or the species/count text runs long; the legend row below
     # (update_ion_passage_indicator) reads the real bbox back via legend_y so a
     # wrapped 2-line title never overlaps it.
     set _title_id [$cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} -width $pw -justify center \
-        -text "Ion passage — $_splabel ([llength $traces]/[dict get $d nions] entered)$_rc"]
+        -text "Passage — $_splabel (${_shown}$n_cross crossed: $_nu \u2191 $_nd \u2193; $n_entered/[dict get $d nions] entered)$_rc"]
     set _tbb [$cv bbox $_title_id]
     dict set ion_passage_geo legend_y [expr {$_tbb ne "" ? [lindex $_tbb 3] + 6 : 30}]
     # Dynamic legend data: per frame, how many ions of each species are IN the pore (the dots
@@ -41582,14 +41719,84 @@ proc ::VMDHole::_draw_ion_passage_view {} {
     variable ion_passage_counts
     set ion_passage_species $species_seen
     set ion_passage_counts [dict create]
-    foreach tr $traces {
+    foreach tr $drawn {
         set sp [dict get $tr species]
         foreach f [dict get $tr frame] { dict incr ion_passage_counts "$f,$sp" }
     }
+    variable ion_passage_dir_legend
+    set ion_passage_dir_legend [list up $_nu down $_nd]
     # Playhead + dynamic legend for the CURRENT trajectory frame. Use the live VMD frame,
     # NOT selected_result_frame: the latter is empty on an unanalyzed frame, so the indicator
     # would vanish whenever the plot is redrawn (a Species/View change re-filters + redraws) and
     # the user would have to reclick a frame to get it back. The VMD frame is always defined.
+    set _cf ""
+    catch {set _cf [molinfo [resolve_molid] get frame]}
+    if {[string is integer -strict $_cf]} { update_ion_passage_indicator $_cf }
+}
+
+proc ::VMDHole::_draw_ion_count_view {} {
+    # Count vs frame: how many DISTINCT molecules of the selected species are
+    # inside the pore (occupancy-shell membership) at each frame - one curve,
+    # readable however many molecules there are. Shares the passage view's
+    # frame axis geometry so the playhead follows the trajectory here too.
+    variable w
+    variable ion_flow_cache
+    set cv $w.plotframe.nb.ionflow.cv
+    set d $ion_flow_cache
+    $cv delete all
+    set W [winfo width $cv]; set H [winfo height $cv]
+    if {$W < 80 || $H < 80} { return }
+    set ml 58; set mr 24; set mt 44; set mb 40
+    set pw [expr {$W-$ml-$mr}]; set ph [expr {$H-$mt-$mb}]
+    if {$pw < 30 || $ph < 30} { return }
+    set counts [expr {[dict exists $d count_per_frame] ? [dict get $d count_per_frame] : {}}]
+    set nf [llength $counts]
+    if {$nf < 2} { set nf [dict get $d nframes] }
+    if {$nf < 2} { set nf 2 }
+    variable ion_passage_geo
+    set ion_passage_geo [dict create margin_l $ml margin_t $mt plot_w $pw plot_h $ph nframes $nf]
+    variable ion_passage_species
+    set ion_passage_species {}
+    set cmax 0; set csum 0.0
+    foreach c $counts { if {$c > $cmax} { set cmax $c }; set csum [expr {$csum + $c}] }
+    set cmean [expr {[llength $counts] ? $csum/double([llength $counts]) : 0.0}]
+    # Axis top: a round number just above the maximum (at least 1).
+    set ytop [expr {max(1, $cmax)}]
+    set _step [expr {$ytop <= 5 ? 1 : ($ytop <= 20 ? 5 : ($ytop <= 50 ? 10 : ($ytop <= 200 ? 50 : 100)))}]
+    set ytop [expr {int(ceil(double($ytop)/$_step))*$_step}]
+    set _sp_sel [expr {[dict exists $d species] ? [dict get $d species] : "All"}]
+    set col [expr {$_sp_sel eq "All" ? "#333333" : [_ion_species_color $_sp_sel]}]
+    set pts {}
+    set f 0
+    foreach c $counts {
+        lappend pts [_ipv_x $f $nf $ml $pw] [expr {$mt + $ph - double($c)/$ytop*$ph}]
+        incr f
+    }
+    if {[llength $pts] >= 4} {
+        $cv create line $pts -fill $col -width 2 -joinstyle round
+    } elseif {[llength $pts] == 0} {
+        $cv create text [expr {$ml+$pw/2}] [expr {$mt+$ph/2}] -anchor center -font {Helvetica 9} \
+            -fill "#888888" -text "No molecule of this species was inside the pore in the sampled frames."
+    }
+    set ymean [expr {$mt + $ph - $cmean/$ytop*$ph}]
+    $cv create line $ml $ymean [expr {$ml+$pw}] $ymean -fill "#0066cc" -dash {5 3}
+    $cv create text [expr {$ml+$pw-2}] [expr {$ymean-2}] -text "mean [format %.1f $cmean]" -anchor se -font {Helvetica 7} -fill "#0066cc"
+    $cv create rectangle $ml $mt [expr {$ml+$pw}] [expr {$mt+$ph}] -outline "#999999"
+    for {set k 0} {$k <= 4} {incr k} {
+        set ff [expr {int(($nf-1)*$k/4.0)}]; set x [_ipv_x $ff $nf $ml $pw]
+        $cv create line $x [expr {$mt+$ph}] $x [expr {$mt+$ph+4}] -fill "#666666"
+        $cv create text $x [expr {$mt+$ph+6}] -text $ff -anchor n -font {Helvetica 7}
+    }
+    for {set v 0} {$v <= $ytop} {incr v $_step} {
+        set y [expr {$mt + $ph - double($v)/$ytop*$ph}]
+        $cv create line [expr {$ml-4}] $y $ml $y -fill "#666666"
+        $cv create text [expr {$ml-6}] $y -text $v -anchor e -font {Helvetica 7}
+    }
+    $cv create text [expr {$ml+$pw/2}] [expr {$H-6}] -text "Frame" -anchor s -font {Helvetica 9 bold}
+    catch {::VMDHole::_cv_vtext $cv 16 [expr {$mt+$ph/2}] -text "[string totitle [_ion_flow_noun $d]] in pore" -anchor n -font {Helvetica 9 bold}}
+    set _shell [_ion_flow_shell_value]
+    $cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} -width $pw -justify center \
+        -text "[string totitle [_ion_flow_noun $d]] in the pore per frame — $_sp_sel (mean [format %.1f $cmean], max $cmax; inside = within [format %.1f $_shell] Å of the wall)"
     set _cf ""
     catch {set _cf [molinfo [resolve_molid] get frame]}
     if {[string is integer -strict $_cf]} { update_ion_passage_indicator $_cf }
@@ -41605,7 +41812,7 @@ proc ::VMDHole::update_ion_passage_indicator {frame} {
     variable state
     variable ion_passage_geo
     if {![info exists ion_passage_geo]} { return }
-    if {![info exists state(ion_flow_view)] || $state(ion_flow_view) ne "passage"} { return }
+    if {![info exists state(ion_flow_view)] || $state(ion_flow_view) ni {passage count}} { return }
     set cv $w.plotframe.nb.ionflow.cv
     # Headless guard - see _have_tk.
     if {![_have_tk]} { return }
@@ -41626,16 +41833,27 @@ proc ::VMDHole::update_ion_passage_indicator {frame} {
     variable ion_passage_species
     variable ion_passage_counts
     $cv delete ion_passage_legend
-    if {[info exists ion_passage_species]} {
+    if {[info exists ion_passage_species] && [llength $ion_passage_species]} {
         # legend_y is the title's own real bbox bottom (+margin) - a wrapped 2-line
         # title never overlaps this row, unlike a hardcoded y.
         set ly [expr {[dict exists $ion_passage_geo legend_y] ? [dict get $ion_passage_geo legend_y] : 30}]
         set lx [expr {$ml+4}]
+        # Direction key first (totals over the trajectory), then the per-species
+        # "(n)" = traces drawn at THIS frame, which is what follows the playhead.
+        variable ion_passage_dir_legend
+        if {[info exists ion_passage_dir_legend]} {
+            foreach {dir n} $ion_passage_dir_legend {
+                set lbl "[expr {$dir eq "up" ? "\u2191" : "\u2193"}] $n crossed $dir"
+                $cv create line $lx $ly [expr {$lx+14}] $ly -fill [_ion_dir_color $dir] -width 2 -tags ion_passage_legend
+                $cv create text [expr {$lx+18}] $ly -text $lbl -anchor w -font {Helvetica 8} -tags ion_passage_legend
+                incr lx [expr {18+[font measure {Helvetica 8} $lbl]+14}]
+            }
+        }
         foreach sp $ion_passage_species {
             set n [expr {[info exists ion_passage_counts] && [dict exists $ion_passage_counts "$frame,$sp"] \
                         ? [dict get $ion_passage_counts "$frame,$sp"] : 0}]
             set lbl "$sp ($n)"
-            $cv create line $lx $ly [expr {$lx+14}] $ly -fill [_ion_species_color $sp] -width 2 -tags ion_passage_legend
+            $cv create line $lx $ly [expr {$lx+14}] $ly -fill [expr {[llength $ion_passage_species] > 1 ? [_ion_species_color_light $sp] : [_ion_dir_color ""]}] -width 2 -tags ion_passage_legend
             $cv create text [expr {$lx+18}] $ly -text $lbl -anchor w -font {Helvetica 8} -tags ion_passage_legend
             incr lx [expr {18+[font measure {Helvetica 8} $lbl]+14}]
         }
@@ -41692,6 +41910,10 @@ proc ::VMDHole::export_ion_flow_csv {} {
         _export_ion_passage_csv $d
         return
     }
+    if {[info exists state(ion_flow_view)] && $state(ion_flow_view) eq "count"} {
+        _export_ion_count_csv $d
+        return
+    }
     # species is baked into $d by _ion_flow_aggregate ("All" or the resname
     # this grid was actually filtered to) - K+, Cl-, All must not overwrite
     # each other the way this name did before, same as the figure export
@@ -41730,6 +41952,24 @@ proc ::VMDHole::export_ion_flow_csv {} {
     set ::VMDHole::state(status) "Wrote $fn"
 }
 
+proc ::VMDHole::_export_ion_count_csv {d} {
+    # Count vs frame: one row per frame, distinct molecules inside the pore.
+    set counts [expr {[dict exists $d count_per_frame] ? [dict get $d count_per_frame] : {}}]
+    if {![llength $counts]} { tk_messageBox -icon info -message "Nothing to export - compute the ion flow first."; return }
+    set _sp [expr {[dict exists $d species] ? [dict get $d species] : "All"}]
+    set _sptag [expr {($_sp ne "" && $_sp ne "All") ? "_[_export_slug $_sp]" : ""}]
+    set fn [tk_getSaveFile -title "Export count-vs-frame CSV" -defaultextension .csv \
+        -initialdir [export_initial_dir] -initialfile "ion_count${_sptag}[_export_run_tag].csv" -filetypes {{CSV {.csv}} {All *}}]
+    if {$fn eq ""} { return }
+    set fh [open $fn w]
+    puts $fh "# molecules inside the pore per frame; species=$_sp shell=[format %.2f [_ion_flow_shell_value]] A (occupancy-shell membership), total_[_ion_flow_noun $d]=[dict get $d nions]"
+    puts $fh "frame,count"
+    set f 0
+    foreach c $counts { puts $fh "$f,$c"; incr f }
+    close $fh
+    set ::VMDHole::state(status) "Wrote $fn"
+}
+
 proc ::VMDHole::_export_ion_passage_csv {d} {
     # Long-format per-ion passage rows: one line per (ion, sampled frame) it spent
     # inside the pore. Lets a user re-plot the same traces _draw_ion_passage_view
@@ -41759,15 +41999,17 @@ proc ::VMDHole::_export_ion_passage_csv {d} {
     # spurious ~box-length jump - measured ~20 such jumps in one real 100-frame
     # export. The column lets any tool reproduce the same break the live plot
     # already applies, without dropping or altering a single sample.
-    puts $fh "ion_atom_index,ion_species,frame,Z_A,R_A,new_segment"
+    puts $fh "ion_atom_index,ion_species,frame,Z_A,R_A,new_segment,crossed_up,crossed_down"
     set gap_bridge 3
     set zflip [expr {$_blz > 0 ? $_blz/2.0 : 1e30}]
     foreach tr $traces {
         set idx [dict get $tr idx]; set sp [dict get $tr species]
+        set _cu [expr {[dict exists $tr ncross_up] ? [dict get $tr ncross_up] : 0}]
+        set _cd [expr {[dict exists $tr ncross_down] ? [dict get $tr ncross_down] : 0}]
         set prevf ""; set prevz ""
         foreach f [dict get $tr frame] z [dict get $tr z] r [dict get $tr r] {
             set _new [expr {$prevf eq "" || ($f - $prevf) > $gap_bridge || abs($z - $prevz) > $zflip}]
-            puts $fh [format "%d,%s,%d,%.4f,%.4f,%d" $idx $sp $f $z $r $_new]
+            puts $fh [format "%d,%s,%d,%.4f,%.4f,%d,%d,%d" $idx $sp $f $z $r $_new $_cu $_cd]
             set prevf $f; set prevz $z
         }
     }
@@ -46693,7 +46935,7 @@ proc ::VMDHole::_export_fig_stem {tab} {
             # Mode comes from the wrapper's prefix, as for every other tab -
             # Ion Flow exists in tunnel mode too, and used to name both the same.
             set v [expr {[info exists state(ion_flow_view)] ? $state(ion_flow_view) : "density"}]
-            set base [expr {$v eq "passage" ? "ion_passage" : "ion_flow_density"}]
+            set base [expr {$v eq "passage" ? "ion_passage" : ($v eq "count" ? "ion_count" : "ion_flow_density")}]
             set sp [expr {[info exists state(ion_flow_species)] ? $state(ion_flow_species) : "__all__"}]
             if {$sp ne "" && $sp ne "__all__"} { append base "_[_export_slug $sp]" }
             return $base

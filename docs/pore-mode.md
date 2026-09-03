@@ -189,15 +189,22 @@ geometry. Cite CHAP from the
 <p align="center"><img src="images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
 Requires ions or water and at least two trajectory frames. **Occupancy %** maps
-where ions are observed in the pore coordinate system. **Ion Passage** displays
-the paths of ions that enter the near-pore region. These views are not full
-permeation counts.
+where ions are observed in the pore coordinate system. **Passage** draws the
+path of every molecule that entered the pore against frame number; a molecule
+that crossed the constriction is coloured by direction (red up, blue down,
+purple for crossed-and-returned) and drawn on top of the faint non-crossing
+traces, and the title counts crossings in each direction. **Count vs frame**
+plots how many molecules are inside the pore at each frame with its mean.
+None of these views is a full permeation count.
 
 The **Species** menu lists every ion type detected in the loaded system plus
 **Water**. **All** combines the ion types only; water is never part of it.
 Picking **Water** counts one oxygen per molecule from the Hydration tab's water
 selection (default `water and oxygen`, so any water model VMD recognises works)
-against the same per-frame pore geometry the ions use. Water is scanned the
+against the same per-frame pore geometry the ions use. On the Passage view a
+**Show** picker appears for water: **Crossings** (default) draws only the
+molecules that crossed the constriction, **Entered** draws every molecule that
+entered the pore. Water is scanned the
 first time it is picked; with the fast `sos_triangle` this takes a few seconds
 (about 6 s for 100 frames of a 200k-atom system), and about three times that
 with the pure-Tcl fallback. After that, switching species is instant.
