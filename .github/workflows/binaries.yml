@@ -24,6 +24,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the built assets to (leave empty to only build)"
+        required: false
+        default: ""
 
 # Attaching assets to a release WRITES to the repo; the default GITHUB_TOKEN
 # is read-only since GitHub tightened workflow permissions, and the first
@@ -44,10 +49,30 @@ jobs:
             tag: linux-x86_64
           - os: macos-latest
             tag: macos-arm64
+          - os: windows-latest
+            tag: windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
+      # Windows builds under MSYS2/MinGW-w64 - the exact toolchain the
+      # portability fixes were developed and verified against (the stdin
+      # freopen fix, .exe-aware discovery). Like macOS, the Windows bundle is
+      # the three C tools; the Fortran pair is a local build (gfortran via
+      # MSYS2, see docs/installation.md).
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+
       - name: Build the C tools (portable, not native-targeted)
+        if: runner.os != 'Windows'
+        working-directory: native
+        run: sh build.sh
+
+      - name: Build the C tools (Windows, MinGW-w64)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         working-directory: native
         run: sh build.sh
 
@@ -64,9 +89,13 @@ jobs:
           sh native/build-vmdhole-optimized.sh "" "$PWD/accel_out"
 
       - name: Stage the artefacts with their provenance
+        shell: bash
         run: |
           d="vmdhole-binaries-${{ matrix.tag }}"
           mkdir -p "$d"
+          # MinGW-w64 always appends .exe; the plugin's discovery is .exe-aware
+          # (_find_exe), so the bundle ships the suffixed names as built.
+          x=""; [ -f native/sos_triangle_fast.exe ] && x=".exe"
           if [ -d accel_out ]; then
             # full set: the fast sos_triangle under its DEPLOYED name, the
             # patched Fortran pair, and the manifest the plugin's acceleration
@@ -75,10 +104,10 @@ jobs:
                accel_out/mole_tunnel_engine "$d/"
             cp accel_out/vmdhole_accel.manifest "$d/"
           else
-            cp native/sos_triangle_fast "$d/sos_triangle"
-            cp native/mole_tunnel_engine "$d/"
+            cp "native/sos_triangle_fast$x" "$d/sos_triangle$x"
+            cp "native/mole_tunnel_engine$x" "$d/"
           fi
-          cp native/hydro_project       "$d/"
+          cp "native/hydro_project$x"   "$d/"
           # a working radius file so a from-zip user can run without a separate
           # HOLE install (HOLE 2's own simple.rad, Apache-2.0)
           mkdir -p "$d/rad"
@@ -110,7 +139,9 @@ jobs:
               echo "  rad/simple.rad      HOLE radius file"
               echo
               echo "  The accelerated Fortran pair (hole, sph_process) is not"
-              echo "  prebuilt for macOS - build locally:"
+              echo "  prebuilt for this platform - build locally (macOS: gfortran"
+              echo "  via Homebrew; Windows: MSYS2/MinGW-w64, see"
+              echo "  docs/installation.md):"
               echo "      ./native/build-vmdhole-optimized.sh"
             fi
             echo
@@ -131,9 +162,10 @@ jobs:
           path: vmdhole-binaries-${{ matrix.tag }}.tar.gz
 
       - name: Attach to the release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
           files: vmdhole-binaries-${{ matrix.tag }}.tar.gz
 
   plugin-zip:
@@ -162,7 +194,7 @@ jobs:
           merge-multiple: true
       - name: Assemble one complete zip per OS
         run: |
-          for tag in linux-x86_64 macos-arm64; do
+          for tag in linux-x86_64 macos-arm64 windows-x86_64; do
             tb="wheels/vmdhole-binaries-$tag.tar.gz"
             [ -f "$tb" ] || { echo "no wheel for $tag (its build failed?) - skipping"; continue; }
             rm -rf wheels/unpack && mkdir wheels/unpack
@@ -183,7 +215,8 @@ jobs:
           name: vmdhole-plugin
           path: vmdhole-*.zip
       - name: Attach to the release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
           files: vmdhole-*.zip
