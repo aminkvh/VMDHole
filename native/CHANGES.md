@@ -544,6 +544,35 @@ this change — file ownership for this task was `native/` only. Deploying
 this fix requires rebuilding from this source and pointing the plugin at the
 result (`native/build.sh`), a step outside this file's scope.
 
+## Additive feature: Ion Flow water projection (`--ionflow-project`)
+
+Opt-in like every other additive mode: inert unless the flag is passed, so
+the `-s` drop-in guarantee is untouched. It is the C form of the VMDHole Ion
+Flow tab's per-frame water pass. For each candidate point (a water oxygen the
+plugin has already prefiltered into the scan cylinder with a VMD selection)
+it does what the plugin's Tcl loop does for an ion: offset from the frame's
+protein centre of mass, min-image that offset per box dimension, project on
+the frame's axis (`z`), take the perpendicular distance (`R`), and measure
+the signed distance to the nearest sphere *surface* of the frame's
+union-of-spheres pore (`d3`, negative = inside). Points at `R >= scan_r` are
+dropped. Frames are independent and run under OpenMP; output is written
+afterwards in input order.
+
+    --ionflow-project IN OUT
+    IN:  scan_r <r>
+         S <id> <n>   then n lines  cx cy cz r
+         F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>   then n lines  idx x y z
+    OUT: F <frame> <nkept>   then nkept lines  idx z R d3
+
+The arithmetic is written in the same order as the Tcl expressions it
+replaces. Measured on a 100-frame, 197k-atom trajectory (39,614 waters,
+122,203 kept samples): every value bit-identical to the Tcl loop
+(521,673 values compared), the whole water scan 17 s -> 6 s, of which this
+mode is 0.45 s including its file round trip; the rest is the per-frame VMD
+selection. `tests/unit/test_ionflow_project.sh` checks the conventions
+(min-imaging, signed `d3`, the `scan_r` drop, ordering) against an
+independent awk re-derivation.
+
 ## Fortran patches (`connolly_patches/`)
 
 These modify HOLE2's Fortran sources — `hole` and `sph_process` — and are

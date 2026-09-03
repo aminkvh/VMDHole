@@ -198,8 +198,9 @@ The **Species** menu lists every ion type detected in the loaded system plus
 Picking **Water** counts one oxygen per molecule from the Hydration tab's water
 selection (default `water and oxygen`, so any water model VMD recognises works)
 against the same per-frame pore geometry the ions use. Water is scanned the
-first time it is picked, which takes longer than the ion scan because there are
-far more molecules; after that switching species is instant.
+first time it is picked; with the fast `sos_triangle` this takes a few seconds
+(about 6 s for 100 frames of a 200k-atom system), and about three times that
+with the pure-Tcl fallback. After that, switching species is instant.
 
 Select **Permeation** to count complete bulk-to-bulk crossings along the
 per-frame pore axis. Supply bulk planes, the saved-frame interval, and an

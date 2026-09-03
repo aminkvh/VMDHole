@@ -2632,6 +2632,142 @@ static int tunnel_cluster_c(const char *infile, const char *outfile,
    in step if the definition ever changes. Kept separate deliberately: this one
    emits the per-pair HAUSDORFF as its own output column and applies no maxdev
    guard, so it cannot just call the other. */
+/* --ionflow-project IN OUT
+   The Ion Flow tab's per-frame water pass, moved out of Tcl. For every
+   candidate point (a water oxygen VMD already prefiltered into the scan
+   cylinder) it does exactly what the plugin's Tcl loop does for an ion:
+   offset from the frame's protein COM, min-image that offset in each box
+   dimension, project onto the frame's axis (z), take the perpendicular
+   distance (R), and measure the signed distance to the nearest sphere
+   SURFACE of the frame's union-of-spheres pore (d3, negative = inside).
+   Points with R >= scan_r are dropped, like the Tcl loop drops them.
+
+   IN:  "scan_r <r>"
+        "S <id> <n>" then n lines "cx cy cz r"          (a sphere set; may
+                                                          appear anywhere
+                                                          before its use)
+        "F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>" then n lines
+        "idx x y z"
+   OUT: "F <frame> <nkept>" then nkept lines "idx z R d3", frames in input
+        order, points in input order.
+
+   Arithmetic is written in the same order as the Tcl expressions it
+   replaces so the two paths agree bit for bit on x86-64 (no FMA contraction
+   at the baseline target); d3 is only ever compared against a shell
+   threshold downstream, so a last-ulp difference on a contracting target
+   would not change a result anyway. Frames are independent: OpenMP over
+   frames, output written afterwards in order. */
+struct ifp_set { int n; double *x, *y, *z, *r; };
+struct ifp_frame { int frame, set, n, nkept; double com[3], L[3], u[3];
+                   int *idx; double *px, *py, *pz; double *oz, *oR, *od3; };
+
+static int ionflow_project(const char *infile, const char *outfile)
+{
+    FILE *f, *o;
+    char line[512];
+    double scan_r = -1.0;
+    struct ifp_set *sets = NULL; int nsets = 0, scap = 0;
+    struct ifp_frame *fr = NULL; int nfr = 0, fcap = 0;
+    int i, k;
+
+    f = fopen(infile, "r");
+    if (!f) { fprintf(stderr,"\n--ionflow-project: cannot open %s\n", infile); return 1; }
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == 's') {
+            if (sscanf(line, "scan_r %lf", &scan_r) != 1) { fclose(f); fprintf(stderr,"\n--ionflow-project: bad scan_r line\n"); return 1; }
+        } else if (line[0] == 'S') {
+            int id = -1, n = -1;
+            if (sscanf(line+1, "%d %d", &id, &n) != 2 || id < 0 || n < 0) { fclose(f); fprintf(stderr,"\n--ionflow-project: bad S line\n"); return 1; }
+            if (id >= scap) {
+                int nc = scap ? scap : 64;
+                while (nc <= id) nc *= 2;
+                sets = xrealloc(sets, nc*sizeof(*sets), "sets");
+                for (k = scap; k < nc; k++) { sets[k].n = -1; sets[k].x = sets[k].y = sets[k].z = sets[k].r = NULL; }
+                scap = nc;
+            }
+            sets[id].n = n;
+            sets[id].x = xa_malloc((n?n:1)*sizeof(double)); sets[id].y = xa_malloc((n?n:1)*sizeof(double));
+            sets[id].z = xa_malloc((n?n:1)*sizeof(double)); sets[id].r = xa_malloc((n?n:1)*sizeof(double));
+            for (k = 0; k < n; k++) {
+                if (!fgets(line, sizeof line, f) ||
+                    sscanf(line, "%lf %lf %lf %lf", &sets[id].x[k], &sets[id].y[k], &sets[id].z[k], &sets[id].r[k]) != 4) {
+                    fclose(f); fprintf(stderr,"\n--ionflow-project: short sphere set %d\n", id); return 1;
+                }
+            }
+            if (id >= nsets) nsets = id+1;
+        } else if (line[0] == 'F') {
+            struct ifp_frame *p;
+            if (nfr >= fcap) { fcap = fcap ? fcap*2 : 64; fr = xrealloc(fr, fcap*sizeof(*fr), "frames"); }
+            p = &fr[nfr];
+            if (sscanf(line+1, "%d %d %lf %lf %lf %lf %lf %lf %lf %lf %lf %d", &p->frame, &p->set,
+                       &p->com[0], &p->com[1], &p->com[2], &p->L[0], &p->L[1], &p->L[2],
+                       &p->u[0], &p->u[1], &p->u[2], &p->n) != 12 || p->n < 0) {
+                fclose(f); fprintf(stderr,"\n--ionflow-project: bad F line\n"); return 1;
+            }
+            p->idx = xa_malloc((p->n?p->n:1)*sizeof(int));
+            p->px = xa_malloc((p->n?p->n:1)*sizeof(double)); p->py = xa_malloc((p->n?p->n:1)*sizeof(double)); p->pz = xa_malloc((p->n?p->n:1)*sizeof(double));
+            p->oz = xa_malloc((p->n?p->n:1)*sizeof(double)); p->oR = xa_malloc((p->n?p->n:1)*sizeof(double)); p->od3 = xa_malloc((p->n?p->n:1)*sizeof(double));
+            p->nkept = 0;
+            for (k = 0; k < p->n; k++) {
+                if (!fgets(line, sizeof line, f) ||
+                    sscanf(line, "%d %lf %lf %lf", &p->idx[k], &p->px[k], &p->py[k], &p->pz[k]) != 4) {
+                    fclose(f); fprintf(stderr,"\n--ionflow-project: short frame %d\n", p->frame); return 1;
+                }
+            }
+            nfr++;
+        }
+    }
+    fclose(f);
+    if (scan_r < 0.0) { fprintf(stderr,"\n--ionflow-project: no scan_r in %s\n", infile); return 1; }
+    for (i = 0; i < nfr; i++)
+        if (fr[i].set < 0 || fr[i].set >= scap || sets[fr[i].set].n < 0) {
+            fprintf(stderr,"\n--ionflow-project: frame %d uses undefined sphere set %d\n", fr[i].frame, fr[i].set); return 1;
+        }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (i = 0; i < nfr; i++) {
+        struct ifp_frame *p = &fr[i];
+        const struct ifp_set *S = &sets[p->set];
+        int j, m, kept = 0;
+        for (j = 0; j < p->n; j++) {
+            double rx = p->px[j]-p->com[0], ry = p->py[j]-p->com[1], rz = p->pz[j]-p->com[2];
+            double z, qx, qy, qz, R, wx, wy, wz, mind = 1e30;
+            if (p->L[0] > 0) rx = rx - p->L[0]*round(rx/p->L[0]);
+            if (p->L[1] > 0) ry = ry - p->L[1]*round(ry/p->L[1]);
+            if (p->L[2] > 0) rz = rz - p->L[2]*round(rz/p->L[2]);
+            z = rx*p->u[0]+ry*p->u[1]+rz*p->u[2];
+            qx = rx-z*p->u[0]; qy = ry-z*p->u[1]; qz = rz-z*p->u[2];
+            R = sqrt(qx*qx+qy*qy+qz*qz);
+            if (R >= scan_r) continue;
+            wx = p->com[0]+rx; wy = p->com[1]+ry; wz = p->com[2]+rz;
+            for (m = 0; m < S->n; m++) {
+                double dx = wx-S->x[m], dy = wy-S->y[m], dz = wz-S->z[m];
+                double surf = sqrt(dx*dx+dy*dy+dz*dz)-S->r[m];
+                if (surf < mind) mind = surf;
+            }
+            p->idx[kept] = p->idx[j]; p->oz[kept] = z; p->oR[kept] = R; p->od3[kept] = mind;
+            kept++;
+        }
+        p->nkept = kept;
+    }
+
+    o = fopen(outfile, "w");
+    if (!o) { fprintf(stderr,"\n--ionflow-project: cannot write %s\n", outfile); return 1; }
+    for (i = 0; i < nfr; i++) {
+        fprintf(o, "F %d %d\n", fr[i].frame, fr[i].nkept);
+        for (k = 0; k < fr[i].nkept; k++)
+            fprintf(o, "%d %.17g %.17g %.17g\n", fr[i].idx[k], fr[i].oz[k], fr[i].oR[k], fr[i].od3[k]);
+    }
+    fclose(o);
+    for (i = 0; i < nfr; i++) { free(fr[i].idx); free(fr[i].px); free(fr[i].py); free(fr[i].pz); free(fr[i].oz); free(fr[i].oR); free(fr[i].od3); }
+    free(fr);
+    for (k = 0; k < scap; k++) { free(sets[k].x); free(sets[k].y); free(sets[k].z); free(sets[k].r); }
+    free(sets);
+    return 0;
+}
+
 static int tunnel_dist(const char *infile, const char *outfile, int want_max)
 {
     FILE *f, *o;
@@ -2935,7 +3071,7 @@ int main (int argc, char *argv[])
 	  if (strcmp(argv[1], "--hole-features") == 0) {
 	    /* capability probe: the plugin greps stdout for these tokens to decide
 	       which accelerated outputs this binary supports. */
-	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist\n");
+	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject\n");
 	    return(0);
 	  } else if (strcmp(argv[1], "--recolor") == 0) {
 	    /* --recolor BASE.vmd_plot: recolour an existing mesh by hydropathy
@@ -3406,6 +3542,10 @@ int main (int argc, char *argv[])
 	    if (argc < 4) { fprintf(stderr, "\n--esp-points needs CHARGEFILE OUTFILE\n"); return(1); }
 	    hydro_read_spheres();
 	    return( esp_compute(argv[2], argv[3], 1) );
+	  } else if (strcmp(argv[1], "--ionflow-project") == 0) {
+	    /* --ionflow-project IN OUT: see ionflow_project(). */
+	    if (argc < 4) { fprintf(stderr, "\n--ionflow-project needs IN OUT\n"); return(1); }
+	    return ionflow_project(argv[2], argv[3]);
 	  } else if (strcmp(argv[1], "--tunnel-dist") == 0) {
 	    /* --tunnel-dist IN OUT
 	       Pairwise tunnel dissimilarity matrix for the average-link clustering.
