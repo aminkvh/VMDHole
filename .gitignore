@@ -213,6 +213,8 @@ paper/benchmarks/*
 paper/benchmarks/results/*
 !paper/benchmarks/results/*.csv
 !paper/benchmarks/results/env_manifest.txt
+!paper/benchmarks/results/FINAL_NUMERICAL_RESULTS.md
+!paper/benchmarks/results/SHA256_MANIFEST.txt
 
 # Dropped from the public tree in the release overhaul (stay on disk, ship in
 # the data deposit): unmodified-upstream reference copy, native-side benchmark
