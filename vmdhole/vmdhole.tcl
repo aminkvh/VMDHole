@@ -2446,7 +2446,7 @@ proc ::VMDHole::build_gui {w} {
         crossing."
     add_tooltip $fb.perm "Ions that fully cross the pore, bulk to bulk.
 Stricter than Ion Passage, which counts ions that merely entered."
-    add_tooltip $fb.spm  "Show one ion type, or All."
+    add_tooltip $fb.spm  "Show one ion type, All (every ion type together - never water), or Water: one oxygen per molecule from the Hydration tab's water selection, scanned the first time it is picked."
     add_tooltip $fb.gear "Ion Flow settings: the shell (how far beyond the pore wall the map reaches) and the flip-Z toggle."
     # Left-to-right: the INPUTS first (View, Species) then the Compute action, then
     # Permeation - so the row reads "choose settings, then Compute". Species/View re-filter
@@ -2602,9 +2602,15 @@ Stricter than Ion Passage, which counts ions that merely entered."
     # plus this one - would leave the user guessing which analysis they get.
     button $w.actions.run   -text "Run HOLE" -command ::VMDHole::run_current_mode
     button $w.actions.close -text "Close"    -command ::VMDHole::close_gui
+    # "How to cite" sits on the LEFT of the same row, opposite Run/Close: it opens
+    # the Help window straight on its Citations tab (the same window as Help >
+    # Guide & Citations..., just landing on the other tab).
+    button $w.actions.cite  -text "How to cite" -command [list ::VMDHole::show_about_dialog cite]
     pack $w.actions.run $w.actions.close -side right -padx 4
+    pack $w.actions.cite -side left -padx 4
     add_tooltip $w.actions.run "Run the selected mode's analysis on the chosen frame(s)."
     add_tooltip $w.actions.close "Close the VMDHole window. Results stay loaded."
+    add_tooltip $w.actions.cite "Open the citation list: what to cite for VMDHole, VMD, HOLE and the specific methods you report."
     grid $w.actions -row 3 -column 0 -columnspan 2 -sticky ew -padx 10 -pady {0 10}
     # Initial enable/disable of the trajectory-only analyses (Hydration, Permeation).
     catch {_gate_trajectory_buttons}
@@ -20459,7 +20465,7 @@ proc ::VMDHole::_about_fill_guide {t version} {
     $t insert end "Hydration      " mono
     $t insert end "from an explicit-water trajectory, the water density and free energy G(z) = -kT ln(rho/rho_bulk) along the axis. High G(z) means water is depleted (a dry, hydrophobic gate); low or negative means water is enriched. rho_bulk is MEASURED from your own trajectory (reported in the VMD console), not assumed, so it reflects your water model and conditions; if the system has too little free water to measure, the plugin says so and falls back to 0.0334 A^-3.\n"
     $t insert end "Ion Flow       " mono
-    $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions.\n\n"
+    $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions. Species lists each ion type plus Water (one oxygen per molecule, the Hydration tab's water selection); All is the ion types together, never water.\n\n"
 
     $t insert end "Channel shape beyond a circle\n" h2
     $t insert end "HOLE's radius assumes a circular cross-section, but real pores are often slit-like. The Ellipse fit and asymmetry tools fit the largest ellipse that fits each pore slice, giving a truer cross-section plus a slit-aware conductance and volume.\n\n"
@@ -20622,7 +20628,10 @@ proc ::VMDHole::_about_fill_citations {t version author} {
     $t insert end "   Commun. 185, 1109-1114.\n" mono
 }
 
-proc ::VMDHole::show_about_dialog {} {
+proc ::VMDHole::show_about_dialog {{tab guide}} {
+    # `tab` is which notebook page to land on: "guide" (Help menu) or "cite"
+    # (the main window's "How to cite" button). An already-open window is
+    # switched to the requested page instead of being left where it was.
     variable w
     variable version
     variable plugin_author
@@ -20630,7 +20639,11 @@ proc ::VMDHole::show_about_dialog {} {
     # Pathed under $w (not root ".") so it closes automatically when the main
     # window does - see show_import_dialog's identical fix.
     set d $w.about
-    if {[winfo exists $d]} { wm deiconify $d; raise $d; return }
+    if {$tab ni {guide cite}} { set tab guide }
+    if {[winfo exists $d]} {
+        catch {$d.nb select $d.nb.$tab}
+        wm deiconify $d; raise $d; return
+    }
     toplevel $d
     wm withdraw $d
     wm title $d "VMDHole Help"
@@ -20650,6 +20663,7 @@ proc ::VMDHole::show_about_dialog {} {
 
     button $d.ok -text "Dismiss" -command [list destroy $d]
     pack $d.ok -pady {4 10}
+    catch {$d.nb select $d.nb.$tab}
     _center_toplevel $d 660 640
 }
 
@@ -39475,7 +39489,11 @@ proc ::VMDHole::_nearest_int_in_sorted_list {n sorted} {
     return [lindex $sorted $lo]
 }
 
-proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
+proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
+    # with_water=1 additionally scans WATER (one oxygen per molecule, the
+    # Hydration tab's water selection) as its own "Water" species - see the
+    # water block inside the frame loop. Off by default: water is 100x the
+    # ions, so it is only scanned once the user picks it (_ion_flow_ensure_water).
     # The ONE expensive trajectory scan behind the Ion Flow tab (see the ion_flow_raw /
     # ion_flow_cache note). For every detected ion, every frame, in the pore's own R-Z frame
     # (Z along the .sph PCA axis, R = distance from it, both relative to the per-frame protein
@@ -39831,13 +39849,30 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
         set rprof [lsort -real -index 0 $rprof]
     }
     set ions [detect_ions $molid]
-    if {[llength $ions] == 0} { return "" }
+    if {[llength $ions] == 0 && !$with_water} { return "" }
     set sels {}
     foreach spec $ions { lappend sels "([lindex $spec 1])" }
-    set ionsel [join $sels " or "]
+    # "none" when the system has no ions at all: a water-only scan still needs
+    # the (then empty) ion pass below to run, for the frame bookkeeping.
+    set ionsel [expr {[llength $sels] ? [join $sels " or "] : "none"}]
     if {[catch {atomselect $molid $ionsel} isel]} { return "" }
-    if {[$isel num] == 0} { catch {$isel delete}; return "" }
+    if {[$isel num] == 0 && !$with_water} { catch {$isel delete}; return "" }
     set nions [$isel num]
+    # Water: resolved to one atom per molecule (the same canonicaliser
+    # Hydration uses on the same selection), counted once for the label.
+    set _wsel_txt ""
+    set nwater 0
+    if {$with_water} {
+        set _wsel_txt [_ion_flow_water_sel $molid]
+        if {$_wsel_txt ne "" && ![catch {atomselect $molid $_wsel_txt} _wall]} {
+            catch {set nwater [$_wall num]}
+            catch {$_wall delete}
+        }
+        if {$nwater == 0} { set _wsel_txt "" }
+    }
+    array unset _w_z; array unset _w_r; array unset _w_f; array unset _w_d3
+    array unset _sph_index
+    set _wq_last [clock milliseconds]
     set ion_atom_idx [$isel get index]
     # atom index -> species label (labels each per-ion trace by species)
     set idx_species [dict create]
@@ -39992,10 +40027,18 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
         set pcom_prev [list $comx $comy $comz]
         # This trajectory frame's own sphere set for the true-3D test, resolved ONCE
         # (not per ion) via the same nearest-analyzed-frame lookup as the axis direction.
-        set _cur_spheres {}
+        set _cur_spheres {}; set _cur_index {}
         if {[llength $_sphf_sorted]} {
             set _nsf [_nearest_int_in_sorted_list $f $_sphf_sorted]
             set _cur_spheres $_frame_spheres($_nsf)
+            # Axis-sorted index over the same spheres (built once per analyzed
+            # frame) so the surface-distance test below is a bounded search,
+            # not a scan of every sphere - exact, see _ion_flow_min_surf_dist_indexed.
+            if {![info exists _sph_index($_nsf)]} {
+                set _sph_index($_nsf) [_ion_flow_sphere_index $_cur_spheres \
+                    $comx $comy $comz $_iux $_iuy $_iuz]
+            }
+            set _cur_index $_sph_index($_nsf)
         }
         set idx 0
         foreach p [$isel get {x y z}] {
@@ -40015,9 +40058,48 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
                 lset tr_f $idx [linsert [lindex $tr_f $idx] end $f]
                 set wx [expr {$comx+$rx}]; set wy [expr {$comy+$ry}]; set wz [expr {$comz+$rz}]
                 lset tr_d3 $idx [linsert [lindex $tr_d3 $idx] end \
-                    [_ion_flow_min_surf_dist $wx $wy $wz $_cur_spheres]]
+                    [_ion_flow_min_surf_dist_indexed $wx $wy $wz $_cur_index]]
             }
             incr idx
+        }
+        if {$_wsel_txt ne "" && [llength $_cur_index]} {
+            # WATER. Same R-Z projection, min-imaging and true-3D membership as
+            # the ions above, but the candidates come from a per-frame VMD
+            # selection (C speed) that keeps only the oxygens inside the scan
+            # cylinder about THIS frame's axis and inside the padded axial
+            # window the aggregate bins into - ~40k oxygens/frame down to the
+            # few hundred the Tcl loop then measures. Per-atom-index arrays
+            # rather than the ions' positional lists because the candidate set
+            # changes every frame.
+            set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
+                $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
+            if {![catch {atomselect $molid $_wq frame $f} _ws]} {
+                foreach _wi [$_ws get index] p [$_ws get {x y z}] {
+                    lassign $p px py pz
+                    set rx [expr {$px-$comx}]; set ry [expr {$py-$comy}]; set rz [expr {$pz-$comz}]
+                    if {$Lx>0} { set rx [expr {$rx-$Lx*round($rx/double($Lx))}] }
+                    if {$Ly>0} { set ry [expr {$ry-$Ly*round($ry/double($Ly))}] }
+                    if {$Lz>0} { set rz [expr {$rz-$Lz*round($rz/double($Lz))}] }
+                    set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
+                    set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
+                    set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+                    if {$R >= $scan_r} continue
+                    lappend _w_z($_wi) $z
+                    lappend _w_r($_wi) $R
+                    lappend _w_f($_wi) $f
+                    lappend _w_d3($_wi) [_ion_flow_min_surf_dist_indexed \
+                        [expr {$comx+$rx}] [expr {$comy+$ry}] [expr {$comz+$rz}] $_cur_index]
+                }
+                catch {$_ws delete}
+            }
+            # Idle-task pump only (no user events, so no re-entry): the water
+            # pass is seconds, not the ions' sub-second, and the status line
+            # should say where it is.
+            if {[clock milliseconds] - $_wq_last > 400} {
+                set state(status) "Scanning water positions: frame [expr {$f+1}] / $nf…"
+                catch {update idletasks}
+                set _wq_last [clock milliseconds]
+            }
         }
     }
     catch {$isel delete}; if {$psel ne ""} { catch {$psel delete} }
@@ -40031,6 +40113,12 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
         set sp [expr {[dict exists $idx_species $ai] ? [dict get $idx_species $ai] : "?"}]
         lappend traces [dict create idx $ai species $sp \
             z [lindex $tr_z $k] r [lindex $tr_r $k] frame [lindex $tr_f $k] d3 [lindex $tr_d3 $k]]
+    }
+    if {$_wsel_txt ne ""} {
+        foreach _wi [lsort -integer [array names _w_f]] {
+            lappend traces [dict create idx $_wi species Water \
+                z $_w_z($_wi) r $_w_r($_wi) frame $_w_f($_wi) d3 $_w_d3($_wi)]
+        }
     }
     set protein_wrapped [expr {$nf>1 ? (double($npjump)/($nf-1) > 0.10) : 0}]
     # bulk_lo/bulk_hi: the pore's own axial extent, UNpadded - the same "bulk
@@ -40089,7 +40177,158 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref} {
         zmin $zmin zmax $zmax zc $zc \
         bulk_lo $_blo bulk_hi $_bhi coord_offset $_coff \
         rmin_hole $rmin_hole rmax_hole $rmax_hole scan_r $scan_r nframes $nf nions $nions \
-        traces $traces protein_wrapped $protein_wrapped box_lz $box_lz rprof $rprof]
+        traces $traces protein_wrapped $protein_wrapped box_lz $box_lz rprof $rprof \
+        has_water [expr {$_wsel_txt ne "" ? 1 : 0}] nwater $nwater water_sel $_wsel_txt \
+        molid $molid frame_ref $frame_ref]
+}
+
+proc ::VMDHole::_ion_flow_water_sel {molid} {
+    # The water selection Ion Flow scans: the Hydration tab's own (state(water_sel),
+    # default "water and oxygen"), reduced to ONE atom per molecule by the same
+    # canonicaliser Hydration uses - so TIP3/TIP4/SPC/OPC all count once per water
+    # and a user who has already fixed the selection for their model gets it here.
+    variable state
+    set wsel [expr {[info exists state(water_sel)] ? [string trim $state(water_sel)] : ""}]
+    if {$wsel eq ""} { set wsel "water and oxygen" }
+    set c $wsel
+    catch {set c [_canonical_water_sel $molid 0 $wsel]}
+    return $c
+}
+
+proc ::VMDHole::_selnum {v} {
+    # A number for VMD's selection parser: negatives are written as (0-|v|) so a
+    # generated expression never contains "- -3.2" or "*-0.5".
+    if {$v < 0} { return "(0-[format %.6f [expr {-$v}]])" }
+    return [format %.6f $v]
+}
+
+proc ::VMDHole::_ion_flow_water_query {wsel cx cy cz Lx Ly Lz ux uy uz rmax zlo zhi} {
+    # Selection text for "water inside the scan cylinder this frame": each
+    # coordinate offset from the COM (cx,cy,cz) and min-imaged (floor(v+0.5) is
+    # round() in the selection language's vocabulary), projected on the axis
+    # (ux,uy,uz) -> zz; radial distance^2 = |d|^2 - zz^2. Evaluated by VMD in C,
+    # so the Tcl loop only ever sees candidates.
+    set ds {}
+    foreach c {x y z} o [list $cx $cy $cz] L [list $Lx $Ly $Lz] {
+        set d "($c - [_selnum $o])"
+        if {$L > 0} {
+            set Ls [_selnum $L]
+            set d "($d - $Ls*floor($d/$Ls + 0.5))"
+        }
+        lappend ds $d
+    }
+    lassign $ds dx dy dz
+    set zz "($dx*[_selnum $ux] + $dy*[_selnum $uy] + $dz*[_selnum $uz])"
+    set r2 [_selnum [expr {$rmax*$rmax}]]
+    return "($wsel) and ($dx*$dx + $dy*$dy + $dz*$dz - $zz*$zz < $r2) and ($zz > [_selnum $zlo]) and ($zz < [_selnum $zhi])"
+}
+
+proc ::VMDHole::_ion_flow_sphere_index {spheres refx refy refz ux uy uz} {
+    # Axis-sorted index over a frame's union-of-spheres, for
+    # _ion_flow_min_surf_dist_indexed. Spheres are keyed by their axial position
+    # relative to (ref, u) - kept in the index so a query uses the SAME key
+    # frame whichever trajectory frame reuses it. Spheres are binned by RADIUS
+    # (<=2, <=4, <=6, <=9, larger), each bin sorted on its own, so the bound
+    # the search terminates on uses that bin's own largest radius: a 13 A
+    # flood-end sphere no longer loosens the bound for the 2 A pore spheres.
+    # Returns {} for no spheres, else {refx refy refz ux uy uz {keys sph rmax} ...}.
+    if {![llength $spheres]} { return {} }
+    set edges {2.0 4.0 6.0 9.0 1e30}
+    set nb [llength $edges]
+    for {set b 0} {$b < $nb} {incr b} { set keyed($b) {}; set rmax($b) 0.0 }
+    foreach s $spheres {
+        lassign $s cx cy cz cr
+        set b 0
+        while {$cr > [lindex $edges $b]} { incr b }
+        set zk [expr {($cx-$refx)*$ux+($cy-$refy)*$uy+($cz-$refz)*$uz}]
+        lappend keyed($b) [list $zk $cx $cy $cz $cr]
+        if {$cr > $rmax($b)} { set rmax($b) $cr }
+    }
+    set index [list $refx $refy $refz $ux $uy $uz]
+    for {set b 0} {$b < $nb} {incr b} {
+        if {![llength $keyed($b)]} continue
+        set keys {}; set sph {}
+        foreach k [lsort -real -index 0 $keyed($b)] {
+            lappend keys [lindex $k 0]
+            lappend sph [lrange $k 1 4]
+        }
+        lappend index [list $keys $sph $rmax($b)]
+    }
+    return $index
+}
+
+proc ::VMDHole::_ion_flow_min_surf_dist_indexed {wx wy wz index} {
+    # _ion_flow_min_surf_dist with a bound instead of a full scan. Exact: a
+    # sphere's centre-to-point distance is at least its axial separation dz, so
+    # its surface distance is at least dz - r; once dz - r_max(bin) exceeds the
+    # best so far, every sphere further out along the axis in that bin loses
+    # too. Built for the water pass (tens of thousands of samples against
+    # hundreds of spheres per frame), used for the ions as well so both
+    # species share one membership test. Measured identical to the full scan.
+    if {![llength $index]} { return "" }
+    lassign [lrange $index 0 5] refx refy refz ux uy uz
+    set zk [expr {($wx-$refx)*$ux+($wy-$refy)*$uy+($wz-$refz)*$uz}]
+    set mind 1e30
+    foreach bin [lrange $index 6 end] {
+        lassign $bin keys sph rmax
+        set n [llength $keys]
+        set lo 0; set hi $n
+        while {$lo < $hi} {
+            set mid [expr {($lo+$hi)/2}]
+            if {[lindex $keys $mid] < $zk} { set lo [expr {$mid+1}] } else { set hi $mid }
+        }
+        for {set i $lo} {$i < $n} {incr i} {
+            if {[lindex $keys $i]-$zk-$rmax > $mind} break
+            lassign [lindex $sph $i] cx cy cz cr
+            set dx [expr {$wx-$cx}]; set dy [expr {$wy-$cy}]; set dz [expr {$wz-$cz}]
+            set surf [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)-$cr}]
+            if {$surf < $mind} { set mind $surf }
+        }
+        for {set i [expr {$lo-1}]} {$i >= 0} {incr i -1} {
+            if {$zk-[lindex $keys $i]-$rmax > $mind} break
+            lassign [lindex $sph $i] cx cy cz cr
+            set dx [expr {$wx-$cx}]; set dy [expr {$wy-$cy}]; set dz [expr {$wz-$cz}]
+            set surf [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)-$cr}]
+            if {$surf < $mind} { set mind $surf }
+        }
+    }
+    return $mind
+}
+
+proc ::VMDHole::_ion_flow_noun {d} {
+    # Count noun for a display dict: "waters" for the Water species, else "ions".
+    if {[dict exists $d noun]} { return [dict get $d noun] }
+    return "ions"
+}
+
+proc ::VMDHole::_ion_flow_ensure_water {} {
+    # First time the user picks Water on a scan that did not include it: rescan
+    # once with water on (same reference frame), then re-filtering is instant
+    # like any other species. Nothing to do if no scan exists yet - Compute
+    # will include water because the species is already selected.
+    variable state
+    variable ion_flow_raw
+    if {$ion_flow_raw eq ""} { return }
+    if {[dict exists $ion_flow_raw has_water] && [dict get $ion_flow_raw has_water]} { return }
+    if {[_op_in_progress]} {
+        set state(status) "Another operation is already in progress."
+        return
+    }
+    set molid [expr {[dict exists $ion_flow_raw molid] ? [dict get $ion_flow_raw molid] : [resolve_molid_or -1]}]
+    set fref  [expr {[dict exists $ion_flow_raw frame_ref] ? [dict get $ion_flow_raw frame_ref] : ""}]
+    if {$molid < 0 || $fref eq ""} { return }
+    set state(status) "Scanning water positions over the trajectory (once)…"
+    catch {update idletasks}
+    set raw ""
+    catch {set raw [_ion_flow_scan $molid $fref 1]}
+    if {$raw eq ""} {
+        set state(status) "Water scan failed - no water matched the Hydration tab's water selection, or no valid pore."
+        return
+    }
+    set ion_flow_raw $raw
+    set _nw 0
+    foreach _tr [dict get $raw traces] { if {[dict get $_tr species] eq "Water"} { incr _nw } }
+    set state(status) "Water scanned once: $_nw of [dict get $raw nwater] molecules came near the pore over [dict get $raw nframes] frames. Species switches are instant from here."
 }
 
 proc ::VMDHole::_ion_flow_min_surf_dist {wx wy wz spheres} {
@@ -40325,8 +40564,14 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
     array set _occ_seen {}
     set occ_cnt {}
     for {set i 0} {$i < $N} {incr i} { lappend occ_cnt 0 }
+    set species_water [expr {$species eq "Water"}]
     foreach tr [dict get $raw traces] {
-        if {!$species_all && [dict get $tr species] ne $species} { continue }
+        set _trsp [dict get $tr species]
+        # "All" is every ION species together - water is never part of it (it
+        # would swamp the ions 100:1); Water is its own selection.
+        if {$species_all} {
+            if {$_trsp eq "Water"} { continue }
+        } elseif {$_trsp ne $species} { continue }
         set zs [dict get $tr z]; set rs [dict get $tr r]; set fs [dict get $tr frame]
         set d3s [expr {[dict exists $tr d3] ? [dict get $tr d3] : {}}]
         set n [llength $fs]
@@ -40404,9 +40649,12 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
     set occ_pct {}
     foreach c $occ_cnt { lappend occ_pct [expr {100.0 * $c / $nfd}] }
     set species_label [expr {$species_all ? "All" : $species}]
+    set _ncount [dict get $raw nions]
+    if {$species_water} { set _ncount [expr {[dict exists $raw nwater] ? [dict get $raw nwater] : 0}] }
     return [dict create nr $nr nz $nz zmin $zmin zmax $zmax r_cut $r_cut r_pass $r_pass zc $zc flux_r $flux_r \
         dens $dens dens_vol $dens_vol occ_pct $occ_pct vr $vrs vz $vzs cnt $cnt up $up down $down net [expr {$up-$down}] \
-        nions [dict get $raw nions] nframes $nf nused $nf rmin_hole $rmin_hole rmax_hole [dict get $raw rmax_hole] \
+        nions $_ncount noun [expr {$species_water ? "waters" : "ions"}] \
+        nframes $nf nused $nf rmin_hole $rmin_hole rmax_hole [dict get $raw rmax_hole] \
         species $species_label traces $out_traces stride 1 protein_wrapped [dict get $raw protein_wrapped] box_lz $box_lz \
         rprof [expr {[dict exists $raw rprof] ? [dict get $raw rprof] : {}}] \
         bulk_lo [expr {[dict exists $raw bulk_lo] ? [dict get $raw bulk_lo] : ""}] \
@@ -40485,6 +40733,7 @@ proc ::VMDHole::_select_ion_species {name} {
     # (no trajectory rescan). "__all__" keeps every detected species combined.
     variable state
     set state(ion_flow_species) $name
+    if {$name eq "Water"} { _ion_flow_ensure_water }
     _ion_flow_refilter
 }
 
@@ -40511,14 +40760,42 @@ proc ::VMDHole::_refresh_ion_flow_species_menu {} {
             -variable ::VMDHole::state(ion_flow_species_disp) \
             -command [list ::VMDHole::_select_ion_species $name]
     }
-    if {[llength $ions] == 0} {
-        $mb.m add command -label "(no ions detected)" -state disabled
+    # Water is its own species, listed apart from the ions: never part of "All"
+    # (see _ion_flow_aggregate), scanned only once picked (_ion_flow_ensure_water).
+    # The count is cached per molecule/atom count/selection text: this proc
+    # runs on every tab show, and the canonicaliser behind _ion_flow_water_sel
+    # is a few 200k-atom selections.
+    variable _ionflow_water_menu_cache
+    set _nw 0
+    catch {
+        set _m [resolve_molid]
+        set _wk "$_m|[molinfo $_m get numatoms]|[expr {[info exists state(water_sel)] ? $state(water_sel) : ""}]"
+        if {[info exists _ionflow_water_menu_cache] && [lindex $_ionflow_water_menu_cache 0] eq $_wk} {
+            set _nw [lindex $_ionflow_water_menu_cache 1]
+        } else {
+            set _wsx [_ion_flow_water_sel $_m]
+            if {$_wsx ne ""} {
+                set _s [atomselect $_m $_wsx]
+                set _nw [$_s num]
+                $_s delete
+            }
+            set _ionflow_water_menu_cache [list $_wk $_nw]
+        }
+    }
+    if {$_nw > 0} {
+        if {[llength $ions]} { $mb.m add separator }
+        $mb.m add radiobutton -label "Water ($_nw)" -value Water \
+            -variable ::VMDHole::state(ion_flow_species_disp) \
+            -command [list ::VMDHole::_select_ion_species Water]
+    }
+    if {[llength $ions] == 0 && $_nw == 0} {
+        $mb.m add command -label "(no ions or water detected)" -state disabled
     }
     # If the previously-selected species no longer exists in this system (new molecule,
     # or it was never a real species e.g. after a fresh load), fall back to "All"
     # rather than silently computing against a stale/empty selection.
     if {$state(ion_flow_species) ne "__all__"} {
-        set found 0
+        set found [expr {$state(ion_flow_species) eq "Water" && $_nw > 0}]
         foreach spec $ions { if {[lindex $spec 0] eq $state(ion_flow_species)} { set found 1 } }
         if {!$found} {
             set state(ion_flow_species) "__all__"
@@ -40565,13 +40842,14 @@ proc ::VMDHole::_run_ion_flow {} {
     set state(status) $_scan_msg
     catch {update idletasks}
     set raw ""
-    catch {set raw [_ion_flow_scan $molid $frame]}
+    set _want_water [expr {[info exists state(ion_flow_species)] && $state(ion_flow_species) eq "Water"}]
+    catch {set raw [_ion_flow_scan $molid $frame $_want_water]}
     if {$raw eq ""} {
         set ion_flow_raw ""; set ion_flow_cache ""
         # Keep a SPECIFIC refusal the scan already reported (e.g. the tunnel
         # curvature gate) - the generic message would hide the actual reason.
         if {$state(status) eq $_scan_msg} {
-            set state(status) "Ion Flow: no ions detected, or no valid pore for frame $frame."
+            set state(status) "Ion Flow: no ions (or water) detected, or no valid pore for frame $frame."
         }
         draw_ion_flow_tab
         return
@@ -40581,7 +40859,7 @@ proc ::VMDHole::_run_ion_flow {} {
     set d $ion_flow_cache
     set _w [expr {[dict get $raw protein_wrapped] ? \
         "  ⚠ the protein looks wrapped across the box — image it first (Help ▸ About) or Z may jump." : ""}]
-    set state(status) "Ion flow ([dict get $d species]): [dict get $d nions] ions, [dict get $d nframes] frames.$_w"
+    set state(status) "Ion flow ([dict get $d species]): [dict get $d nions] [_ion_flow_noun $d], [dict get $d nframes] frames.$_w"
 }
 
 proc ::VMDHole::_on_ion_flow_view_changed {} {
@@ -40617,6 +40895,7 @@ proc ::VMDHole::_ion_species_color {sp} {
         Cl-  { return "#008b8b" }
         Ca2+ { return "#b8860b" }
         Mg2+ { return "#2e8b57" }
+        Water { return "#1e90ff" }
         default { return "#555555" }
     }
 }
@@ -41063,7 +41342,7 @@ proc ::VMDHole::_draw_ion_flow_occupancy {} {
     # Ion Passage view's own title already has (see its comment); this title
     # never had it.
     $cv create text [expr {$ml+$pw/2}] 12 -anchor n -justify center -width $pw -font {Helvetica 10 bold} \
-        -text "Ion occupancy + flow — $_splabel  ([dict get $d nions] ions, [dict get $d nused] frames)"
+        -text "Ion occupancy + flow — $_splabel  ([dict get $d nions] [_ion_flow_noun $d], [dict get $d nused] frames)"
     # Color is already explained by the scale bar - no need to restate it here too.
     $cv create text [expr {$ml+$pw/2}] 27 -anchor n -justify center -width $pw -font {Helvetica 8} -fill "#333333" \
         -text "arrows = mean ion displacement   \u00b7   net flux: up $up  down $down  net $net[_ion_flow_rcut_note $d]"
@@ -41374,7 +41653,7 @@ proc ::VMDHole::_export_ion_passage_csv {d} {
     set fh [open $fn w]
     set _blz [expr {[dict exists $d box_lz] ? [dict get $d box_lz] : 0.0}]
     set _pwrap [expr {[dict exists $d protein_wrapped] ? [dict get $d protein_wrapped] : 0}]
-    puts $fh "# ion-passage trace; species=$_sp entered=[llength $traces] of [dict get $d nions] ions, zc=[format %.3f [dict get $d zc]], box_lz=[format %.3f $_blz], protein_wrapped=$_pwrap"
+    puts $fh "# ion-passage trace; species=$_sp entered=[llength $traces] of [dict get $d nions] [_ion_flow_noun $d], zc=[format %.3f [dict get $d zc]], box_lz=[format %.3f $_blz], protein_wrapped=$_pwrap"
     # protein_wrapped=1: the protein broke across the periodic box on >10% of frame
     # steps (see count_permeation's own reliability check) - every trace below shares
     # the SAME COM reference these traces were built against, so treat Z as suspect.
