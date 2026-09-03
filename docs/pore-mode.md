@@ -188,10 +188,18 @@ geometry. Cite CHAP from the
 
 <p align="center"><img src="images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
-Requires ions and at least two trajectory frames. **Occupancy %** maps where
-ions are observed in the pore coordinate system. **Ion Passage** displays the
-paths of ions that enter the near-pore region. These views are not full
+Requires ions or water and at least two trajectory frames. **Occupancy %** maps
+where ions are observed in the pore coordinate system. **Ion Passage** displays
+the paths of ions that enter the near-pore region. These views are not full
 permeation counts.
+
+The **Species** menu lists every ion type detected in the loaded system plus
+**Water**. **All** combines the ion types only; water is never part of it.
+Picking **Water** counts one oxygen per molecule from the Hydration tab's water
+selection (default `water and oxygen`, so any water model VMD recognises works)
+against the same per-frame pore geometry the ions use. Water is scanned the
+first time it is picked, which takes longer than the ion scan because there are
+far more molecules; after that switching species is instant.
 
 Select **Permeation** to count complete bulk-to-bulk crossings along the
 per-frame pore axis. Supply bulk planes, the saved-frame interval, and an

@@ -177,7 +177,7 @@ barrier is a sampling-dependent lower bound.
 | Parameter | Default | Definition |
 |---|---:|---|
 | Ion Flow view | Occupancy % | Aggregate occupancy map or per-ion passage tracks |
-| Species | All detected | Filter cached observations by detected ion species |
+| Species | All detected | Filter cached observations by detected ion species; All = every ion type, never water. Water (one oxygen per molecule, from the Hydration water selection) is its own entry |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |
 | Stride | 1 | Trajectory sampling stride for ion analysis |
 | Flip Z | off | Reverse plotted pore direction |
