@@ -1,18 +1,18 @@
 # generated_by: reproduce.sh stage=pipeline-1bl8
-# utc: 2026-08-28T21:09:33Z
-# git: 7e524d3+dirty
+# utc: 2026-09-03T05:09:19Z
+# git: 07790cc+dirty
 # host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
 # nproc: 16  OMP_NUM_THREADS: unset
 # repeats: 3
-# loadavg_at_start: 0.34 0.29 0.26  allow_noisy: 0
-# top_cpu_at_start: zoom(7.7%) Xorg(2.5%) anydesk(1.6%) 
+# loadavg_at_start: 0.42 0.98 2.29  allow_noisy: 0
+# top_cpu_at_start: gnome-system-mo(3.0%) Xorg(2.6%) anydesk(1.8%) 
 # bin: hole sha256:2b8d26534447e7a4 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/hole
 # bin: sph_process sha256:eea2d679f7292d53 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sph_process
 # bin: sos_triangle sha256:bb27e926a02ee8a3 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sos_triangle
-# bin: hole sha256:871b7d1c93c54ab4 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
+# bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
 # bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sph_process
-# bin: sos_triangle sha256:7db3962d8c962dc3 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
-# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_3297221/simple.rad
+# bin: sos_triangle sha256:bcb7393b639fb107 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_3043290/simple.rad
 # 1BL8 (KcsA), single structure, PROTEIN ATOMS ONLY - the same subset the
 #   plugin's default 'protein' selection feeds HOLE. The 3 K+ ions are
 #   excluded because no shipped .rad file defines a vdW radius for K, and
@@ -32,9 +32,9 @@
 #   print any ratio unless the .sph files are byte-identical across builds AND
 #   the triangle counts match, so a 'speedup' cannot be a build doing less work.
 method,build,hole_s,sph_process_s,sos_triangle_s,total_s,triangles
-circular,stock,0.0498,0.0138,0.7174,0.7810,8746
-circular,accel_1t,0.0511,0.0132,0.0840,0.1483,8746
-circular,accel_nt,0.0523,0.0120,0.0847,0.1490,8746
-connolly,stock,0.2801,0.2681,2.0466,2.5948,17809
-connolly,accel_1t,0.2894,0.2680,0.1278,0.6852,17809
-connolly,accel_nt,0.1321,0.0770,0.1307,0.3398,17809
+circular,stock,0.0502,0.0134,0.7246,0.7882,8746
+circular,accel_1t,0.0511,0.0138,0.0842,0.1491,8746
+circular,accel_nt,0.0502,0.0124,0.0858,0.1484,8746
+connolly,stock,0.2838,0.2697,2.0423,2.5958,17809
+connolly,accel_1t,0.2921,0.2783,0.1328,0.7032,17809
+connolly,accel_nt,0.1390,0.0849,0.1366,0.3605,17809
