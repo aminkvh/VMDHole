@@ -26303,6 +26303,15 @@ proc ::VMDHole::dots_fast_available {} {
     return [sos_triangle_has_feature points]
 }
 
+proc ::VMDHole::ionflow_fast_available {} {
+    # The Ion Flow water pass in C (--ionflow-project), same on/off toggle as
+    # the other accelerated outputs. The Tcl loop it replaces stays as the
+    # fallback and gives bit-identical results.
+    variable state
+    if {$state(hydro_fast) eq "off"} { return 0 }
+    return [sos_triangle_has_feature ionflowproject]
+}
+
 proc ::VMDHole::batch_fast_available {} {
     # Batch mode: sos_triangle reads a list of (sos_file, out_file) pairs and
     # processes them sequentially, eliminating per-frame shell-spawn overhead.
@@ -39873,6 +39882,28 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     array unset _w_z; array unset _w_r; array unset _w_f; array unset _w_d3
     array unset _sph_index
     set _wq_last [clock milliseconds]
+    # Water in C when the binary offers it: the frame loop then only WRITES
+    # each frame's candidates (COM, box, axis, sphere set id, "idx x y z") to
+    # one job file, and a single --ionflow-project run after the loop returns
+    # "idx z R d3" per kept point - the identical arithmetic, all frames in
+    # parallel. _ion_flow_no_fast forces the Tcl loop (set by the retry below
+    # when the binary run fails, and usable from the console for a parity check).
+    variable _ion_flow_no_fast
+    set _wfast 0
+    set _wfh ""
+    array unset _wset_written
+    set _wnofast [expr {[info exists _ion_flow_no_fast] && $_ion_flow_no_fast}]
+    if {$_wsel_txt ne "" && !$_wnofast} {
+        if {[ionflow_fast_available]} {
+            set _wjob [file join [_scratch_base] "vmdhole_ionflow_[pid]"]
+            if {![catch {file mkdir $_wjob}] && ![catch {open [file join $_wjob in.txt] w} _wfh]} {
+                set _wfast 1
+                puts $_wfh "scan_r $scan_r"
+            } else {
+                set _wfh ""
+            }
+        }
+    }
     set ion_atom_idx [$isel get index]
     # atom index -> species label (labels each per-ion trace by species)
     set idx_species [dict create]
@@ -40073,7 +40104,19 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             # changes every frame.
             set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
                 $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
-            if {![catch {atomselect $molid $_wq frame $f} _ws]} {
+            if {$_wfast} {
+                if {![catch {atomselect $molid $_wq frame $f} _ws]} {
+                    if {![info exists _wset_written($_nsf)]} {
+                        set _wset_written($_nsf) 1
+                        puts $_wfh "S $_nsf [llength $_cur_spheres]"
+                        foreach _s $_cur_spheres { puts $_wfh $_s }
+                    }
+                    set _wrows [$_ws get {index x y z}]
+                    puts $_wfh "F $f $_nsf $comx $comy $comz $Lx $Ly $Lz $_iux $_iuy $_iuz [llength $_wrows]"
+                    if {[llength $_wrows]} { puts $_wfh [join $_wrows \n] }
+                    catch {$_ws delete}
+                }
+            } elseif {![catch {atomselect $molid $_wq frame $f} _ws]} {
                 foreach _wi [$_ws get index] p [$_ws get {x y z}] {
                     lassign $p px py pz
                     set rx [expr {$px-$comx}]; set ry [expr {$py-$comy}]; set rz [expr {$pz-$comz}]
@@ -40104,7 +40147,43 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     }
     catch {$isel delete}; if {$psel ne ""} { catch {$psel delete} }
     if {$_dbg_ionflow} {
-        catch {vmdcon -info "VMDHole ionflow DEBUG: per-frame ion/d3 loop = [expr {[clock milliseconds]-$_DBG_t1}]ms ($nf raw frames)"}
+        catch {vmdcon -info "VMDHole ionflow DEBUG: per-frame ion/d3 loop = [expr {[clock milliseconds]-$_DBG_t1}]ms ($nf raw frames, water in [expr {$_wfast ? "C" : "Tcl"}])"}
+    }
+    if {$_wfast} {
+        catch {close $_wfh}
+        set _win  [file join $_wjob in.txt]
+        set _wout [file join $_wjob out.txt]
+        set state(status) "Measuring water against the pore surface (C, all frames)…"
+        catch {update idletasks}
+        set _DBG_tw [clock milliseconds]
+        set _wok [expr {![catch {exec sh -c "[shell_quote $state(sos_triangle_exec)] --ionflow-project [shell_quote $_win] [shell_quote $_wout] 2>/dev/null"}] && [file exists $_wout]}]
+        if {$_wok} {
+            set _wfh_in [open $_wout r]
+            set _wf ""
+            while {[gets $_wfh_in _line] >= 0} {
+                if {[string index $_line 0] eq "F"} { set _wf [lindex $_line 1]; continue }
+                lassign $_line _wi _z _R _d3
+                lappend _w_z($_wi) $_z
+                lappend _w_r($_wi) $_R
+                lappend _w_f($_wi) $_wf
+                lappend _w_d3($_wi) $_d3
+            }
+            close $_wfh_in
+        }
+        catch {file delete -force $_wjob}
+        if {$_dbg_ionflow} {
+            catch {vmdcon -info "VMDHole ionflow DEBUG: --ionflow-project run+parse = [expr {[clock milliseconds]-$_DBG_tw}]ms ok=$_wok"}
+        }
+        if {!$_wok} {
+            # The binary run failed (a stale path, a killed process): do the
+            # same scan in Tcl rather than return a scan with no water.
+            vmdcon -warn "VMDHole: sos_triangle --ionflow-project failed; scanning water in Tcl instead."
+            set _ion_flow_no_fast 1
+            set _r ""
+            catch {set _r [_ion_flow_scan $molid $frame_ref 1]}
+            unset _ion_flow_no_fast
+            return $_r
+        }
     }
     set traces {}
     for {set k 0} {$k < $nions} {incr k} {
@@ -40120,6 +40199,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
                 z $_w_z($_wi) r $_w_r($_wi) frame $_w_f($_wi) d3 $_w_d3($_wi)]
         }
     }
+    if {$_dbg_ionflow} { set _DBG_t2 [clock milliseconds] }
     set protein_wrapped [expr {$nf>1 ? (double($npjump)/($nf-1) > 0.10) : 0}]
     # bulk_lo/bulk_hi: the pore's own axial extent, UNpadded - the same "bulk
     # boundary" the Permeation dialog auto-fills from _permeation_auto_bounds.
@@ -40173,6 +40253,9 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
         }
         set traces $_tr2
     }
+    if {$_dbg_ionflow} {
+        catch {vmdcon -info "VMDHole ionflow DEBUG: trace assembly + coord offset = [expr {[clock milliseconds]-$_DBG_t2}]ms ([llength $traces] traces)"}
+    }
     return [dict create axis [list $ux $uy $uz] origin [list $mx $my $mz] \
         zmin $zmin zmax $zmax zc $zc \
         bulk_lo $_blo bulk_hi $_bhi coord_offset $_coff \
@@ -40220,7 +40303,13 @@ proc ::VMDHole::_ion_flow_water_query {wsel cx cy cz Lx Ly Lz ux uy uz rmax zlo 
     lassign $ds dx dy dz
     set zz "($dx*[_selnum $ux] + $dy*[_selnum $uy] + $dz*[_selnum $uz])"
     set r2 [_selnum [expr {$rmax*$rmax}]]
-    return "($wsel) and ($dx*$dx + $dy*$dy + $dz*$dz - $zz*$zz < $r2) and ($zz > [_selnum $zlo]) and ($zz < [_selnum $zhi])"
+    # sqr() and one abs() window instead of v*v and two comparisons: VMD
+    # evaluates every textual occurrence of a subexpression over every atom,
+    # so fewer occurrences of dx/dy/dz/zz is fewer passes - 21 -> 14 ms per
+    # frame on 197k atoms, same atoms selected.
+    set zmid  [_selnum [expr {($zlo+$zhi)/2.0}]]
+    set zhalf [_selnum [expr {($zhi-$zlo)/2.0}]]
+    return "($wsel) and (sqr($dx) + sqr($dy) + sqr($dz) - sqr($zz) < $r2) and (abs($zz - $zmid) < $zhalf)"
 }
 
 proc ::VMDHole::_ion_flow_sphere_index {spheres refx refy refz ux uy uz} {
@@ -40855,7 +40944,11 @@ proc ::VMDHole::_run_ion_flow {} {
         return
     }
     set ion_flow_raw $raw
+    set _DBG_tr [clock milliseconds]
     _ion_flow_refilter
+    if {[info exists ::VMDHole::_scrub_debug] && $::VMDHole::_scrub_debug} {
+        catch {vmdcon -info "VMDHole ionflow DEBUG: refilter (aggregate + draw) = [expr {[clock milliseconds]-$_DBG_tr}]ms"}
+    }
     set d $ion_flow_cache
     set _w [expr {[dict get $raw protein_wrapped] ? \
         "  ⚠ the protein looks wrapped across the box — image it first (Help ▸ About) or Z may jump." : ""}]
