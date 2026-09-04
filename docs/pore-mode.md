@@ -189,12 +189,24 @@ geometry. Cite CHAP from the
 <p align="center"><img src="images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
 Requires ions or water and at least two trajectory frames. **Occupancy %** maps
-where ions are observed in the pore coordinate system. **Passage** draws the
-path of every molecule that entered the pore against frame number; a molecule
-that crossed the constriction is coloured by direction (red up, blue down,
-purple for crossed-and-returned) and drawn on top of the faint non-crossing
-traces, and the title counts crossings in each direction. **Count vs frame**
-plots how many molecules are inside the pore at each frame with its mean.
+where ions are observed in the pore coordinate system. Its header also reports
+the net flux through the lumen: crossings of the constriction that happen
+within the narrow lumen radius, which is a stricter test than the Passage view
+below uses.
+
+**Passage** draws the path of every molecule that entered the pore against
+frame number. A stretch of line that crosses the constriction plane is drawn in
+its direction's colour (red up, blue down, purple for crossed-and-returned) and
+drawn last, on top of everything else; the rest of that molecule's visits stay
+in the quiet base colour. A molecule counts as crossing when consecutive drawn
+samples fall on opposite sides of the constriction, so what is coloured is
+exactly what you can see cross the line. With more than a few hundred lines on
+the plot the non-crossing ones are faded so the crossings stay legible.
+
+**Count vs frame** plots how many molecules are inside the pore at each frame.
+With every ion type selected it draws one curve per type rather than a single
+pooled line.
+
 None of these views is a full permeation count.
 
 The **Species** menu lists every ion type detected in the loaded system plus
@@ -203,8 +215,8 @@ Picking **Water** counts one oxygen per molecule from the Hydration tab's water
 selection (default `water and oxygen`, so any water model VMD recognises works)
 against the same per-frame pore geometry the ions use. On the Passage view a
 **Show** picker appears for water: **Crossings** (default) draws only the
-molecules that crossed the constriction, **Entered** draws every molecule that
-entered the pore. Water is scanned the
+stretches of line that cross the constriction, **All entered** draws every molecule that
+entered the pore, with the crossings still coloured on top. Water is scanned the
 first time it is picked; with the fast `sos_triangle` this takes a few seconds
 (about 2.5 s for 100 frames of a 200k-atom system), and roughly six times that
 with the pure-Tcl fallback. After that, switching species is instant.
