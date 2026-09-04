@@ -206,7 +206,7 @@ against the same per-frame pore geometry the ions use. On the Passage view a
 molecules that crossed the constriction, **Entered** draws every molecule that
 entered the pore. Water is scanned the
 first time it is picked; with the fast `sos_triangle` this takes a few seconds
-(about 6 s for 100 frames of a 200k-atom system), and about three times that
+(about 2.5 s for 100 frames of a 200k-atom system), and roughly six times that
 with the pure-Tcl fallback. After that, switching species is instant.
 
 Select **Permeation** to count complete bulk-to-bulk crossings along the

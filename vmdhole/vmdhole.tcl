@@ -39549,6 +39549,8 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     # radii); everything below - the R-Z frame, the PBC min-imaging, the ion scan -
     # is mode-independent. _tunnel_flow_gather refuses a curved tunnel outright.
     set _flow_tunnel [expr {[analysis_mode] eq "tunnel"}]
+    set _dbg_ionflow [expr {[info exists ::VMDHole::_scrub_debug] && $::VMDHole::_scrub_debug}]
+    set _DBG_t00 [clock milliseconds]
     set g [expr {$_flow_tunnel ? [_tunnel_flow_gather $molid $frame_ref] \
                                : [_asym_gather $molid $frame_ref]}]
     if {$g eq ""} { return "" }
@@ -39915,19 +39917,38 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     # parallel. _ion_flow_no_fast forces the Tcl loop (set by the retry below
     # when the binary run fails, and usable from the console for a parity check).
     variable _ion_flow_no_fast
-    set _wfast 0
-    set _wfh ""
+    set _wfast 0        ;# water measured by the binary rather than this loop
+    set _wcoords 0      ;# ...and fed to it as a raw coordinate stream
+    set _wfh ""; set _wcfh ""; set _wjob ""; set _wsel_obj ""
+    set _wnw 0; set _wbytes 0; set _wfail 0
     array unset _wset_written
     set _wnofast [expr {[info exists _ion_flow_no_fast] && $_ion_flow_no_fast}]
-    if {$_wsel_txt ne "" && !$_wnofast} {
-        if {[ionflow_fast_available]} {
-            set _wjob [file join [_scratch_base] "vmdhole_ionflow_[pid]"]
-            if {![catch {file mkdir $_wjob}] && ![catch {open [file join $_wjob in.txt] w} _wfh]} {
-                set _wfast 1
-                puts $_wfh "scan_r $scan_r"
+    if {$_wsel_txt ne "" && !$_wnofast && [ionflow_fast_available]} {
+        # Two ways to hand the water to the binary. The cheap one dumps EVERY
+        # water coordinate as a binary block per frame and lets C do the
+        # cylinder/window filter: writing one atomselect's coordinates costs
+        # 2.2 ms a frame against 14 ms for VMD to parse and evaluate a
+        # per-frame selection expression carrying that frame's centre of mass,
+        # and that parse was the single biggest cost in the whole scan. It
+        # needs a selection that picks the SAME atoms in every frame, which is
+        # what _ion_flow_water_static checks - a coordinate-dependent water
+        # selection (a user's "water within 8 of protein") keeps the older
+        # route, where each frame is selected and filtered on its own.
+        if {[sos_triangle_has_feature ionflowcoords] && [_ion_flow_water_static $molid $_wsel_txt [molinfo $molid get numframes]]} {
+            if {![catch {atomselect $molid $_wsel_txt} _wsel_obj]} {
+                set _wnw [$_wsel_obj num]
+                if {$_wnw > 0} { set _wcoords 1 } else { catch {$_wsel_obj delete}; set _wsel_obj "" }
             } else {
-                set _wfh ""
+                set _wsel_obj ""
             }
+        }
+        set _wjb [_ion_flow_project_open $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}] \
+                      [expr {$_wcoords ? [$_wsel_obj get index] : {}}]]
+        if {[llength $_wjb]} {
+            lassign $_wjb _wjob _wfh _wcfh
+            set _wfast 1
+        } else {
+            catch {$_wsel_obj delete}; set _wsel_obj ""; set _wcoords 0
         }
     }
     set ion_atom_idx [$isel get index]
@@ -39946,8 +39967,10 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     # surface instead of an axis-symmetric R-vs-r(z) cutoff (~150ms/100 frames
     # measured to build).
     array unset _frame_spheres
-    set _dbg_ionflow [expr {[info exists ::VMDHole::_scrub_debug] && $::VMDHole::_scrub_debug}]
-    if {$_dbg_ionflow} { set _DBG_t0 [clock milliseconds] }
+    if {$_dbg_ionflow} {
+        set _DBG_t0 [clock milliseconds]
+        catch {vmdcon -info "VMDHole ionflow DEBUG: head (axis + wall profile + species/water setup) = [expr {$_DBG_t0-$_DBG_t00}]ms"}
+    }
     if {$_flow_tunnel} {
         foreach _frm $tunnel_result_frames {
             set _tid [_tunnel_rank_in_frame $_frm]
@@ -40128,15 +40151,41 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             # few hundred the Tcl loop then measures. Per-atom-index arrays
             # rather than the ions' positional lists because the candidate set
             # changes every frame.
-            set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
-                $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
+            set _wq ""
+            if {!$_wcoords} {
+                set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
+                    $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
+            }
             if {$_wfast} {
+                if {![info exists _wset_written($_nsf)]} {
+                    set _wset_written($_nsf) 1
+                    puts $_wfh "S $_nsf [llength $_cur_spheres]"
+                    foreach _s $_cur_spheres { puts $_wfh $_s }
+                }
+            }
+            if {$_wcoords} {
+                # Whole-selection coordinate block; "-1" tells the binary this
+                # frame's points are the next block of the stream.
+                puts $_wfh "F $f $_nsf $comx $comy $comz $Lx $Ly $Lz $_iux $_iuy $_iuz -1"
+                $_wsel_obj frame $f
+                puts -nonewline $_wcfh [binary format r* [$_wsel_obj get x]]
+                puts -nonewline $_wcfh [binary format r* [$_wsel_obj get y]]
+                puts -nonewline $_wcfh [binary format r* [$_wsel_obj get z]]
+                incr _wbytes [expr {$_wnw*12}]
+                # Split a long trajectory into several jobs rather than let one
+                # stream grow without bound: this caps both the scratch file and
+                # the binary's own working set, whatever the frame count.
+                if {$_wbytes >= [_ion_flow_coords_budget]} {
+                    if {![_ion_flow_project_flush $_wjob $_wfh $_wcfh]} { set _wfail 1; break }
+                    set _wjb [_ion_flow_project_open $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}] \
+                                  [$_wsel_obj get index]]
+                    if {![llength $_wjb]} { set _wfail 1; break }
+                    lassign $_wjb _wjob _wfh _wcfh
+                    set _wbytes 0
+                    array unset _wset_written
+                }
+            } elseif {$_wfast} {
                 if {![catch {atomselect $molid $_wq frame $f} _ws]} {
-                    if {![info exists _wset_written($_nsf)]} {
-                        set _wset_written($_nsf) 1
-                        puts $_wfh "S $_nsf [llength $_cur_spheres]"
-                        foreach _s $_cur_spheres { puts $_wfh $_s }
-                    }
                     set _wrows [$_ws get {index x y z}]
                     puts $_wfh "F $f $_nsf $comx $comy $comz $Lx $Ly $Lz $_iux $_iuy $_iuz [llength $_wrows]"
                     if {[llength $_wrows]} { puts $_wfh [join $_wrows \n] }
@@ -40176,29 +40225,14 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
         catch {vmdcon -info "VMDHole ionflow DEBUG: per-frame ion/d3 loop = [expr {[clock milliseconds]-$_DBG_t1}]ms ($nf raw frames, water in [expr {$_wfast ? "C" : "Tcl"}])"}
     }
     if {$_wfast} {
-        catch {close $_wfh}
-        set _win  [file join $_wjob in.txt]
-        set _wout [file join $_wjob out.txt]
         set state(status) "Measuring water against the pore surface (C, all frames)…"
         catch {update idletasks}
         set _DBG_tw [clock milliseconds]
-        set _wok [expr {![catch {exec sh -c "[shell_quote $state(sos_triangle_exec)] --ionflow-project [shell_quote $_win] [shell_quote $_wout] 2>/dev/null"}] && [file exists $_wout]}]
-        if {$_wok} {
-            set _wfh_in [open $_wout r]
-            set _wf ""
-            while {[gets $_wfh_in _line] >= 0} {
-                if {[string index $_line 0] eq "F"} { set _wf [lindex $_line 1]; continue }
-                lassign $_line _wi _z _R _d3
-                lappend _w_z($_wi) $_z
-                lappend _w_r($_wi) $_R
-                lappend _w_f($_wi) $_wf
-                lappend _w_d3($_wi) $_d3
-            }
-            close $_wfh_in
-        }
-        catch {file delete -force $_wjob}
+        set _wok [expr {!$_wfail && [_ion_flow_project_flush $_wjob $_wfh $_wcfh]}]
+        if {$_wfail} { catch {close $_wfh}; catch {close $_wcfh}; catch {file delete -force $_wjob} }
+        catch {$_wsel_obj delete}
         if {$_dbg_ionflow} {
-            catch {vmdcon -info "VMDHole ionflow DEBUG: --ionflow-project run+parse = [expr {[clock milliseconds]-$_DBG_tw}]ms ok=$_wok"}
+            catch {vmdcon -info "VMDHole ionflow DEBUG: --ionflow-project run+parse = [expr {[clock milliseconds]-$_DBG_tw}]ms ok=$_wok stream=$_wcoords"}
         }
         if {!$_wok} {
             # The binary run failed (a stale path, a killed process): do the
@@ -40336,6 +40370,117 @@ proc ::VMDHole::_ion_flow_water_query {wsel cx cy cz Lx Ly Lz ux uy uz rmax zlo 
     set zmid  [_selnum [expr {($zlo+$zhi)/2.0}]]
     set zhalf [_selnum [expr {($zhi-$zlo)/2.0}]]
     return "($wsel) and (sqr($dx) + sqr($dy) + sqr($dz) - sqr($zz) < $r2) and (abs($zz - $zmid) < $zhalf)"
+}
+
+proc ::VMDHole::_ion_flow_coords_budget {} {
+    # How many bytes of water coordinates one --ionflow-project job may carry
+    # before the scan starts a second job. 512 MB is ~1,100 frames of a 40,000
+    # water system; the split keeps both the scratch file and the binary's
+    # working set flat however long the trajectory is.
+    return 536870912
+}
+
+proc ::VMDHole::_ion_flow_water_static {molid wsel nf} {
+    # 1 when `wsel` selects the SAME atoms in every frame, which is what lets
+    # the scan hand the binary one fixed set of columns. Decided by evaluating
+    # the selection at the first, middle and last frame and comparing the atom
+    # indices - a text test would have to guess which of VMD's keywords are
+    # per-frame (x/y/z and "within" are, but so are beta, occupancy and user),
+    # and guessing wrong either way is a wrong answer rather than a slow one.
+    if {$nf < 2} { return 1 }
+    set ref ""
+    foreach _f [lsort -unique -integer [list 0 [expr {$nf/2}] [expr {$nf-1}]]] {
+        set _s ""
+        if {[catch {atomselect $molid $wsel frame $_f} _s]} { return 0 }
+        set _ix ""
+        catch {set _ix [$_s get index]}
+        catch {$_s delete}
+        if {$_ix eq ""} { return 0 }
+        if {$ref eq ""} { set ref $_ix } elseif {$_ix ne $ref} { return 0 }
+    }
+    return 1
+}
+
+proc ::VMDHole::_ion_flow_project_open {scan_r zlo zhi widx} {
+    # Start one --ionflow-project job: a scratch directory holding the job file
+    # and, when the caller streams coordinates, the binary blob they go into.
+    # `widx` is the atom index of each column of that stream (empty = the older
+    # form, where every frame writes its own already-filtered points).
+    # Returns {dir jobchan coordchan} - coordchan is "" without a stream - or
+    # {} if the directory or either file could not be opened.
+    set dir [file join [_scratch_base] "vmdhole_ionflow_[pid]_[clock milliseconds]"]
+    if {[catch {file mkdir $dir}]} { return {} }
+    if {[catch {open [file join $dir in.txt] w} jc]} { catch {file delete -force $dir}; return {} }
+    puts $jc "scan_r $scan_r"
+    set cc ""
+    if {[llength $widx]} {
+        set cpath [file join $dir coords.bin]
+        if {[catch {open $cpath w} cc]} {
+            catch {close $jc}; catch {file delete -force $dir}; return {}
+        }
+        fconfigure $cc -translation binary
+        # The axial window is applied by the binary in this form; in the older
+        # form it is already baked into each frame's selection.
+        puts $jc "zwin $zlo $zhi"
+        puts $jc "coords [llength $widx]"
+        puts $jc $cpath
+        puts $jc "group 1"
+        puts $jc "index [llength $widx]"
+        puts $jc [join $widx \n]
+    }
+    return [list $dir $jc $cc]
+}
+
+proc ::VMDHole::_ion_flow_project_flush {dir jc cc} {
+    # Close one job, run --ionflow-project on it, and merge its output into the
+    # caller's per-atom trace arrays. Handles both output shapes: one record per
+    # atom carrying its whole time series (the streamed form) and one block per
+    # frame (the older form). The scratch directory is removed either way.
+    # Returns 1 on success, 0 if the binary failed or wrote nothing.
+    variable state
+    upvar 1 _w_f _w_f _w_z _w_z _w_r _w_r _w_d3 _w_d3
+    catch {close $jc}
+    if {$cc ne ""} { catch {close $cc} }
+    set in  [file join $dir in.txt]
+    set out [file join $dir out.txt]
+    set ok 0
+    if {![catch {exec sh -c "[shell_quote $state(sos_triangle_exec)] --ionflow-project\
+            [shell_quote $in] [shell_quote $out] 2>/dev/null"}] && [file exists $out]} {
+        set ok 1
+        set fh [open $out r]
+        set _wf ""
+        while {[gets $fh line] >= 0} {
+            set _k [string index $line 0]
+            if {$_k eq "T"} {
+                set _wi [lindex $line 1]; set _n [lindex $line 2]
+                set _b 3
+                set _lf [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
+                set _lz [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
+                set _lr [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
+                set _ld [lrange $line $_b [expr {$_b+$_n-1}]]
+                if {[info exists _w_f($_wi)]} {
+                    lappend _w_f($_wi)  {*}$_lf
+                    lappend _w_z($_wi)  {*}$_lz
+                    lappend _w_r($_wi)  {*}$_lr
+                    lappend _w_d3($_wi) {*}$_ld
+                } else {
+                    set _w_f($_wi) $_lf; set _w_z($_wi) $_lz
+                    set _w_r($_wi) $_lr; set _w_d3($_wi) $_ld
+                }
+            } elseif {$_k eq "F"} {
+                set _wf [lindex $line 1]
+            } else {
+                lassign $line _wi _z _R _d3
+                lappend _w_z($_wi) $_z
+                lappend _w_r($_wi) $_R
+                lappend _w_f($_wi) $_wf
+                lappend _w_d3($_wi) $_d3
+            }
+        }
+        close $fh
+    }
+    catch {file delete -force $dir}
+    return $ok
 }
 
 proc ::VMDHole::_ion_flow_sphere_index {spheres refx refy refz ux uy uz} {
@@ -40680,8 +40825,9 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
     set occ_cnt {}
     for {set i 0} {$i < $N} {incr i} { lappend occ_cnt 0 }
     # Per-frame count of DISTINCT molecules inside the pore (occupancy-shell
-    # membership, same gate as the map) - the Count vs frame view.
-    array set _cnt_seen {}
+    # membership, same gate as the map) - the Count vs frame view. No dedup
+    # needed: the scan samples each molecule at most once per frame, so a
+    # trace can contribute at most one count to any frame.
     array set _cnt {}
     set n_cross_up 0; set n_cross_down 0
     set species_water [expr {$species eq "Water"}]
@@ -40694,19 +40840,21 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
         } elseif {$_trsp ne $species} { continue }
         set zs [dict get $tr z]; set rs [dict get $tr r]; set fs [dict get $tr frame]
         set d3s [expr {[dict exists $tr d3] ? [dict get $tr d3] : {}}]
-        set n [llength $fs]
         set d_z {}; set d_r {}; set d_f {}   ;# in-membership samples for the passage plot / CSV
         set _tr_up 0; set _tr_down 0          ;# this molecule's own constriction crossings
-        set _tidx [dict get $tr idx]
-        for {set i 0} {$i < $n} {incr i} {
-            set z [lindex $zs $i]; set R [lindex $rs $i]; set f [lindex $fs $i]
+        # Walked with a parallel foreach and carried-over previous sample rather
+        # than an index: this is the hot loop of the whole tab (one iteration per
+        # molecule per frame it was seen), and indexed access re-walked four
+        # lists per sample. A short d3 list pads with "" here exactly as the
+        # length test it replaces did.
+        set _pf ""; set _pz 0.0; set _pR 0.0
+        foreach z $zs R $rs f $fs _d3v $d3s {
             # Membership against the real per-frame union-of-spheres surface (`d3`,
             # precomputed in _ion_flow_scan - see _ion_flow_min_surf_dist), not R vs.
             # an axis-symmetric pooled r(z): a real pore cross-section is not a
             # circle, so this sees the true local shape instead of assuming one.
             # d3<0 is "inside"; d3<shell is "within the near-wall margin" - occupancy
             # and passage share the same meaning, just gated by their own shells.
-            set _d3v [expr {[llength $d3s] > $i ? [lindex $d3s $i] : ""}]
             set in_mem [expr {$_d3v ne "" && $_d3v < $_occ_shell && $z >= $zmin && $z <= $zmax}]
             set in_pass [expr {$in_mem && $_d3v < $_pass_shell}]
             set bi -1
@@ -40716,10 +40864,7 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
                 if {$row >= $nz} { set row [expr {$nz-1}] }; if {$row < 0} { set row 0 }
                 set bi [expr {$row*$nr+$col}]
                 lset dens $bi [expr {[lindex $dens $bi]+1.0}]
-                if {![info exists _cnt_seen($f,$_tidx)]} {
-                    set _cnt_seen($f,$_tidx) 1
-                    incr _cnt($f)
-                }
+                incr _cnt($f)
                 if {![info exists _occ_seen($bi,$f)]} {
                     set _occ_seen($bi,$f) 1
                     lset occ_cnt $bi [expr {[lindex $occ_cnt $bi]+1}]
@@ -40729,8 +40874,8 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
             # flow + flux from consecutive ADJACENT-frame samples of THIS ion only. Skip a
             # |dz|>Lz/2 step: it is a periodic min-image flip (the ion crossed +-Lz/2), so
             # counting it would be a spurious flow vector AND a phantom constriction crossing.
-            if {$i > 0 && [expr {$f-[lindex $fs [expr {$i-1}]]}] == 1} {
-                set zp [lindex $zs [expr {$i-1}]]; set Rp [lindex $rs [expr {$i-1}]]
+            if {$_pf ne "" && $f-$_pf == 1} {
+                set zp $_pz; set Rp $_pR
                 if {abs($z-$zp) < $zflip} {
                     if {$in_mem} {
                         lset vzs $bi [expr {[lindex $vzs $bi]+($z-$zp)}]
@@ -40743,6 +40888,7 @@ proc ::VMDHole::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} {
                     }
                 }
             }
+            set _pf $f; set _pz $z; set _pR $R
         }
         if {[llength $d_f] > 0} {
             lappend out_traces [dict create idx [dict get $tr idx] species [dict get $tr species] \
