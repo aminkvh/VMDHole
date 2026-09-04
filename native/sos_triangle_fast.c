@@ -2633,51 +2633,109 @@ static int tunnel_cluster_c(const char *infile, const char *outfile,
    emits the per-pair HAUSDORFF as its own output column and applies no maxdev
    guard, so it cannot just call the other. */
 /* --ionflow-project IN OUT
-   The Ion Flow tab's per-frame water pass, moved out of Tcl. For every
-   candidate point (a water oxygen VMD already prefiltered into the scan
-   cylinder) it does exactly what the plugin's Tcl loop does for an ion:
-   offset from the frame's protein COM, min-image that offset in each box
+   The Ion Flow tab's per-frame water/ion pass, moved out of Tcl. For every
+   candidate point it does what the plugin's Tcl loop does for an ion: offset
+   from the frame's protein centre of mass, min-image that offset per box
    dimension, project onto the frame's axis (z), take the perpendicular
-   distance (R), and measure the signed distance to the nearest sphere
-   SURFACE of the frame's union-of-spheres pore (d3, negative = inside).
-   Points with R >= scan_r are dropped, like the Tcl loop drops them.
+   distance (R), and measure the signed distance to the nearest sphere SURFACE
+   of the frame's union-of-spheres pore (d3, negative = inside). Points at
+   R >= scan_r are dropped, as are points outside the axial window when one is
+   given.
 
-   IN:  "scan_r <r>"
-        "S <id> <n>" then n lines "cx cy cz r"          (a sphere set; may
-                                                          appear anywhere
-                                                          before its use)
-        "F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>" then n lines
-        "idx x y z"
-   OUT: "F <frame> <nkept>" then nkept lines "idx z R d3", frames in input
-        order, points in input order.
+   IN:  scan_r <r>
+        zwin <zlo> <zhi>                   optional axial window (see below)
+        coords <nw>  then one line holding the stream's path
+        index <nw>  then nw lines "<atom index>"      (required with coords)
+        group 1                            optional; group output by atom index
+        S <id> <n>  then n lines "cx cy cz r"         (a sphere set)
+        F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>
+             n >= 0 : n inline lines "idx x y z"
+             n <  0 : this frame's nw points come from the next block of the
+                      coordinate stream, with atom indices from the index list
+   OUT: per frame, in input order:
+            F <frame> <nkept>   then nkept lines "idx z R d3"
+        or, with "group 1", one line per atom index that was ever kept:
+            T <idx> <n> <n frames> <n z> <n R> <n d3>
 
-   Arithmetic is written in the same order as the Tcl expressions it
-   replaces so the two paths agree bit for bit on x86-64 (no FMA contraction
-   at the baseline target); d3 is only ever compared against a shell
-   threshold downstream, so a last-ulp difference on a contracting target
-   would not change a result anyway. Frames are independent: OpenMP over
+   The coordinate stream is little-endian 32-bit floats, per frame nw x values,
+   then nw y, then nw z - what Tcl's [binary format r*] writes for a whole
+   atomselect in one call. It exists because the alternative, having VMD
+   prefilter each frame with an atomselect expression carrying that frame's
+   centre of mass, costs 14 ms per frame in selection PARSING alone against
+   2.2 ms to dump every water coordinate; the filter is far cheaper here.
+   The caller bounds the stream's size by splitting a long trajectory into
+   several jobs, so reading it whole is bounded by the caller's own budget.
+
+   Arithmetic is written in the same order as the Tcl expressions it replaces
+   so the two paths agree bit for bit on x86-64; d3 is only ever compared
+   against a shell threshold downstream. Frames are independent: OpenMP over
    frames, output written afterwards in order. */
 struct ifp_set { int n; double *x, *y, *z, *r; };
-struct ifp_frame { int frame, set, n, nkept; double com[3], L[3], u[3];
-                   int *idx; double *px, *py, *pz; double *oz, *oR, *od3; };
+struct ifp_frame {
+    int frame, set, n;              /* n < 0: points come from the stream */
+    long slot;                      /* stream block index when n < 0 */
+    double com[3], L[3], u[3];
+    int *idx; double *px, *py, *pz; /* inline points only */
+    int nkept, *kidx, *kslot;       /* kept: atom index and (stream mode) its slot */
+    double *kz, *kr, *kd3;
+};
+
+/* Read a little-endian 32-bit float without assuming the host's byte order or
+   that a float may be aliased from arbitrary bytes. */
+static double ifp_le_float(const unsigned char *b)
+{
+    unsigned int u = (unsigned int)b[0] | ((unsigned int)b[1]<<8) |
+                     ((unsigned int)b[2]<<16) | ((unsigned int)b[3]<<24);
+    float f;
+    memcpy(&f, &u, 4);
+    return (double)f;
+}
 
 static int ionflow_project(const char *infile, const char *outfile)
 {
     FILE *f, *o;
     char line[512];
-    double scan_r = -1.0;
+    double scan_r = -1.0, zlo = 0.0, zhi = 0.0;
+    int have_zwin = 0, group = 0;
+    char coords_path[4096]; int have_coords = 0; long nw = 0;
+    int *widx = NULL; long nwidx = 0;
+    unsigned char *stream = NULL; long nstream = 0;
     struct ifp_set *sets = NULL; int nsets = 0, scap = 0;
     struct ifp_frame *fr = NULL; int nfr = 0, fcap = 0;
-    int i, k;
+    int i, k, rc = 1;
 
+    coords_path[0] = '\0';
     f = fopen(infile, "r");
     if (!f) { fprintf(stderr,"\n--ionflow-project: cannot open %s\n", infile); return 1; }
     while (fgets(line, sizeof line, f)) {
-        if (line[0] == 's') {
-            if (sscanf(line, "scan_r %lf", &scan_r) != 1) { fclose(f); fprintf(stderr,"\n--ionflow-project: bad scan_r line\n"); return 1; }
+        if (strncmp(line, "scan_r", 6) == 0) {
+            if (sscanf(line, "scan_r %lf", &scan_r) != 1) goto bad_line;
+        } else if (strncmp(line, "zwin", 4) == 0) {
+            if (sscanf(line, "zwin %lf %lf", &zlo, &zhi) != 2) goto bad_line;
+            have_zwin = 1;
+        } else if (strncmp(line, "group", 5) == 0) {
+            if (sscanf(line, "group %d", &group) != 1) goto bad_line;
+        } else if (strncmp(line, "coords", 6) == 0) {
+            size_t plen;
+            if (sscanf(line, "coords %ld", &nw) != 1 || nw <= 0) goto bad_line;
+            /* The path is a whole line of its own: a scratch directory may
+               contain spaces, which a %s field would truncate. */
+            if (!fgets(coords_path, sizeof coords_path, f)) goto bad_line;
+            plen = strlen(coords_path);
+            while (plen > 0 && (coords_path[plen-1] == '\n' || coords_path[plen-1] == '\r')) coords_path[--plen] = '\0';
+            if (plen == 0) goto bad_line;
+            have_coords = 1;
+        } else if (strncmp(line, "index", 5) == 0) {
+            if (sscanf(line, "index %ld", &nwidx) != 1 || nwidx < 0) goto bad_line;
+            widx = xa_malloc((nwidx ? nwidx : 1)*sizeof(int));
+            for (k = 0; k < nwidx; k++) {
+                if (!fgets(line, sizeof line, f) || sscanf(line, "%d", &widx[k]) != 1) {
+                    fprintf(stderr,"\n--ionflow-project: short index list\n"); goto done;
+                }
+            }
         } else if (line[0] == 'S') {
             int id = -1, n = -1;
-            if (sscanf(line+1, "%d %d", &id, &n) != 2 || id < 0 || n < 0) { fclose(f); fprintf(stderr,"\n--ionflow-project: bad S line\n"); return 1; }
+            if (sscanf(line+1, "%d %d", &id, &n) != 2 || id < 0 || n < 0) goto bad_line;
             if (id >= scap) {
                 int nc = scap ? scap : 64;
                 while (nc <= id) nc *= 2;
@@ -2691,7 +2749,7 @@ static int ionflow_project(const char *infile, const char *outfile)
             for (k = 0; k < n; k++) {
                 if (!fgets(line, sizeof line, f) ||
                     sscanf(line, "%lf %lf %lf %lf", &sets[id].x[k], &sets[id].y[k], &sets[id].z[k], &sets[id].r[k]) != 4) {
-                    fclose(f); fprintf(stderr,"\n--ionflow-project: short sphere set %d\n", id); return 1;
+                    fprintf(stderr,"\n--ionflow-project: short sphere set %d\n", id); goto done;
                 }
             }
             if (id >= nsets) nsets = id+1;
@@ -2699,29 +2757,50 @@ static int ionflow_project(const char *infile, const char *outfile)
             struct ifp_frame *p;
             if (nfr >= fcap) { fcap = fcap ? fcap*2 : 64; fr = xrealloc(fr, fcap*sizeof(*fr), "frames"); }
             p = &fr[nfr];
+            memset(p, 0, sizeof *p);
             if (sscanf(line+1, "%d %d %lf %lf %lf %lf %lf %lf %lf %lf %lf %d", &p->frame, &p->set,
                        &p->com[0], &p->com[1], &p->com[2], &p->L[0], &p->L[1], &p->L[2],
-                       &p->u[0], &p->u[1], &p->u[2], &p->n) != 12 || p->n < 0) {
-                fclose(f); fprintf(stderr,"\n--ionflow-project: bad F line\n"); return 1;
-            }
-            p->idx = xa_malloc((p->n?p->n:1)*sizeof(int));
-            p->px = xa_malloc((p->n?p->n:1)*sizeof(double)); p->py = xa_malloc((p->n?p->n:1)*sizeof(double)); p->pz = xa_malloc((p->n?p->n:1)*sizeof(double));
-            p->oz = xa_malloc((p->n?p->n:1)*sizeof(double)); p->oR = xa_malloc((p->n?p->n:1)*sizeof(double)); p->od3 = xa_malloc((p->n?p->n:1)*sizeof(double));
-            p->nkept = 0;
-            for (k = 0; k < p->n; k++) {
-                if (!fgets(line, sizeof line, f) ||
-                    sscanf(line, "%d %lf %lf %lf", &p->idx[k], &p->px[k], &p->py[k], &p->pz[k]) != 4) {
-                    fclose(f); fprintf(stderr,"\n--ionflow-project: short frame %d\n", p->frame); return 1;
+                       &p->u[0], &p->u[1], &p->u[2], &p->n) != 12) goto bad_line;
+            if (p->n < 0) {
+                p->slot = nstream++;
+            } else {
+                p->idx = xa_malloc((p->n?p->n:1)*sizeof(int));
+                p->px = xa_malloc((p->n?p->n:1)*sizeof(double));
+                p->py = xa_malloc((p->n?p->n:1)*sizeof(double));
+                p->pz = xa_malloc((p->n?p->n:1)*sizeof(double));
+                for (k = 0; k < p->n; k++) {
+                    if (!fgets(line, sizeof line, f) ||
+                        sscanf(line, "%d %lf %lf %lf", &p->idx[k], &p->px[k], &p->py[k], &p->pz[k]) != 4) {
+                        fprintf(stderr,"\n--ionflow-project: short frame %d\n", p->frame); goto done;
+                    }
                 }
             }
             nfr++;
         }
     }
-    fclose(f);
-    if (scan_r < 0.0) { fprintf(stderr,"\n--ionflow-project: no scan_r in %s\n", infile); return 1; }
+    fclose(f); f = NULL;
+
+    if (scan_r < 0.0) { fprintf(stderr,"\n--ionflow-project: no scan_r in %s\n", infile); goto done; }
+    if (nstream > 0) {
+        long need;
+        FILE *cf;
+        if (!have_coords) { fprintf(stderr,"\n--ionflow-project: streamed frames but no coords record\n"); goto done; }
+        if (nwidx != nw) { fprintf(stderr,"\n--ionflow-project: index list (%ld) does not match coords width (%ld)\n", nwidx, nw); goto done; }
+        need = nstream * nw * 12;
+        stream = malloc((size_t)need);
+        if (!stream) { fprintf(stderr,"\n--ionflow-project: out of memory for %ld coordinate bytes\n", need); goto done; }
+        cf = fopen(coords_path, "rb");
+        if (!cf) { fprintf(stderr,"\n--ionflow-project: cannot open %s\n", coords_path); goto done; }
+        if ((long)fread(stream, 1, (size_t)need, cf) != need) {
+            fclose(cf); fprintf(stderr,"\n--ionflow-project: %s is shorter than %ld bytes\n", coords_path, need); goto done;
+        }
+        fclose(cf);
+    }
+    if (group && nstream <= 0) { fprintf(stderr,"\n--ionflow-project: group needs the coords stream\n"); goto done; }
     for (i = 0; i < nfr; i++)
         if (fr[i].set < 0 || fr[i].set >= scap || sets[fr[i].set].n < 0) {
-            fprintf(stderr,"\n--ionflow-project: frame %d uses undefined sphere set %d\n", fr[i].frame, fr[i].set); return 1;
+            fprintf(stderr,"\n--ionflow-project: frame %d uses undefined sphere set %d\n", fr[i].frame, fr[i].set);
+            goto done;
         }
 
 #ifdef _OPENMP
@@ -2730,14 +2809,30 @@ static int ionflow_project(const char *infile, const char *outfile)
     for (i = 0; i < nfr; i++) {
         struct ifp_frame *p = &fr[i];
         const struct ifp_set *S = &sets[p->set];
-        int j, m, kept = 0;
-        for (j = 0; j < p->n; j++) {
-            double rx = p->px[j]-p->com[0], ry = p->py[j]-p->com[1], rz = p->pz[j]-p->com[2];
-            double z, qx, qy, qz, R, wx, wy, wz, mind = 1e30;
+        const unsigned char *bx = NULL, *by = NULL, *bz = NULL;
+        long np = p->n, j;
+        int kept = 0, kk;   /* own indices: the function-scope k is shared across threads */
+        int *tslot; double *tz, *tr, *td3;
+        if (p->n < 0) {
+            const unsigned char *blk = stream + p->slot * nw * 12;
+            bx = blk; by = blk + nw*4; bz = blk + nw*8;
+            np = nw;
+        }
+        tslot = xa_malloc((np?np:1)*sizeof(int));
+        tz  = xa_malloc((np?np:1)*sizeof(double));
+        tr  = xa_malloc((np?np:1)*sizeof(double));
+        td3 = xa_malloc((np?np:1)*sizeof(double));
+        for (j = 0; j < np; j++) {
+            double X, Y, Z, rx, ry, rz, z, qx, qy, qz, R, wx, wy, wz, mind = 1e30;
+            int m;
+            if (bx) { X = ifp_le_float(bx+4*j); Y = ifp_le_float(by+4*j); Z = ifp_le_float(bz+4*j); }
+            else    { X = p->px[j]; Y = p->py[j]; Z = p->pz[j]; }
+            rx = X-p->com[0]; ry = Y-p->com[1]; rz = Z-p->com[2];
             if (p->L[0] > 0) rx = rx - p->L[0]*round(rx/p->L[0]);
             if (p->L[1] > 0) ry = ry - p->L[1]*round(ry/p->L[1]);
             if (p->L[2] > 0) rz = rz - p->L[2]*round(rz/p->L[2]);
             z = rx*p->u[0]+ry*p->u[1]+rz*p->u[2];
+            if (have_zwin && (z <= zlo || z >= zhi)) continue;
             qx = rx-z*p->u[0]; qy = ry-z*p->u[1]; qz = rz-z*p->u[2];
             R = sqrt(qx*qx+qy*qy+qz*qz);
             if (R >= scan_r) continue;
@@ -2747,25 +2842,88 @@ static int ionflow_project(const char *infile, const char *outfile)
                 double surf = sqrt(dx*dx+dy*dy+dz*dz)-S->r[m];
                 if (surf < mind) mind = surf;
             }
-            p->idx[kept] = p->idx[j]; p->oz[kept] = z; p->oR[kept] = R; p->od3[kept] = mind;
+            tslot[kept] = (int)j; tz[kept] = z; tr[kept] = R; td3[kept] = mind;
             kept++;
         }
+        /* Copy to exact-size arrays: a frame keeps a few hundred of tens of
+           thousands of candidates, and every frame's worst case held at once
+           would be two orders of magnitude more memory than the answer. */
         p->nkept = kept;
+        p->kidx  = xa_malloc((kept?kept:1)*sizeof(int));
+        p->kslot = xa_malloc((kept?kept:1)*sizeof(int));
+        p->kz    = xa_malloc((kept?kept:1)*sizeof(double));
+        p->kr    = xa_malloc((kept?kept:1)*sizeof(double));
+        p->kd3   = xa_malloc((kept?kept:1)*sizeof(double));
+        for (kk = 0; kk < kept; kk++) {
+            p->kslot[kk] = tslot[kk];
+            p->kidx[kk]  = bx ? widx[tslot[kk]] : p->idx[tslot[kk]];
+            p->kz[kk] = tz[kk]; p->kr[kk] = tr[kk]; p->kd3[kk] = td3[kk];
+        }
+        free(tslot); free(tz); free(tr); free(td3);
     }
 
     o = fopen(outfile, "w");
-    if (!o) { fprintf(stderr,"\n--ionflow-project: cannot write %s\n", outfile); return 1; }
-    for (i = 0; i < nfr; i++) {
-        fprintf(o, "F %d %d\n", fr[i].frame, fr[i].nkept);
-        for (k = 0; k < fr[i].nkept; k++)
-            fprintf(o, "%d %.17g %.17g %.17g\n", fr[i].idx[k], fr[i].oz[k], fr[i].oR[k], fr[i].od3[k]);
+    if (!o) { fprintf(stderr,"\n--ionflow-project: cannot write %s\n", outfile); goto done; }
+    if (group) {
+        /* One record per atom index that was ever kept, in index-list order,
+           each carrying its whole time series - the shape the plugin builds
+           its per-molecule traces from, so it never walks the samples again. */
+        long ii;
+        long *cnt = calloc((size_t)(nw?nw:1), sizeof(long));
+        long *off = calloc((size_t)(nw?nw:1)+1, sizeof(long));
+        long total = 0, *fill = NULL;
+        int *gf = NULL; double *gz = NULL, *gr = NULL, *gd = NULL;
+        if (!cnt || !off) { fclose(o); free(cnt); free(off); fprintf(stderr,"\n--ionflow-project: out of memory\n"); goto done; }
+        for (i = 0; i < nfr; i++) for (k = 0; k < fr[i].nkept; k++) cnt[fr[i].kslot[k]]++;
+        for (ii = 0; ii < nw; ii++) { off[ii] = total; total += cnt[ii]; }
+        off[nw] = total;
+        fill = calloc((size_t)(nw?nw:1), sizeof(long));
+        gf = malloc((size_t)(total?total:1)*sizeof(int));
+        gz = malloc((size_t)(total?total:1)*sizeof(double));
+        gr = malloc((size_t)(total?total:1)*sizeof(double));
+        gd = malloc((size_t)(total?total:1)*sizeof(double));
+        if (!fill || !gf || !gz || !gr || !gd) { fclose(o); fprintf(stderr,"\n--ionflow-project: out of memory\n"); goto done; }
+        for (i = 0; i < nfr; i++) {
+            for (k = 0; k < fr[i].nkept; k++) {
+                long sl = fr[i].kslot[k], at = off[sl] + fill[sl]++;
+                gf[at] = fr[i].frame; gz[at] = fr[i].kz[k]; gr[at] = fr[i].kr[k]; gd[at] = fr[i].kd3[k];
+            }
+        }
+        for (ii = 0; ii < nw; ii++) {
+            long b = off[ii], n = cnt[ii], q;
+            if (n == 0) continue;
+            fprintf(o, "T %d %ld", widx[ii], n);
+            for (q = 0; q < n; q++) fprintf(o, " %d", gf[b+q]);
+            for (q = 0; q < n; q++) fprintf(o, " %.17g", gz[b+q]);
+            for (q = 0; q < n; q++) fprintf(o, " %.17g", gr[b+q]);
+            for (q = 0; q < n; q++) fprintf(o, " %.17g", gd[b+q]);
+            fputc('\n', o);
+        }
+        free(cnt); free(off); free(fill); free(gf); free(gz); free(gr); free(gd);
+    } else {
+        for (i = 0; i < nfr; i++) {
+            fprintf(o, "F %d %d\n", fr[i].frame, fr[i].nkept);
+            for (k = 0; k < fr[i].nkept; k++)
+                fprintf(o, "%d %.17g %.17g %.17g\n", fr[i].kidx[k], fr[i].kz[k], fr[i].kr[k], fr[i].kd3[k]);
+        }
     }
     fclose(o);
-    for (i = 0; i < nfr; i++) { free(fr[i].idx); free(fr[i].px); free(fr[i].py); free(fr[i].pz); free(fr[i].oz); free(fr[i].oR); free(fr[i].od3); }
+    rc = 0;
+
+done:
+    if (f) fclose(f);
+    for (i = 0; i < nfr; i++) {
+        free(fr[i].idx); free(fr[i].px); free(fr[i].py); free(fr[i].pz);
+        free(fr[i].kidx); free(fr[i].kslot); free(fr[i].kz); free(fr[i].kr); free(fr[i].kd3);
+    }
     free(fr);
     for (k = 0; k < scap; k++) { free(sets[k].x); free(sets[k].y); free(sets[k].z); free(sets[k].r); }
-    free(sets);
-    return 0;
+    free(sets); free(widx); free(stream);
+    return rc;
+
+bad_line:
+    fprintf(stderr,"\n--ionflow-project: malformed record: %s", line);
+    goto done;
 }
 
 static int tunnel_dist(const char *infile, const char *outfile, int want_max)
@@ -3071,7 +3229,7 @@ int main (int argc, char *argv[])
 	  if (strcmp(argv[1], "--hole-features") == 0) {
 	    /* capability probe: the plugin greps stdout for these tokens to decide
 	       which accelerated outputs this binary supports. */
-	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject\n");
+	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords\n");
 	    return(0);
 	  } else if (strcmp(argv[1], "--recolor") == 0) {
 	    /* --recolor BASE.vmd_plot: recolour an existing mesh by hydropathy

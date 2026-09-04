@@ -560,18 +560,36 @@ afterwards in input order.
 
     --ionflow-project IN OUT
     IN:  scan_r <r>
+         zwin <zlo> <zhi>                    optional axial window
+         coords <nw>  then a line holding    optional coordinate stream
+              the stream's path
+         index <nw>   then nw lines  <atom index>       (required with coords)
+         group 1                             optional: group output by atom
          S <id> <n>   then n lines  cx cy cz r
-         F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>   then n lines  idx x y z
+         F <frame> <setid> comx comy comz Lx Ly Lz ux uy uz <n>
+              n >= 0 : n inline lines  idx x y z
+              n <  0 : nw points from the next block of the stream
     OUT: F <frame> <nkept>   then nkept lines  idx z R d3
+      or T <idx> <n> <n frames> <n z> <n R> <n d3>          with "group 1"
+
+The coordinate stream is little-endian 32-bit floats, per frame nw x values
+then nw y then nw z - what Tcl's `binary format r*` writes for a whole
+atomselect in one call. It exists because of where the time actually went:
+having VMD prefilter each frame with a selection expression carrying that
+frame's centre of mass costs 14 ms per frame in the selection evaluator
+alone, against 2.2 ms to dump every water coordinate and let this program
+apply the cylinder and the window. The caller bounds the stream by splitting
+a long trajectory into several jobs, so reading one whole is bounded by the
+caller's own budget.
 
 The arithmetic is written in the same order as the Tcl expressions it
 replaces. Measured on a 100-frame, 197k-atom trajectory (39,614 waters,
-122,203 kept samples): every value bit-identical to the Tcl loop
-(521,673 values compared), the whole water scan 17 s -> 6 s, of which this
-mode is 0.45 s including its file round trip; the rest is the per-frame VMD
-selection. `tests/unit/test_ionflow_project.sh` checks the conventions
-(min-imaging, signed `d3`, the `scan_r` drop, ordering) against an
-independent awk re-derivation.
+122,203 kept samples): the streamed form is bit-identical to the inline form
+and to the Tcl loop it replaces (521,673 values compared), and the plugin's
+whole water scan went 17 s -> 6 s -> 2.5 s.
+`tests/unit/test_ionflow_project.sh` checks the conventions (min-imaging,
+signed `d3`, the `scan_r` drop, the axial window, ordering, and streamed
+against inline output) with an independent awk re-derivation.
 
 ## Fortran patches (`connolly_patches/`)
 
