@@ -176,8 +176,8 @@ barrier is a sampling-dependent lower bound.
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Ion Flow view | Occupancy % | Aggregate occupancy map, per-molecule Passage tracks (constriction crossings coloured by direction, drawn on top), or Count vs frame (molecules inside the pore per frame) |
-| Passage Show (Water only) | Crossings | Crossings draws only molecules that crossed the constriction; Entered draws every molecule that entered the pore |
+| Ion Flow view | Occupancy % | Aggregate occupancy map, per-molecule Passage tracks (constriction crossings coloured by direction, drawn on top), or Count vs frame (molecules inside the pore per frame, one curve per ion type when all types are selected) |
+| Passage Show (Water only) | Crossings | Crossings draws only the stretches of line that cross the constriction; All entered draws every molecule that entered the pore, crossings still coloured on top |
 | Species | All detected | Filter cached observations by detected ion species; All = every ion type, never water. Water (one oxygen per molecule, from the Hydration water selection) is its own entry |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |
 | Stride | 1 | Trajectory sampling stride for ion analysis |
