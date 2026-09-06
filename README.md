@@ -112,8 +112,8 @@ The distribution includes gramicidin A at
 1. Load the PDB in VMD.
 2. Open VMDHole and select **Pore** mode.
 3. Set **Selection** to `all` and **Frames** to `now`.
-4. Keep the proposed `CPOINT` and `CVECT`, or define the direction with
-   **Vector**.
+4. Keep the proposed `CPOINT` and `CVECT`, or define the direction with the
+   **⌖** dialog beside `CVECT` (two points, or a stick that tilts it).
 5. Enable **Show cues** under the **HOLE parameters** gear and confirm that the
    point and arrow follow the channel.
 6. Select **Run HOLE**.

@@ -20,12 +20,12 @@ terminal groups are not included by VMD's `protein` macro.
 
 Use the terminal groups at opposite channel mouths:
 
-1. Select **Vector** beside `CVECT`.
+1. Select **⌖** beside `CVECT`.
 2. Set point 1 to `resname ETA and chain A`.
 3. Set point 2 to `resname ETA and chain B`.
-4. Select **Compute**, inspect the displayed vector, and select **Apply**.
-5. Set `CPOINT` to the centre of geometry of `all`, or use the midpoint shown by
-   the vector tool.
+4. Select **Compute** and inspect the displayed vector; the stick above it can
+   then tilt the direction by whole degrees if needed.
+5. Set `CPOINT` to the centre of geometry of `all`.
 
 This definition remains meaningful if the coordinates are rotated. If the
 profile is displayed in the opposite direction from the desired convention,

@@ -46,10 +46,10 @@ axis.
 
 To define the gramicidin axis explicitly:
 
-1. Select **Vector** beside `CVECT`.
+1. Select **⌖** beside `CVECT`.
 2. Enter `resname ETA and chain A` for **Point 1**.
 3. Enter `resname ETA and chain B` for **Point 2**.
-4. Select **Compute**, inspect the displayed direction, and select **Apply**.
+4. Select **Compute** and inspect the displayed direction.
 
 The vector sign changes the profile orientation, not the pore being analysed.
 For another structure, use **Guess**, **Use Z**, two selections marking the pore
