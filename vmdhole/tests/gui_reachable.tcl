@@ -3610,27 +3610,21 @@ if {[file exists $PDB] && [file executable [::VMDHole::tool_path mole_engine]]} 
                       && [llength [lindex $gth 3]] == 6}] \
                "(n=[llength $gth] centers=[llength [lindex $gth 0]] atoms=[expr {[llength [lindex $gth 2]]/4}])"
 
-        # The gate itself, on synthetic geometry so it does not depend on which
-        # tunnel this fixture happens to rank first.
-        set _str {}
-        for {set i 0} {$i < 20} {incr i} { lappend _str [list 0 0 [expr {$i*1.0}]] }
-        set _bnd {}
-        for {set i 0} {$i < 10} {incr i} { lappend _bnd [list 0 0 [expr {$i*1.0}]] }
-        for {set i 1} {$i < 10} {incr i} { lappend _bnd [list [expr {$i*1.0}] 0 9.0] }
-        set _cs [::VMDHole::_centerline_axis_curvature $_str [::VMDHole::channel_axis_pca $_str]]
-        set _cb [::VMDHole::_centerline_axis_curvature $_bnd [::VMDHole::channel_axis_pca $_bnd]]
-        report "curvature gate admits a straight path and rejects a bent one" \
-               [expr {$_cs <= $::VMDHole::TUNNEL_FLOW_MAX_CURVATURE \
-                      && $_cb > $::VMDHole::TUNNEL_FLOW_MAX_CURVATURE}] \
-               "(straight=[format %.3f $_cs] bent=[format %.3f $_cb] gate=$::VMDHole::TUNNEL_FLOW_MAX_CURVATURE)"
-
-        # A refusal must name a way forward: rank order comes from MOLE's own
-        # scoring, not straightness, so "pick a straighter tunnel" is a dead end
-        # unless the message says which ones qualify.
-        set _cand [::VMDHole::_tunnel_flow_candidates $iff]
-        report "the gate can name which tunnels qualify" \
-               [expr {[llength $_cand] > 0 && [llength [lindex $_cand 0]] == 2}] \
-               "(candidates=$_cand)"
+        # Measured ALONG the route, on synthetic geometry so it does not depend
+        # on which tunnel this fixture ranks first: an L-shaped route (10 A up
+        # z, then 9 A along x). A point on the second leg reads as its arc
+        # length with ~0 distance from the route; the old single-axis frame
+        # put it several A off-axis, i.e. in bulk, and refused the tunnel.
+        set _bnd {}; set _brad {}
+        for {set i 0} {$i < 10} {incr i} { lappend _bnd [list 0 0 [expr {$i*1.0}]]; lappend _brad 1.5 }
+        for {set i 1} {$i < 10} {incr i} { lappend _bnd [list [expr {$i*1.0}] 0 9.0]; lappend _brad 1.5 }
+        set _bpath [::VMDHole::_ion_flow_path_spheres $_bnd $_brad]
+        lassign [::VMDHole::_ion_flow_path_coord 5.0 0.0 9.0 $_bpath] _bs _br
+        report "a bent route is measured along itself (arc length, distance from the route)" \
+               [expr {abs($_bs-14.0) < 0.05 && $_br < 0.05}] \
+               "(s=[format %.2f $_bs] R=[format %.2f $_br], want 14 and 0)"
+        report "no curvature refusal is left in the tunnel gather" \
+               [expr {[string first "TUNNEL_FLOW_MAX_CURVATURE" [info body ::VMDHole::_tunnel_flow_gather]] < 0}] ""
 
         # The ion scan is measured in one mode's R-Z frame; carrying it across a
         # mode switch would render HOLE data under the tunnel tab.
