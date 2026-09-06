@@ -23767,6 +23767,20 @@ proc ::VMDHole::tunnel_use_view_center {} { _set_point_to_view_center tunnel_sta
 # vector that rotates TO eye-space (1,0,0) is R^T*(1,0,0), which is R's first
 # ROW - see the comment on _view_right_up). Re-read every drag/click so a
 # rotation mid-drag is honoured immediately, not just at dialog-open time.
+proc ::VMDHole::_view_toward {rx ry rz ux uy uz} {
+    # The viewing axis (toward the viewer) as right x up.
+    return [list [expr {$ry*$uz-$rz*$uy}] [expr {$rz*$ux-$rx*$uz}] [expr {$rx*$uy-$ry*$ux}]]
+}
+
+proc ::VMDHole::_axis_stick_center {which} {
+    # COG / COR for the point the stick is moving.
+    variable state
+    set key [_axis_stick_key $state(axis_stick_mode)]
+    set lbl [expr {$key eq "tunnel_start" ? "Tunnel start point" : "CPOINT"}]
+    if {$which eq "sel"} { _set_point_to_selection_center $key $lbl } else { _set_point_to_view_center $key $lbl }
+    catch {_sync_point_marker $key [_axis_stick_cue_key $state(axis_stick_mode)]}
+}
+
 proc ::VMDHole::_view_right_up {molid} {
     set right {1.0 0.0 0.0}; set up {0.0 1.0 0.0}
     catch {
@@ -23854,10 +23868,12 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
     set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
     if {![string is double -strict $step]} { set step 1.0 }
     if {[_axis_stick_is_dir $mode]} {
-        # tip to the right = turn about the screen's up axis; up = about its right axis
+        # left/right turn CVECT flat in the screen plane (about the viewing
+        # axis, clockwise for right); up/down tilt it about the screen's right axis
+        lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
         switch -- $dir {
-            right { _axis_stick_rotate $ux $uy $uz $step }
-            left  { _axis_stick_rotate $ux $uy $uz [expr {-$step}] }
+            right { _axis_stick_rotate $tx $ty $tz [expr {-$step}] }
+            left  { _axis_stick_rotate $tx $ty $tz $step }
             up    { _axis_stick_rotate $rx $ry $rz [expr {-$step}] }
             down  { _axis_stick_rotate $rx $ry $rz $step }
         }
@@ -23902,7 +23918,8 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
     if {![string is double -strict $step]} { set step 1.0 }
     if {[_axis_stick_is_dir $mode]} {
         set sens [expr {$step/5.0}]
-        if {$dxpix != 0} { _axis_stick_rotate $ux $uy $uz [expr {$dxpix*$sens}] }
+        lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
+        if {$dxpix != 0} { _axis_stick_rotate $tx $ty $tz [expr {-$dxpix*$sens}] }
         if {$dypix != 0} { _axis_stick_rotate $rx $ry $rz [expr {$dypix*$sens}] }
         return
     }
@@ -23937,7 +23954,7 @@ proc ::VMDHole::_axis_stick_sync_mode {d} {
     # point neither - so the choice sits with the point it governs.
     catch {
         if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
-        if {$m eq "cvect"}  { grid $d.vec; _cvect_sync_stab_controls $d.vec } else { grid remove $d.vec }
+        if {$m eq "cvect"}  { grid $d.vec; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } else { grid remove $d.vec; grid $d.pc }
         if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
     }
     _axis_stick_sync_val_label $d
@@ -23992,6 +24009,14 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     frame $d.vec -relief groove -borderwidth 1
     _build_vector_controls $d.vec
     grid $d.vec -row 5 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
+    frame $d.pc
+    label  $d.pc.l   -text "Set to:"
+    button $d.pc.cog -text "COG" -command [list ::VMDHole::_axis_stick_center sel]
+    button $d.pc.cor -text "COR" -command [list ::VMDHole::_axis_stick_center view]
+    pack $d.pc.l $d.pc.cog $d.pc.cor -side left -padx {0 6}
+    grid $d.pc -row 5 -column 0 -columnspan 3 -sticky w -padx 10 -pady {0 6}
+    add_tooltip $d.pc.cog "The centre of geometry of the atom selection."
+    add_tooltip $d.pc.cor "VMD's current centre of rotation."
     label $d.pf.none -text "Per-frame: the tunnel search re-runs from this point each frame." -foreground gray40 -font {Helvetica 8}
     grid $d.pf.none -row 0 -column 0 -sticky w
     add_tooltip $d.pf.cp.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
@@ -24013,7 +24038,7 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     grid $d.pad.canv  -row 1 -column 1
     grid $d.pad.right -row 1 -column 2
     grid $d.pad.down  -row 2 -column 1
-    add_tooltip $d.pad.canv "Drag: moves the point, or tilts CVECT, in the direction you drag relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation."
+    add_tooltip $d.pad.canv "Drag: moves the point in the direction you drag, relative to the CURRENT view. For CVECT, left/right turn it flat in the screen plane and up/down tilt it toward or away from you."
     bind $d.pad.canv <ButtonPress-1> [list ::VMDHole::_axis_stick_drag_start $d %x %y]
     bind $d.pad.canv <B1-Motion>     [list ::VMDHole::_axis_stick_drag_motion $d %x %y]
     bind $d.pad.canv <ButtonRelease-1> [list ::VMDHole::_axis_stick_drag_end $d]
