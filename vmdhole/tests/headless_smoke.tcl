@@ -5013,6 +5013,11 @@ chk "...and so does the Facing overlay" \
         [info body ::VMDHole::update_pore_facing_rep]] >= 0}] 1
 chk "changing the smoothing window refreshes the lining" \
     [expr {[string first {update_pore_lining_rep} [info body ::VMDHole::_set_surface_smooth]] >= 0}] 1
+set _bht [info body ::VMDHole::build_hydro_trinorm]
+chk "property colouring lines against the smoothing window's spheres" \
+    [expr {[string first {_smooth_union_sph $frame $sph_file} $_bht] >= 0}] 1
+chk "...in the compiled recolour" [expr {[string first {run_sos_triangle_recolor $plot0 $plot $lsph} $_bht] >= 0}] 1
+chk "...and the mesh itself stays the frame's own" [expr {[string first {surface_mesh $sph_file $plot0 draw} $_bht] >= 0}] 1
 # The CVECT stick is a rotation: a quarter turn of x about z is y, and the
 # length never changes.
 set ::VMDHole::state(cvect) "1 0 0"

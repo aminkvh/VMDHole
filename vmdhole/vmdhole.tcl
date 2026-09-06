@@ -17718,6 +17718,26 @@ proc ::VMDHole::_surface_smooth_frames {frame} {
     return $out
 }
 
+proc ::VMDHole::_smooth_union_sph {frame sph_file} {
+    # The lining reference under smoothing: this frame's spheres plus every
+    # window frame's, in one .sph beside the frame's own, so property colours
+    # and the lining/facing tests follow the drawn wall. "" without a window.
+    set with [_surface_smooth_with $frame]
+    if {![llength $with] || ![file exists $sph_file]} { return "" }
+    set out "[file rootname $sph_file][_surface_smooth_tag].sph"
+    if {[file exists $out] && [file mtime $out] >= [file mtime $sph_file]} { return $out }
+    if {[catch {open $out w} fh]} { return "" }
+    foreach s [concat [list $sph_file] $with] {
+        if {[catch {open $s r} in]} continue
+        while {[gets $in line] >= 0} {
+            if {[string match {ATOM  *} $line] || [string match {HETATM*} $line]} { puts $fh $line }
+        }
+        close $in
+    }
+    close $fh
+    return $out
+}
+
 proc ::VMDHole::_surface_smooth_with {frame} {
     # The window frames as the sphere files a mesher takes (a capsule run's
     # kept slices); a neighbour with no sphere file yet is skipped.
@@ -20183,15 +20203,11 @@ proc ::VMDHole::build_run_panel {parent} {
     frame  $parent.cv_box
     button $parent.cv_box.stk -text "⌖" -font {Helvetica 14} -padx 1 -pady 0 -relief flat \
         -command [list ::VMDHole::show_axis_stick_dialog cvect]
-    button $parent.cv_box.vec -text "Vector" -command ::VMDHole::show_vector_dialog
     pack $parent.cv_box.stk -side left
-    pack $parent.cv_box.vec -side left -padx {4 0} -fill x -expand 1
-    grid $parent.cv_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
+        grid $parent.cv_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
     grid $parent.cv_e   -row $row -column 1 -sticky ew -padx 8 -pady 2
     grid $parent.cv_box -row $row -column 2 -sticky ew -padx 8 -pady 2
-    add_tooltip $parent.cv_box.vec "Set the channel axis direction from two picked points."
-    add_tooltip $parent.cv_box.stk "Tilt CVECT with an on-screen stick or step buttons, relative to the\
-        current view."
+    add_tooltip $parent.cv_box.stk "Set CVECT: tilt it with an on-screen stick relative to the current view, or define it from two points."
     incr row
 
     # (Align traj… button now lives on the Selection row, near the selection it fits.)
@@ -21084,13 +21100,10 @@ proc ::VMDHole::show_hole_params_settings {} {
     # numeric cards sit 3-per-row; IGNORE / Extra cards need a wide entry for their
     # text lists, so they span all three columns below.
     frame $d.hp
-    grid columnconfigure $d.hp 0 -minsize 78
-    grid columnconfigure $d.hp 2 -minsize 78
-    grid columnconfigure $d.hp 4 -minsize 78
     grid [label $d.hp.er_l -text "ENDRAD (Å)" -anchor w]                          -row 0 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.er_e -textvariable ::VMDHole::state(endrad) -width 7]           -row 0 -column 1 -sticky w -padx {4 8}
+    grid [entry $d.hp.er_e -textvariable ::VMDHole::state(endrad) -width 7]           -row 0 -column 1 -sticky w -padx {2 6}
     grid [label $d.hp.sa_l -text "SAMPLE" -anchor w]                                  -row 0 -column 2 -sticky w
-    grid [entry $d.hp.sa_e -textvariable ::VMDHole::state(sample) -width 7]           -row 0 -column 3 -sticky w -padx {4 8}
+    grid [entry $d.hp.sa_e -textvariable ::VMDHole::state(sample) -width 7]           -row 0 -column 3 -sticky w -padx {2 6}
     grid [label $d.hp.ig_l -text "IGNORE" -anchor w]                                  -row 1 -column 0 -sticky w -pady 3
     grid [entry $d.hp.ig_e -textvariable ::VMDHole::state(ignore) -width 40]          -row 1 -column 1 -columnspan 5 -sticky w -padx {4 0}
     # Rows a choice enables come AFTER the choice: the Monte Carlo rows and
@@ -21098,15 +21111,15 @@ proc ::VMDHole::show_hole_params_settings {} {
     # show for Monte Carlo only; Nelder-Mead is deterministic, prints nothing
     # of HOLE's and takes no cards (_update_search_rows).
     grid [label $d.hp.ms_l -text "MC steps" -anchor w]                                -row 4 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ms_e -textvariable ::VMDHole::state(mcstep) -width 7]           -row 4 -column 1 -sticky w -padx {4 8}
+    grid [entry $d.hp.ms_e -textvariable ::VMDHole::state(mcstep) -width 7]           -row 4 -column 1 -sticky w -padx {2 6}
     grid [label $d.hp.md_l -text "MC step size" -anchor w]                            -row 4 -column 2 -sticky w
-    grid [entry $d.hp.md_e -textvariable ::VMDHole::state(mcdisp) -width 7]           -row 4 -column 3 -sticky w -padx {4 8}
+    grid [entry $d.hp.md_e -textvariable ::VMDHole::state(mcdisp) -width 7]           -row 4 -column 3 -sticky w -padx {2 6}
     grid [label $d.hp.mk_l -text "MC kT" -anchor w]                                   -row 4 -column 4 -sticky w
     grid [entry $d.hp.mk_e -textvariable ::VMDHole::state(mckt) -width 7]             -row 4 -column 5 -sticky w -padx {4 0}
     grid [label $d.hp.rs_l -text "Random seed" -anchor w]                             -row 5 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.rs_e -textvariable ::VMDHole::state(random_seed) -width 7]      -row 5 -column 1 -sticky w -padx {4 8}
+    grid [entry $d.hp.rs_e -textvariable ::VMDHole::state(random_seed) -width 7]      -row 5 -column 1 -sticky w -padx {2 6}
     grid [label $d.hp.sh_l -text "SHORTO" -anchor w]                                  -row 5 -column 2 -sticky w
-    grid [entry $d.hp.sh_e -textvariable ::VMDHole::state(shorto) -width 7]           -row 5 -column 3 -sticky w -padx {4 8}
+    grid [entry $d.hp.sh_e -textvariable ::VMDHole::state(shorto) -width 7]           -row 5 -column 3 -sticky w -padx {2 6}
     grid [label $d.hp.ex_l -text "Extra HOLE cards" -anchor w]                        -row 6 -column 0 -sticky w -pady 3
     grid [entry $d.hp.ex_e -textvariable ::VMDHole::state(extra_cards) -width 40]     -row 6 -column 1 -columnspan 5 -sticky w -padx {4 0}
     # Pore-detection method: pick Spherical (default plain HOLE) / Connolly /
@@ -21119,7 +21132,7 @@ proc ::VMDHole::show_hole_params_settings {} {
         $d.hp.pm_mb.m add command -label $_pmd \
             -command [list ::VMDHole::_set_pore_method $_pmv $_pmd]
     }
-    grid $d.hp.pm_mb -row 2 -column 1 -sticky w -padx {4 20}
+    grid $d.hp.pm_mb -row 2 -column 1 -sticky w -padx {2 6}
     grid [label $d.hp.se_l -text "Search" -anchor w]                                -row 2 -column 2 -sticky w
     switch -- $state(search_engine) {
         nm      { set state(search_engine_disp) "Nelder-Mead" }
@@ -21132,7 +21145,7 @@ proc ::VMDHole::show_hole_params_settings {} {
         $d.hp.se_mb.m add command -label $_sed \
             -command [list ::VMDHole::_set_search_engine $_sev $_sed]
     }
-    grid $d.hp.se_mb -row 2 -column 3 -sticky w -padx {4 8}
+    grid $d.hp.se_mb -row 2 -column 3 -sticky w -padx {2 6}
     add_tooltip $d.hp.se_mb "Monte Carlo: HOLE\'s annealing, with the rows below. Nelder-Mead: deterministic and\
         faster; no seed, SHORTO or extra cards (an extra card switches the run back to HOLE)."
     grid [label $d.hp.ce_l -text "Connolly surface" -anchor w] -row 3 -column 4 -sticky w
@@ -22324,10 +22337,9 @@ proc ::VMDHole::compute_vector {d} {
     } msg]} {
         tk_messageBox -icon error -type ok -title "CVECT" -message $msg -parent $d
     } else {
-        # Compute also dismisses the dialog. Per-frame Stabilize/Exact is still
-        # reachable by reopening the dialog once a two-point CVECT exists. Only
-        # closes on SUCCESS - an error keeps the window open with its message.
-        catch {destroy $d}
+        # A dialog of its own is dismissed on success; inside the stick dialog
+        # the page stays, showing the result.
+        if {[winfo toplevel $d] eq $d} { catch {destroy $d} }
     }
 }
 
@@ -23497,54 +23509,33 @@ proc ::VMDHole::vector_labeled_atoms {} {
 }
 
 proc ::VMDHole::show_vector_dialog {} {
-    variable w
-    set d "$w.vecdlg"
-    if {[winfo exists $d]} { wm deiconify $d; raise $d; return }
-    toplevel $d
-    wm withdraw $d
-    wm title $d "Compute CVECT"
-    wm resizable $d 0 0
+    # The two-point definition lives in the stick dialog's CVECT page.
+    show_axis_stick_dialog cvect
+}
 
-    # ── Header ─────────────────────────────────────────────────────────────
-    # Quick actions (Guess / Use Z) live in the button row next to Compute &
-    # Apply; this dialog leads with the two-point form.
-    label $d.orl -text "Define the channel axis (CVECT) from two points:" \
-        -foreground gray40
-    grid $d.orl -row 2 -column 0 -columnspan 3 -sticky w -padx 10 -pady {12 4}
-
-    # ── Two-point form ────────────────────────────────────────────────────
-    # Each entry accepts x,y,z coordinates OR a VMD atomselect string.
-    # The "Label" button fills the entry from a VMD-labeled atom.
+proc ::VMDHole::_build_vector_controls {d} {
+    # CVECT from two points (coordinates, VMD selections or labelled atoms),
+    # with Guess, Use Z and the per-frame endpoint modes, built into frame $d.
+    label $d.orl -text "Or define CVECT from two points:" -foreground gray40
+    grid $d.orl -row 0 -column 0 -columnspan 3 -sticky w -padx 6 -pady {6 2}
     label $d.l1 -text "Point 1"
-    entry $d.e1 -textvariable ::VMDHole::vec_p1 -width 30
-    button $d.b1 -text "Label ▾" \
+    entry $d.e1 -textvariable ::VMDHole::vec_p1 -width 26
+    button $d.b1 -text "Label \u25be" \
         -command [list ::VMDHole::_cvect_pick_label $d.e1 ::VMDHole::vec_p1 $d]
-
     label $d.l2 -text "Point 2"
-    entry $d.e2 -textvariable ::VMDHole::vec_p2 -width 30
-    button $d.b2 -text "Label ▾" \
+    entry $d.e2 -textvariable ::VMDHole::vec_p2 -width 26
+    button $d.b2 -text "Label \u25be" \
         -command [list ::VMDHole::_cvect_pick_label $d.e2 ::VMDHole::vec_p2 $d]
-
-    grid $d.l1 -row 3 -column 0 -sticky e  -padx {10 4} -pady 4
-    grid $d.e1 -row 3 -column 1 -sticky ew -padx 4      -pady 4
-    grid $d.b1 -row 3 -column 2 -sticky w  -padx {4 10} -pady 4
-    grid $d.l2 -row 4 -column 0 -sticky e  -padx {10 4} -pady 4
-    grid $d.e2 -row 4 -column 1 -sticky ew -padx 4      -pady 4
-    grid $d.b2 -row 4 -column 2 -sticky w  -padx {4 10} -pady 4
+    grid $d.l1 -row 1 -column 0 -sticky e  -padx {6 4} -pady 2
+    grid $d.e1 -row 1 -column 1 -sticky ew -padx 2     -pady 2
+    grid $d.b1 -row 1 -column 2 -sticky w  -padx {4 6} -pady 2
+    grid $d.l2 -row 2 -column 0 -sticky e  -padx {6 4} -pady 2
+    grid $d.e2 -row 2 -column 1 -sticky ew -padx 2     -pady 2
+    grid $d.b2 -row 2 -column 2 -sticky w  -padx {4 6} -pady 2
     grid columnconfigure $d 1 -weight 1
-
-    label $d.hint \
-        -text "x,y,z or a VMD selection; vector points Point 1 → Point 2." \
-        -foreground gray -wraplength 360 -justify left
-    grid $d.hint -row 5 -column 0 -columnspan 3 -sticky w -padx 10 -pady {0 8}
-
-    # ── Per-frame CVECT handling (only meaningful for a TWO-POINT definition) ──
-    # A literal direction (e.g. 0 0 1) has no endpoints to carry, so these controls
-    # disable themselves (_cvect_sync_stab_controls). For a two-point CVECT:
-    #   Stabilize endpoints = each point gets its OWN scoped rigid-body fit of nearby
-    #                         Cα (independent local context), then the vector is recomputed
-    #   Exact               = re-evaluate the two point selections literally each frame
-    #                         (no fit) — keeps the exact selection regardless of motion
+    label $d.hint -text "x,y,z or a VMD selection; the vector points from Point 1 to Point 2." \
+        -foreground gray -wraplength 340 -justify left
+    grid $d.hint -row 3 -column 0 -columnspan 3 -sticky w -padx 6 -pady {0 4}
     frame $d.sb
     label       $d.sb.l   -text "Per-frame:"
     checkbutton $d.sb.cv  -text "Stabilize endpoints" \
@@ -23555,41 +23546,18 @@ proc ::VMDHole::show_vector_dialog {} {
         -command [list ::VMDHole::_cvect_stab_excl $d exact]
     label       $d.sb.note -text "" -foreground gray40 -font {Helvetica 8}
     pack $d.sb.l $d.sb.cv $d.sb.ex $d.sb.note -side left -padx {0 6}
-    grid $d.sb -row 6 -column 0 -columnspan 3 -sticky w -padx 10 -pady {0 6}
-
-    # ── Result + buttons ──────────────────────────────────────────────────
-    frame $d.sep2 -height 1 -bg gray70
-    grid $d.sep2 -row 7 -column 0 -columnspan 3 -sticky ew -padx 10 -pady 0
-
-    label $d.result -text "" -anchor w -foreground blue \
-        -wraplength 380 -justify left
-    grid $d.result -row 8 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {6 0}
-
+    grid $d.sb -row 4 -column 0 -columnspan 3 -sticky w -padx 6 -pady {0 4}
+    label $d.result -text "" -anchor w -foreground blue -wraplength 340 -justify left
+    grid $d.result -row 5 -column 0 -columnspan 3 -sticky ew -padx 6
     frame $d.btns
-    button $d.btns.guess -text "Guess" \
-        -command [list ::VMDHole::_cvect_guess $d]
-    button $d.btns.z     -text "Use Z" \
-        -command [list ::VMDHole::_cvect_set_z $d]
-    button $d.btns.calc  -text "Compute" \
-        -command [list ::VMDHole::compute_vector $d]
-    button $d.btns.apply -text "Apply" \
-        -command [list destroy $d]
-    pack $d.btns.guess $d.btns.z $d.btns.calc $d.btns.apply -side left -padx 4
-    grid $d.btns -row 9 -column 0 -columnspan 3 -pady {6 12}
-
-    # Set the initial enabled/disabled state of the per-frame controls.
+    button $d.btns.guess -text "Guess" -command [list ::VMDHole::_cvect_guess $d]
+    button $d.btns.z     -text "Use Z" -command [list ::VMDHole::_cvect_set_z $d]
+    button $d.btns.calc  -text "Compute" -command [list ::VMDHole::compute_vector $d]
+    pack $d.btns.guess $d.btns.z $d.btns.calc -side left -padx 4
+    grid $d.btns -row 6 -column 0 -columnspan 3 -pady {4 6}
+    add_tooltip $d.sb.cv "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
+    add_tooltip $d.sb.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
     _cvect_sync_stab_controls $d
-
-    # Reserve TWO lines for the result text BEFORE snapshotting the window size, so a
-    # Guess / Compute result (which can wrap to two lines) does not push the button row
-    # out of the locked window. Then clear it back to empty.
-    $d.result configure -text "\n "
-    update idletasks
-    set _rw [winfo reqwidth $d]; set _rh [winfo reqheight $d]
-    wm geometry $d "${_rw}x${_rh}"
-    _center_toplevel $d $_rw $_rh
-    wm resizable $d 0 0
-    $d.result configure -text ""
 }
 
 proc ::VMDHole::_cvect_sync_stab_controls {d} {
@@ -23959,7 +23927,7 @@ proc ::VMDHole::_axis_stick_drag_end {d} {
 proc ::VMDHole::_axis_stick_sync_mode {d} {
     variable state
     set m $state(axis_stick_mode)
-    set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT (direction)" tunnel_start "Tunnel start point"} $m]
+    set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT (direction): tilt with the stick, or define it from two points" tunnel_start "Tunnel start point"} $m]
     catch {$d.hdr configure -text "Moving: $lbl"}
     catch {$d.sv.step_l configure -text [expr {[_axis_stick_is_dir $m] ? "Step (\u00b0)" : "Step (\u00c5)"}]}
     catch {$d.sv.step_e configure -textvariable ::VMDHole::state(axis_stick_step_[expr {[_axis_stick_is_dir $m] ? "cvect_deg" : "cpoint"}])}
@@ -23973,7 +23941,7 @@ proc ::VMDHole::_axis_stick_sync_mode {d} {
     # point neither - so the choice sits with the point it governs.
     catch {
         if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
-        if {$m eq "cvect"}  { grid $d.pf.cv } else { grid remove $d.pf.cv }
+        if {$m eq "cvect"}  { grid $d.vec; _cvect_sync_stab_controls $d.vec } else { grid remove $d.vec }
         if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
     }
     _axis_stick_sync_val_label $d
@@ -24005,7 +23973,7 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     }
     toplevel $d
     wm withdraw $d
-    wm title $d "Move CPOINT / CVECT"
+    wm title $d "CPOINT / CVECT"
     wm resizable $d 0 0
     label $d.hdr -font {Helvetica 9 bold}
     grid $d.hdr -row 0 -column 0 -columnspan 3 -sticky w -padx 10 -pady {10 4}
@@ -24025,18 +23993,13 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     checkbutton $d.pf.cp.tk -text "Track" -variable ::VMDHole::state(track_cpoint) -command ::VMDHole::_on_track_cpoint_toggled
     pack $d.pf.cp.l $d.pf.cp.st $d.pf.cp.tk -side left -padx {0 6}
     grid $d.pf.cp -row 0 -column 0 -sticky w
-    frame $d.pf.cv
-    label       $d.pf.cv.l  -text "Per-frame:"
-    checkbutton $d.pf.cv.st -text "Stabilize endpoints" -variable ::VMDHole::state(stabilize_cvect) -command [list ::VMDHole::_axis_stick_cvect_excl stab]
-    checkbutton $d.pf.cv.ex -text "Exact selection" -variable ::VMDHole::state(cvect_exact) -command [list ::VMDHole::_axis_stick_cvect_excl exact]
-    pack $d.pf.cv.l $d.pf.cv.st $d.pf.cv.ex -side left -padx {0 6}
-    grid $d.pf.cv -row 0 -column 0 -sticky w
+    frame $d.vec -relief groove -borderwidth 1
+    _build_vector_controls $d.vec
+    grid $d.vec -row 5 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
     label $d.pf.none -text "Per-frame: the tunnel search re-runs from this point each frame." -foreground gray40 -font {Helvetica 8}
     grid $d.pf.none -row 0 -column 0 -sticky w
     add_tooltip $d.pf.cp.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
     add_tooltip $d.pf.cp.tk "Moves CPOINT by the translation of a frozen patch of atoms - drift-free, rotation-blind."
-    add_tooltip $d.pf.cv.st "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
-    add_tooltip $d.pf.cv.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
 
     frame $d.pad
     grid $d.pad -row 2 -column 0 -columnspan 3 -pady {10 4}
@@ -24094,12 +24057,6 @@ proc ::VMDHole::_axis_stick_close {d} {
     }
 }
 
-proc ::VMDHole::_axis_stick_cvect_excl {which} {
-    # Stabilize and Exact are alternatives, the rule the Vector dialog applies.
-    variable state
-    if {$which eq "stab" && $state(stabilize_cvect)} { set state(cvect_exact) 0 }
-    if {$which eq "exact" && $state(cvect_exact)}    { set state(stabilize_cvect) 0 }
-}
 proc ::VMDHole::_axis_stick_nudge_cur {d dir} {
     variable state
     _axis_stick_nudge $state(axis_stick_mode) $dir
@@ -35491,6 +35448,8 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # has no polygon limit: a Connolly run at dot density 15 on a 200k-atom
     # system failed here with "sos_triangle produced no surface" whenever the
     # base had to be rebuilt from the raw cloud.
+    if {$lining_sph eq ""} { set lining_sph [_smooth_union_sph $frame $sph_file] }
+    set lsph [expr {$lining_sph ne "" ? $lining_sph : $sph_file}]
     set csgbase [_csg_base_mesh $run_dir $sph_file]
     # An uncached property recolor is a synchronous sph_process/sos_triangle build (on
     # an ALREADY-triangulated base - see load_surface_for_frame for the separate, much
@@ -35601,7 +35560,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
         if {[surface_has_geometry $plot0] && !$_v3ferr} {
             set _m3 [property_meta $state(hydro_scheme)]
             run_sos_triangle_3d_recolor $plot0 $plot \
-                [expr {$lining_sph ne "" ? $lining_sph : $sph_file}] $vfile3d $signed3 \
+                $lsph $vfile3d $signed3 \
                 [dict get $_m3 lo] [dict get $_m3 hi] $_use_cl3
             # D10 diagnostic: split the two costs on a large CONNOLLY so this can see WHICH step
             # is the single-threaded hiccup - the Tcl sidecar (per-atom values, SERIAL) vs the
@@ -35638,8 +35597,8 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
         # the recolor still maps each shell vertex to its nearest of those (ample
         # coverage) and it runs in ~2 s. Only the property compute uses $psph; the base
         # shell mesh (plot0) is unchanged.
-        set psph $sph_file
-        if {[_is_large_conn_sph $sph_file]} {
+        set psph $lsph
+        if {[_is_large_conn_sph $sph_file] && $lsph eq $sph_file} {
             set rsph [file join $run_dir "hole_conn_prop.sph"]
             if {![file exists $rsph] || [file mtime $rsph] < [file mtime $sph_file]} {
                 catch {_reduce_conn_sph $sph_file $rsph $state(endrad) 2000}
@@ -35702,8 +35661,8 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
         }
         set sidecar [file join $run_dir hole_hydro_atoms.dat]
         if {[surface_has_geometry $plot0] && \
-                ![catch {write_hydro_sidecar $molid $frame $sph_file $sidecar}]} {
-            run_sos_triangle_recolor $plot0 $plot $sph_file $sidecar $state(hydro_scheme)
+                ![catch {write_hydro_sidecar $molid $frame $lsph $sidecar}]} {
+            run_sos_triangle_recolor $plot0 $plot $lsph $sidecar $state(hydro_scheme)
             if {[surface_has_geometry $plot]} {
                 return [dict create kind vmd_plot path $plot]
             }
@@ -35717,8 +35676,8 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
             run_sph_process $sph_file $sos 0
         }
         set sidecar [file join $run_dir hole_hydro_atoms.dat]
-        if {![catch {write_hydro_sidecar $molid $frame $sph_file $sidecar}]} {
-            run_sos_triangle_hydro $sos $plot $sph_file $sidecar $state(hydro_scheme)
+        if {![catch {write_hydro_sidecar $molid $frame $lsph $sidecar}]} {
+            run_sos_triangle_hydro $sos $plot $lsph $sidecar $state(hydro_scheme)
             if {[surface_has_geometry $plot]} {
                 return [dict create kind vmd_plot path $plot]
             }
@@ -35738,7 +35697,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # centreline) the C recolour already uses, so both paths line against the
     # same geometry.
     colorize_hydrophobic $plot0 $plot \
-        [expr {$lining_sph ne "" ? $lining_sph : $sph_file}] $molid $frame
+        $lsph $molid $frame
     return [dict create kind vmd_plot path $plot]
 }
 

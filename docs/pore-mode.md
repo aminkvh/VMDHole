@@ -40,10 +40,10 @@ the first plane. It should lie inside the intended pore. Enter `x y z`, use a
 selection's centre of geometry (**COG**), or use VMD's centre of rotation
 (**COR**). Enable **Show cues** to display the point in the VMD view.
 
-`CVECT` is the channel direction. Enter a vector or use **Vector** to define two
-points. The Vector dialog can infer a direction with **Guess**, use the Z axis,
-or accept coordinates, VMD selections, and labelled atoms. HOLE searches in
-planes normal to the resulting vector. A poor direction can produce a valid
+`CVECT` is the channel direction. Enter a vector, or open the **⌖** dialog,
+whose CVECT page can also infer a direction with **Guess**, use the Z axis, or
+compute it from two points given as coordinates, VMD selections, or labelled
+atoms. HOLE searches in planes normal to the resulting vector. A poor direction can produce a valid
 calculation through the wrong cavity, so always inspect the centreline.
 
 The **⌖** button beside either field opens an on-screen stick: drag the pad or
@@ -95,8 +95,8 @@ every dot of the frame to the mean of itself and its nearest same-facing dot
 in each window frame, then triangulates as usual (the pure-Tcl fallback does
 the same, byte for byte). Windows clamp at the trajectory ends, as VMD's do.
 The profile, the Mean Profile and every other number stay per frame. The
-lining and facing residues follow the smoothed wall: they are tested against
-the spheres of every frame in the window.
+lining and facing residues, and the property colours, follow the smoothed
+wall: they are tested against the spheres of every frame in the window.
 
 The **Search** picker in HOLE Parameters chooses how each plane's sphere is
 found: **Monte Carlo (HOLE)**, HOLE's seeded simulated annealing, whose
