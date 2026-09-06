@@ -5005,6 +5005,30 @@ chk "the Lining overlay reads the new accessor" \
 chk "...and so does the Facing overlay" \
     [expr {[string first {_pore_surface_spheres $frame} \
         [info body ::VMDHole::update_pore_facing_rep]] >= 0}] 1
+chk "the Lining overlay tests against the smoothing window's spheres" \
+    [expr {[string first {_pore_surface_spheres $frame 1} \
+        [info body ::VMDHole::update_pore_lining_rep]] >= 0}] 1
+chk "...and so does the Facing overlay" \
+    [expr {[string first {_pore_surface_spheres $frame 1} \
+        [info body ::VMDHole::update_pore_facing_rep]] >= 0}] 1
+chk "changing the smoothing window refreshes the lining" \
+    [expr {[string first {update_pore_lining_rep} [info body ::VMDHole::_set_surface_smooth]] >= 0}] 1
+# The CVECT stick is a rotation: a quarter turn of x about z is y, and the
+# length never changes.
+set ::VMDHole::state(cvect) "1 0 0"
+::VMDHole::_axis_stick_rotate 0 0 1 90
+lassign $::VMDHole::state(cvect) _rx _ry _rz
+chk "stick tilt: x turned 90 deg about z is y" \
+    [expr {abs($_rx) < 1e-6 && abs($_ry-1) < 1e-6 && abs($_rz) < 1e-6}] 1
+::VMDHole::_axis_stick_rotate 1 0 0 30
+lassign $::VMDHole::state(cvect) _rx _ry _rz
+chk "stick tilt keeps CVECT a unit vector" \
+    [expr {abs(sqrt($_rx*$_rx+$_ry*$_ry+$_rz*$_rz)-1) < 1e-6}] 1
+chk "stick tilt: 30 deg about x moves y toward z" \
+    [expr {abs($_ry-cos(30*3.14159265358979/180)) < 1e-6 && abs($_rz-sin(30*3.14159265358979/180)) < 1e-6}] 1
+chk "stick tilt drops the two-point CVECT definition" \
+    [expr {$::VMDHole::state(cvect_def_p1) eq "" && $::VMDHole::state(cvect_def_p2) eq ""}] 1
+set ::VMDHole::state(cvect) "0 0 1"
 # Voxel thinning: 22,439 raw dots -> 4,329, 1,705 ms -> 346 ms (4.9x), and only
 # 10 of 424 lining residues differ from the unthinned answer.
 set _thin [info body ::VMDHole::_thin_spheres_to_voxels]

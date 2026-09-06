@@ -49,9 +49,10 @@ calculation through the wrong cavity, so always inspect the centreline.
 The **⌖** button beside either field opens an on-screen stick: drag the pad or
 click the arrows to move `CPOINT`, or tilt `CVECT`, relative to the current
 view, so up, down, left and right always match the screen whatever the model's
-rotation. The step entry sets the distance per click and the drag sensitivity.
-The same dialog holds the per-frame modes described below, and the cue is shown
-while it is open.
+rotation. `CPOINT` moves by the step in Å; `CVECT` turns by the step in degrees
+about the screen's up or right axis, so it only ever changes direction (HOLE
+uses nothing else of it). The same dialog holds the per-frame modes described
+below, and the cue is shown while it is open.
 
 For a trajectory, `CPOINT` may be static, carried by a local rigid-body fit
 (**Stabilize**), or re-centred on nearby atoms (**Track**). A two-point `CVECT`
@@ -93,7 +94,9 @@ frames' distance fields on one grid and marches the mean; sos_triangle moves
 every dot of the frame to the mean of itself and its nearest same-facing dot
 in each window frame, then triangulates as usual (the pure-Tcl fallback does
 the same, byte for byte). Windows clamp at the trajectory ends, as VMD's do.
-The profile, the Mean Profile and every other number stay per frame.
+The profile, the Mean Profile and every other number stay per frame. The
+lining and facing residues follow the smoothed wall: they are tested against
+the spheres of every frame in the window.
 
 The **Search** picker in HOLE Parameters chooses how each plane's sphere is
 found: **Monte Carlo (HOLE)**, HOLE's seeded simulated annealing, whose

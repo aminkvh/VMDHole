@@ -523,7 +523,7 @@ namespace eval ::VMDHole:: {
         axis_stick_mode cpoint
         surface_smooth follow
         axis_stick_step_cpoint 1.0
-        axis_stick_step_cvect 0.15
+        axis_stick_step_cvect_deg 1.0
         cvect_def_p1 {}
         cvect_def_p2 {}
         dynamic_axis 0
@@ -17700,11 +17700,9 @@ proc ::VMDHole::_surface_smooth_tag {} {
     return [expr {$n > 0 ? "_s$n" : ""}]
 }
 
-proc ::VMDHole::_surface_smooth_with {frame} {
-    # The other frames of frame's window, as the sphere files a mesher takes
-    # (a capsule run's kept slices). {} when smoothing is off, the run is a
-    # tunnel search, or no neighbour has a sphere file yet.
-    variable results
+proc ::VMDHole::_surface_smooth_frames {frame} {
+    # The other frames in the smoothing window of `frame`, clamped at the ends.
+    # {} when smoothing is off or the run is a tunnel search.
     variable result_frames
     set n [_surface_smooth_window]
     if {$n <= 0} { return {} }
@@ -17712,10 +17710,20 @@ proc ::VMDHole::_surface_smooth_with {frame} {
     set order [lsort -integer $result_frames]
     set i [lsearch -exact $order $frame]
     if {$i < 0} { return {} }
-    set with {}
+    set out {}
     for {set j [expr {$i - $n}]} {$j <= $i + $n} {incr j} {
         if {$j == $i || $j < 0 || $j >= [llength $order]} continue
-        set g [lindex $order $j]
+        lappend out [lindex $order $j]
+    }
+    return $out
+}
+
+proc ::VMDHole::_surface_smooth_with {frame} {
+    # The window frames as the sphere files a mesher takes (a capsule run's
+    # kept slices); a neighbour with no sphere file yet is skipped.
+    variable results
+    set with {}
+    foreach g [_surface_smooth_frames $frame] {
         if {![dict exists $results $g sph_file]} continue
         set sph [dict get $results $g sph_file]
         if {![file exists $sph]} continue
@@ -17742,6 +17750,8 @@ proc ::VMDHole::_set_surface_smooth {val disp} {
     set state(surface_smooth_disp) $disp
     set last_geom_key ""
     catch {apply_display_change}
+    catch {update_pore_lining_rep}
+    catch {update_pore_facing_rep}
 }
 
 proc ::VMDHole::_surface_smooth_label {v} {
@@ -23845,13 +23855,30 @@ proc ::VMDHole::_axis_stick_apply {mode dx dy dz} {
     if {$cur eq {}} { return }
     lassign $cur cx cy cz
     set key [_axis_stick_key $mode]
-    if {![_axis_stick_is_dir $mode]} {
-        set state($key) [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
-    } else {
-        set nv [_normalize_dir [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
-        if {$nv ne {}} { set state(cvect) [format_triplet $nv] }
-    }
+    if {[_axis_stick_is_dir $mode]} { return }
+    set state($key) [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
     catch {_sync_point_marker [_axis_stick_key $mode] [_axis_stick_cue_key $mode]}
+}
+
+proc ::VMDHole::_axis_stick_rotate {ax ay az deg} {
+    # CVECT tilted by deg about the unit axis (ax ay az), Rodrigues' formula:
+    # the direction turns and never stretches. The cue is the CPOINT marker's
+    # arrow, which redraws from the new field.
+    variable state
+    set cur [_axis_stick_current cvect]
+    if {$cur eq {}} { return }
+    lassign $cur vx vy vz
+    set t [expr {$deg*3.14159265358979/180.0}]
+    set c [expr {cos($t)}]; set sn [expr {sin($t)}]
+    set d [expr {$ax*$vx+$ay*$vy+$az*$vz}]
+    set kx [expr {$ay*$vz-$az*$vy}]; set ky [expr {$az*$vx-$ax*$vz}]; set kz [expr {$ax*$vy-$ay*$vx}]
+    set nv [_normalize_dir [list [expr {$vx*$c+$kx*$sn+$ax*$d*(1-$c)}] \
+                                 [expr {$vy*$c+$ky*$sn+$ay*$d*(1-$c)}] \
+                                 [expr {$vz*$c+$kz*$sn+$az*$d*(1-$c)}]]]
+    if {$nv eq {}} { return }
+    _clear_cvect_def
+    set state(cvect) [format_triplet $nv]
+    catch {_sync_point_marker cpoint show_cpoint_marker}
 }
 
 proc ::VMDHole::_axis_stick_nudge {mode dir} {
@@ -23860,8 +23887,18 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
     set molid ""; catch {set molid [resolve_molid]}
     if {$molid eq ""} { return }
     lassign [_view_right_up $molid] rx ry rz ux uy uz
-    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect) : $state(axis_stick_step_cpoint)}]
+    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
     if {![string is double -strict $step]} { set step 1.0 }
+    if {[_axis_stick_is_dir $mode]} {
+        # tip to the right = turn about the screen's up axis; up = about its right axis
+        switch -- $dir {
+            right { _axis_stick_rotate $ux $uy $uz $step }
+            left  { _axis_stick_rotate $ux $uy $uz [expr {-$step}] }
+            up    { _axis_stick_rotate $rx $ry $rz [expr {-$step}] }
+            down  { _axis_stick_rotate $rx $ry $rz $step }
+        }
+        return
+    }
     switch -- $dir {
         right { _axis_stick_apply $mode [expr {$rx*$step}] [expr {$ry*$step}] [expr {$rz*$step}] }
         left  { _axis_stick_apply $mode [expr {-$rx*$step}] [expr {-$ry*$step}] [expr {-$rz*$step}] }
@@ -23897,8 +23934,14 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
     set molid ""; catch {set molid [resolve_molid]}
     if {$molid eq ""} { return }
     lassign [_view_right_up $molid] rx ry rz ux uy uz
-    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect) : $state(axis_stick_step_cpoint)}]
+    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
     if {![string is double -strict $step]} { set step 1.0 }
+    if {[_axis_stick_is_dir $mode]} {
+        set sens [expr {$step/5.0}]
+        if {$dxpix != 0} { _axis_stick_rotate $ux $uy $uz [expr {$dxpix*$sens}] }
+        if {$dypix != 0} { _axis_stick_rotate $rx $ry $rz [expr {$dypix*$sens}] }
+        return
+    }
     set sens [expr {$step/30.0}]
     # Canvas y grows downward, so screen "up" is a NEGATIVE canvas dy.
     set wx [expr {$dxpix*$sens*$rx - $dypix*$sens*$ux}]
@@ -23918,8 +23961,13 @@ proc ::VMDHole::_axis_stick_sync_mode {d} {
     set m $state(axis_stick_mode)
     set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT (direction)" tunnel_start "Tunnel start point"} $m]
     catch {$d.hdr configure -text "Moving: $lbl"}
-    catch {$d.step_l configure -text [expr {[_axis_stick_is_dir $m] ? "Step (tilt)" : "Step"}]}
-    catch {$d.step_e configure -textvariable ::VMDHole::state(axis_stick_step_[expr {[_axis_stick_is_dir $m] ? "cvect" : "cpoint"}])}
+    catch {$d.sv.step_l configure -text [expr {[_axis_stick_is_dir $m] ? "Step (\u00b0)" : "Step (\u00c5)"}]}
+    catch {$d.sv.step_e configure -textvariable ::VMDHole::state(axis_stick_step_[expr {[_axis_stick_is_dir $m] ? "cvect_deg" : "cpoint"}])}
+    catch {
+        # only this mode's targets: a pore run has no tunnel start, a tunnel run no CPOINT/CVECT
+        if {[analysis_mode] eq "tunnel"} { grid remove $d.m_cp $d.m_cv; grid $d.m_ts } \
+        else { grid $d.m_cp $d.m_cv; grid remove $d.m_ts }
+    }
     # Per-frame handling belongs to the thing being moved: CPOINT carries
     # Track/Stabilize, CVECT its own Stabilize/Exact pair, the tunnel start
     # point neither - so the choice sits with the point it governs.
@@ -24006,21 +24054,21 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     grid $d.pad.canv  -row 1 -column 1
     grid $d.pad.right -row 1 -column 2
     grid $d.pad.down  -row 2 -column 1
-    add_tooltip $d.pad.canv "Drag: moves continuously in the direction you drag, relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation."
+    add_tooltip $d.pad.canv "Drag: moves the point, or tilts CVECT, in the direction you drag relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation."
     bind $d.pad.canv <ButtonPress-1> [list ::VMDHole::_axis_stick_drag_start $d %x %y]
     bind $d.pad.canv <B1-Motion>     [list ::VMDHole::_axis_stick_drag_motion $d %x %y]
     bind $d.pad.canv <ButtonRelease-1> [list ::VMDHole::_axis_stick_drag_end $d]
 
-    label $d.step_l -text "Step"
-    entry $d.step_e -width 8
-    grid $d.step_l -row 3 -column 0 -sticky e -padx 10 -pady {4 10}
-    grid $d.step_e -row 3 -column 1 -sticky w -padx 10 -pady {4 10}
-    add_tooltip $d.step_e "Distance per arrow click, and the drag sensitivity - a bigger step also makes the pad move faster per pixel dragged."
-
-    label $d.val_l -text "Value"
-    label $d.val_v -textvariable ::VMDHole::state(cpoint) -width 22 -anchor w -relief sunken
-    grid $d.val_l -row 4 -column 0 -sticky e -padx 10
-    grid $d.val_v -row 4 -column 1 -sticky w -padx 10 -pady {0 10}
+    frame $d.sv
+    label   $d.sv.step_l -text "Step"
+    spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right
+    label   $d.sv.val_l -text "Value"
+    label   $d.sv.val_v -textvariable ::VMDHole::state(cpoint) -width 20 -anchor w -relief sunken
+    pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
+    pack $d.sv.val_l -side left -padx {10 4}
+    pack $d.sv.val_v -side left
+    grid $d.sv -row 3 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 10}
+    add_tooltip $d.sv.step_e "Per click: \u00c5 for a point, degrees of tilt for CVECT. Also the drag sensitivity."
 
     button $d.close -text "Close" -command [list ::VMDHole::_axis_stick_close $d]
     wm protocol $d WM_DELETE_WINDOW [list ::VMDHole::_axis_stick_close $d]
@@ -24059,8 +24107,8 @@ proc ::VMDHole::_axis_stick_nudge_cur {d dir} {
 
 proc ::VMDHole::_axis_stick_sync_val_label {d} {
     variable state
-    if {![winfo exists $d.val_v]} { return }
-    catch {$d.val_v configure -textvariable ::VMDHole::state([_axis_stick_key $state(axis_stick_mode)])}
+    if {![winfo exists $d.sv.val_v]} { return }
+    catch {$d.sv.val_v configure -textvariable ::VMDHole::state([_axis_stick_key $state(axis_stick_mode)])}
 }
 proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d }
 
@@ -29085,7 +29133,7 @@ proc ::VMDHole::_capsule_surface_spheres {sph_file} {
     return $out
 }
 
-proc ::VMDHole::_pore_surface_spheres {frame} {
+proc ::VMDHole::_pore_surface_spheres {frame {window 0}} {
     # The sphere set the lining/facing test should measure against.
     #
     # Off CONNOLLY this is the centreline stack, exactly as before.
@@ -29107,6 +29155,13 @@ proc ::VMDHole::_pore_surface_spheres {frame} {
     variable results
     variable _pore_surf_memo
     variable mean_surface_sph
+    if {$window && !([info exists state(show_mean_surface)] && $state(show_mean_surface))} {
+        # The smoothed wall: the spheres of every frame in the smoothing
+        # window, so the lining and facing tests follow what is drawn.
+        set out [_pore_surface_spheres $frame]
+        foreach g [_surface_smooth_frames $frame] { lappend out {*}[_pore_surface_spheres $g] }
+        return $out
+    }
     # When Mean Profile's own tube is the surface on screen, measure against
     # THAT geometry instead of whichever per-frame result was last selected -
     # otherwise lining/facing stays visually anchored to a frame the user may
@@ -29504,7 +29559,7 @@ proc ::VMDHole::update_pore_lining_rep {{verbose 0}} {
         if {$verbose} { set state(status) "Pore lining: no sphere data for this frame." }
         return
     }
-    set centers [_pore_surface_spheres $frame]
+    set centers [_pore_surface_spheres $frame 1]
     if {[llength $centers] < 2} {
         if {$verbose} { set state(status) "Pore lining: too few centerline spheres for this frame." }
         return
@@ -29798,7 +29853,7 @@ proc ::VMDHole::update_pore_facing_rep {{verbose 0}} {
         if {$verbose} { set state(status) "Pore facing: no sphere data for this frame." }
         return
     }
-    set centers [_pore_surface_spheres $frame]
+    set centers [_pore_surface_spheres $frame 1]
     if {[llength $centers] < 2} {
         if {$verbose} { set state(status) "Pore facing: too few centerline spheres for this frame." }
         return
