@@ -84,9 +84,6 @@ namespace eval ::VMDHole:: {
     # scrolls internally - so lowering this shortens the window without putting
     # any control out of reach.
     variable SIDEBAR_HEIGHT_BUDGET 470
-    # Ion Flow's R-Z frame needs a near-straight pathway; past this fraction of
-    # axial-span deviation from the PCA axis, a point in the tunnel reads as bulk.
-    variable TUNNEL_FLOW_MAX_CURVATURE 0.25
 
     variable version 1.0.1
     # Optional nightly/dev build tag, appended to the title, console banner and CPU
@@ -2993,9 +2990,8 @@ proc ::VMDHole::_mode_tab_set {mode} {
     # line the constriction up across frames, since a rank's route identity
     # changes frame to frame.
     # Ion Flow is reused for the SELECTED tunnel (_tunnel_flow_gather supplies its
-    # centreline/axis in place of the .sph), but only for a near-straight pathway -
-    # a curved tunnel is refused with a message rather than plotted, since the whole
-    # view is measured against one straight axis. Hydration stays HOLE-only: it
+    # centreline in place of the .sph), measured along the route itself - arc
+    # length and distance from it - so a bent tunnel plots as it is. Hydration stays HOLE-only: it
     # needs the linear water axis a branching tunnel does not have.
     if {$mode eq "tunnel"} { return {profile minr heatmap mean hist ionflow} }
     return {profile heatmap minr mean hist hydration ionflow}
@@ -5809,7 +5805,7 @@ proc ::VMDHole::_traj_tab_placeholder_text {kind} {
             ? "Run the tunnel search on several frames,\nthen pick a tunnel, for its radius over time." \
             : "Run HOLE on multiple frames to see the pore radius over time."}] }
         ionflow { return [expr {$tunnel \
-            ? "Ion occupancy + flow for the selected tunnel.\nNeeds ions, >=2 frames, and a near-straight\ntunnel. Click Compute." \
+            ? "Ion occupancy + flow for the selected tunnel,\nmeasured along its route. Needs ions and\n>=2 frames. Click Compute." \
             : "Ion or water occupancy + flow field in the pore's R-Z frame, plus measured\nflux across the constriction. MD-trajectory only (needs a trajectory of >=2 frames). Click Compute."}] }
         default { return "" }
     }
@@ -39143,37 +39139,11 @@ proc ::VMDHole::_flow_local_atoms {molid frame centers radii} {
     return [list 1 $atoms]
 }
 
-proc ::VMDHole::_centerline_axis_curvature {centers u} {
-    # How far a centreline bends away from its OWN PCA axis: the maximum
-    # perpendicular deviation as a fraction of the axis span. 0 is a straight line.
-    lassign $u ux uy uz mx my mz
-    set zmin 1e30; set zmax -1e30; set dev 0.0
-    foreach c $centers {
-        lassign $c x y z
-        set dx [expr {$x-$mx}]; set dy [expr {$y-$my}]; set dz [expr {$z-$mz}]
-        set t [expr {$dx*$ux+$dy*$uy+$dz*$uz}]
-        if {$t < $zmin} { set zmin $t }
-        if {$t > $zmax} { set zmax $t }
-        set p2 [expr {$dx*$dx+$dy*$dy+$dz*$dz-$t*$t}]
-        if {$p2 > 0 && sqrt($p2) > $dev} { set dev [expr {sqrt($p2)}] }
-    }
-    set span [expr {$zmax-$zmin}]
-    if {$span <= 0} { return 1.0 }
-    return [expr {$dev/$span}]
-}
-
 proc ::VMDHole::_tunnel_flow_gather {molid frame} {
-    # Tunnel-mode counterpart of _asym_gather: the SELECTED tunnel rank's own
-    # centreline in this frame, its PCA axis, and the same channel-local atoms.
-    # Returns the identical {centers radii atoms u} shape, so _ion_flow_scan's R-Z
-    # machinery needs no other change.
-    #
-    # REFUSES a strongly curved tunnel, because Ion Flow measures every ion as
-    # (z along ONE straight axis, R from that axis) - see
-    # Same "this geometry is out of
-    # scope" refusal _asym_gather already makes for a CONNOLLY point cloud.
+    # The selected route's centres and radii, the atoms around it, and its PCA
+    # axis - the sphere index's sort key only: Ion Flow measures a tunnel along
+    # the route itself (_ion_flow_path_coord), so a bend is not read as bulk.
     variable state
-    variable TUNNEL_FLOW_MAX_CURVATURE
     set tid [expr {[info exists state(tunnel_selected_id)] ? $state(tunnel_selected_id) : ""}]
     set tuple [_tunnel_tuple_for $frame $tid]
     if {$tuple eq ""} { return "" }
@@ -39188,54 +39158,9 @@ proc ::VMDHole::_tunnel_flow_gather {molid frame} {
         lappend radii [lindex $pts [expr {$b+3}]]
     }
     set u [channel_axis_pca $centers]
-    set curv [_centerline_axis_curvature $centers $u]
-    if {$curv > $TUNNEL_FLOW_MAX_CURVATURE} {
-        # Name the tunnels that DO qualify. Rank order comes from MOLE's own
-        # scoring, not from straightness, so without this the user has no way to
-        # tell which of N tunnels to pick - on the pentamer fixture 59 of 60 are
-        # refused, and a bare "select a straighter tunnel" is a dead end.
-        set alt {}
-        foreach c [_tunnel_flow_candidates $frame] {
-            lassign $c cid ccurv
-            lappend alt [format "%s (%.0f%%)" $cid [expr {$ccurv*100.0}]]
-            if {[llength $alt] >= 3} { break }
-        }
-        set hint [expr {[llength $alt] \
-            ? " Qualifying: [join $alt {, }]." \
-            : " No tunnel in this frame is straight enough."}]
-        catch {set state(status) [format \
-            "Ion Flow plots ions as (distance from the axis) vs (position along it), and that frame is measured against ONE straight axis - so on a bent tunnel an ion sitting INSIDE it reads as far-off-axis, i.e. as bulk. Tunnel %s bends %.0f%% of its length off its own axis (limit %.0f%%), so the plot would invert inside and outside rather than merely blur.%s" \
-            $tid [expr {$curv*100.0}] [expr {$TUNNEL_FLOW_MAX_CURVATURE*100.0}] $hint]}
-        return ""
-    }
     lassign [_flow_local_atoms $molid $frame $centers $radii] ok atoms
     if {!$ok} { return "" }
     return [list $centers $radii $atoms $u]
-}
-
-proc ::VMDHole::_tunnel_flow_candidates {frame} {
-    # {id curvature} for every tunnel in this frame straight enough for Ion Flow,
-    # straightest first. Drives the refusal message's "Qualifying: ..." hint.
-    variable tunnel_results
-    variable TUNNEL_FLOW_MAX_CURVATURE
-    if {$frame eq "" || ![info exists tunnel_results($frame)]} { return {} }
-    set out {}
-    set id 0
-    foreach t $tunnel_results($frame) {
-        incr id
-        set pts [lindex $t 4]
-        set n [expr {[llength $pts]/4}]
-        if {$n < 3} { continue }
-        set cs {}
-        for {set i 0} {$i < $n} {incr i} {
-            set b [expr {$i*4}]
-            lappend cs [list [lindex $pts $b] [lindex $pts [expr {$b+1}]] \
-                             [lindex $pts [expr {$b+2}]]]
-        }
-        set cv [_centerline_axis_curvature $cs [channel_axis_pca $cs]]
-        if {$cv <= $TUNNEL_FLOW_MAX_CURVATURE} { lappend out [list $id $cv] }
-    }
-    return [lsort -real -index 1 $out]
 }
 
 proc ::VMDHole::_flow_interior_rmax {xv yv} {
@@ -40886,6 +40811,84 @@ proc ::VMDHole::_nearest_int_in_sorted_list {n sorted} {
     return [lindex $sorted $lo]
 }
 
+proc ::VMDHole::_ion_flow_path_spheres {centers radii} {
+    # One entry per centre, {cx cy cz r s tx ty tz}: s the arc length from the
+    # route's start, t the unit tangent (central difference). The frame a
+    # tunnel's Ion Flow is measured in, so a bend does not read as bulk.
+    set n [llength $centers]
+    set arc {}; set tot 0.0; set prev ""
+    foreach c $centers {
+        if {$prev ne ""} {
+            lassign $prev px py pz; lassign $c x y z
+            set tot [expr {$tot + sqrt(($x-$px)*($x-$px)+($y-$py)*($y-$py)+($z-$pz)*($z-$pz))}]
+        }
+        lappend arc $tot; set prev $c
+    }
+    set out {}
+    for {set i 0} {$i < $n} {incr i} {
+        set a [lindex $centers [expr {$i > 0 ? $i-1 : 0}]]
+        set b [lindex $centers [expr {$i < $n-1 ? $i+1 : $n-1}]]
+        set t [_normalize_dir [list [expr {[lindex $b 0]-[lindex $a 0]}] \
+                                    [expr {[lindex $b 1]-[lindex $a 1]}] \
+                                    [expr {[lindex $b 2]-[lindex $a 2]}]]]
+        if {$t eq {}} { set t {0.0 0.0 1.0} }
+        lappend out [concat [lindex $centers $i] [list [lindex $radii $i] [lindex $arc $i]] $t]
+    }
+    return $out
+}
+
+proc ::VMDHole::_ion_flow_tuple_path {tuple} {
+    # _ion_flow_path_spheres for a tunnel tuple's points.
+    set pts [lindex $tuple 4]
+    set n [expr {[llength $pts]/4}]
+    set cs {}; set rs {}
+    for {set i 0} {$i < $n} {incr i} {
+        set b [expr {$i*4}]
+        lappend cs [lrange $pts $b [expr {$b+2}]]
+        lappend rs [lindex $pts [expr {$b+3}]]
+    }
+    return [_ion_flow_path_spheres $cs $rs]
+}
+
+proc ::VMDHole::_ion_flow_path_coord {wx wy wz spheres} {
+    # {s R}: arc length along the route and distance from it, taken at the
+    # nearest centre's tangent. Same arithmetic order as the kernel's path
+    # mode (sos_triangle --ionflow-project, "path 1").
+    set best 1e30; set bi -1; set i -1
+    foreach e $spheres {
+        incr i
+        set dx [expr {$wx-[lindex $e 0]}]; set dy [expr {$wy-[lindex $e 1]}]; set dz [expr {$wz-[lindex $e 2]}]
+        set dd [expr {$dx*$dx+$dy*$dy+$dz*$dz}]
+        if {$dd < $best} { set best $dd; set bi $i }
+    }
+    if {$bi < 0} { return [list 0.0 1e30] }
+    lassign [lindex $spheres $bi] cx cy cz cr arc tx ty tz
+    set dx [expr {$wx-$cx}]; set dy [expr {$wy-$cy}]; set dz [expr {$wz-$cz}]
+    set proj [expr {$dx*$tx+$dy*$ty+$dz*$tz}]
+    set perp [expr {$best-$proj*$proj}]
+    return [list [expr {$arc+$proj}] [expr {$perp > 0.0 ? sqrt($perp) : 0.0}]]
+}
+
+proc ::VMDHole::_ion_flow_water_query_box {wsel cx cy cz Lx Ly Lz spheres pad} {
+    # Water within pad of the route's bounding box, min-imaged about the
+    # protein centre like _ion_flow_water_query; the route replaces the axis.
+    set lo {1e30 1e30 1e30}; set hi {-1e30 -1e30 -1e30}
+    foreach e $spheres {
+        for {set k 0} {$k < 3} {incr k} {
+            set v [lindex $e $k]
+            if {$v < [lindex $lo $k]} { lset lo $k $v }
+            if {$v > [lindex $hi $k]} { lset hi $k $v }
+        }
+    }
+    set terms {}
+    foreach c {x y z} o [list $cx $cy $cz] L [list $Lx $Ly $Lz] l $lo h $hi {
+        set d "($c - [_selnum $o])"
+        if {$L > 0} { set Ls [_selnum $L]; set d "($d - $Ls*floor($d/$Ls + 0.5))" }
+        lappend terms "($d > [_selnum [expr {$l-$o-$pad}]]) and ($d < [_selnum [expr {$h-$o+$pad}]])"
+    }
+    return "($wsel) and [join $terms { and }]"
+}
+
 proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     # with_water=1 additionally scans WATER (one oxygen per molecule, the
     # Hydration tab's water selection) as its own "Water" species - see the
@@ -40907,9 +40910,10 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     variable result_frames
     variable tunnel_result_frames
     variable results
-    # Tunnel mode swaps ONLY the pore geometry (centreline + axis + per-frame
-    # radii); everything below - the R-Z frame, the PBC min-imaging, the ion scan -
-    # is mode-independent. _tunnel_flow_gather refuses a curved tunnel outright.
+    # Tunnel mode swaps the pore geometry (centreline + per-frame radii) and
+    # the coordinate frame: a tunnel is measured along its route (arc length,
+    # distance from it - _ion_flow_path_coord) where a pore uses its axis.
+    # The PBC min-imaging and the ion scan are mode-independent.
     set _flow_tunnel [expr {[analysis_mode] eq "tunnel"}]
     set _dbg_ionflow [expr {[info exists ::VMDHole::_scrub_debug] && $::VMDHole::_scrub_debug}]
     set _DBG_t00 [clock milliseconds]
@@ -40990,9 +40994,13 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     }
     # axial extent + constriction Z (relative to the centerline centroid m)
     set zmin0 1e30; set zmax0 -1e30; set zc 0.0; set rmin_hole 1e30
+    # a tunnel's z is the arc length along its own route, not an axis projection
+    set _refpath [expr {$_flow_tunnel ? [_ion_flow_path_spheres $centers $radii] : {}}]
+    set _ci -1
     foreach c $centers r $radii {
+        incr _ci
         lassign $c cx cy cz
-        set z [expr {($cx-$mx)*$ux+($cy-$my)*$uy+($cz-$mz)*$uz}]
+        set z [expr {$_flow_tunnel ? [lindex $_refpath $_ci 4] : ($cx-$mx)*$ux+($cy-$my)*$uy+($cz-$mz)*$uz}]
         if {$z < $zmin0} { set zmin0 $z }
         if {$z > $zmax0} { set zmax0 $z }
         if {$r < $rmin_hole} { set rmin_hole $r; set zc $z }
@@ -41033,9 +41041,11 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     if {$rmax_hole <= 0} {
         # Fallback: the reference frame's own interior max (profiles unavailable).
         set lo_z [expr {$zmin0+0.10*$span0}]; set hi_z [expr {$zmax0-0.10*$span0}]
+        set _ci -1
         foreach c $centers r $radii {
+            incr _ci
             lassign $c cx cy cz
-            set z [expr {($cx-$mx)*$ux+($cy-$my)*$uy+($cz-$mz)*$uz}]
+            set z [expr {$_flow_tunnel ? [lindex $_refpath $_ci 4] : ($cx-$mx)*$ux+($cy-$my)*$uy+($cz-$mz)*$uz}]
             if {$z >= $lo_z && $z <= $hi_z && $r > $rmax_hole} { set rmax_hole $r }
         }
     }
@@ -41084,16 +41094,9 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             set _tid [_tunnel_rank_in_frame $_frm]
             set _tp [_tunnel_tuple_for $_frm $_tid]
             if {$_tp eq ""} { continue }
-            set _pp [lindex $_tp 4]
-            set _np [expr {[llength $_pp]/4}]
-            for {set _i 0} {$_i < $_np} {incr _i} {
-                set _b4 [expr {$_i*4}]
-                set _rr [lindex $_pp [expr {$_b4+3}]]
+            foreach _e [_ion_flow_tuple_path $_tp] {
+                lassign $_e _cx _cy _cz _rr _z
                 if {![string is double -strict $_rr] || $_rr <= 0.005} continue
-                set _cx [lindex $_pp $_b4]
-                set _cy [lindex $_pp [expr {$_b4+1}]]
-                set _cz [lindex $_pp [expr {$_b4+2}]]
-                set _z [expr {($_cx-$mx)*$ux+($_cy-$my)*$uy+($_cz-$mz)*$uz}]
                 if {$_z < $_zpool_min} { set _zpool_min $_z }
                 if {$_z > $_zpool_max} { set _zpool_max $_z }
                 if {$_rr > $scan_r} continue
@@ -41285,7 +41288,8 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     set _wnw 0; set _wbytes 0; set _wfail 0
     array unset _wset_written
     set _wnofast [expr {[info exists _ion_flow_no_fast] && $_ion_flow_no_fast}]
-    if {$_wsel_txt ne "" && !$_wnofast && [fast_available ionflowproject]} {
+    if {$_wsel_txt ne "" && !$_wnofast && [fast_available ionflowproject] \
+            && (!$_flow_tunnel || [fast_available ionflowpath])} {
         # Two ways to hand the water to the binary. The cheap one dumps EVERY
         # water coordinate as a binary block per frame and lets C do the
         # cylinder/window filter: writing one atomselect's coordinates costs
@@ -41296,7 +41300,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
         # what _ion_flow_water_static checks - a coordinate-dependent water
         # selection (a user's "water within 8 of protein") keeps the older
         # route, where each frame is selected and filtered on its own.
-        if {[sos_triangle_has_feature ionflowcoords] && [_ion_flow_water_static $molid $_wsel_txt [molinfo $molid get numframes]]} {
+        if {[sos_triangle_has_feature ionflowcoords] && (!$_flow_tunnel || [sos_triangle_has_feature ionflowpath]) && [_ion_flow_water_static $molid $_wsel_txt [molinfo $molid get numframes]]} {
             if {![catch {atomselect $molid $_wsel_txt} _wsel_obj]} {
                 set _wnw [$_wsel_obj num]
                 if {$_wnw > 0} { set _wcoords 1 } else { catch {$_wsel_obj delete}; set _wsel_obj "" }
@@ -41305,7 +41309,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             }
         }
         set _wjb [_ion_flow_project_open $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}] \
-                      [expr {$_wcoords ? [$_wsel_obj get index] : {}}]]
+                      [expr {$_wcoords ? [$_wsel_obj get index] : {}}] $_flow_tunnel]
         if {[llength $_wjb]} {
             lassign $_wjb _wjob _wfh _wcfh
             set _wfast 1
@@ -41338,15 +41342,12 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             set _tid [_tunnel_rank_in_frame $_frm]
             set _tp [_tunnel_tuple_for $_frm $_tid]
             if {$_tp eq ""} continue
-            set _pts [lindex $_tp 4]
-            set _np [expr {[llength $_pts]/4}]
+            # {cx cy cz r s tx ty tz}: the route frame the kernel and the Tcl loop measure in
             set _sp {}
-            for {set _i 0} {$_i < $_np} {incr _i} {
-                set _b4 [expr {$_i*4}]
-                set _rr [lindex $_pts [expr {$_b4+3}]]
+            foreach _e [_ion_flow_tuple_path $_tp] {
+                set _rr [lindex $_e 3]
                 if {![string is double -strict $_rr] || $_rr <= 0.005} continue
-                lappend _sp [list [lindex $_pts $_b4] [lindex $_pts [expr {$_b4+1}]] \
-                                  [lindex $_pts [expr {$_b4+2}]] $_rr]
+                lappend _sp $_e
             }
             if {[llength $_sp]} { set _frame_spheres($_frm) $_sp }
         }
@@ -41436,6 +41437,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     set psel ""; catch {atomselect $molid protein} psel
     set nf [molinfo $molid get numframes]
     # per-ion per-frame MIN-IMAGE cartesian offset from the protein COM (no time-unwrap)
+    if {$_flow_tunnel && ![array size _frame_spheres]} { return "" }
     set tr_z {}; set tr_r {}; set tr_f {}; set tr_d3 {}
     for {set k 0} {$k < $nions} {incr k} { lappend tr_z {}; lappend tr_r {}; lappend tr_f {}; lappend tr_d3 {} }
     set pcom_prev {}; set npjump 0; set box_lz 0.0
@@ -41491,9 +41493,13 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             if {$Lx>0} { set rx [expr {$rx-$Lx*round($rx/double($Lx))}] }
             if {$Ly>0} { set ry [expr {$ry-$Ly*round($ry/double($Ly))}] }
             if {$Lz>0} { set rz [expr {$rz-$Lz*round($rz/double($Lz))}] }
-            set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
-            set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
-            set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+            if {$_flow_tunnel} {
+                lassign [_ion_flow_path_coord [expr {$comx+$rx}] [expr {$comy+$ry}] [expr {$comz+$rz}] $_cur_spheres] z R
+            } else {
+                set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
+                set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
+                set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+            }
             if {$R < $scan_r} {
                 lset tr_z $idx [linsert [lindex $tr_z $idx] end $z]
                 lset tr_r $idx [linsert [lindex $tr_r $idx] end $R]
@@ -41515,8 +41521,12 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
             # changes every frame.
             set _wq ""
             if {!$_wcoords} {
-                set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
-                    $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
+                if {$_flow_tunnel} {
+                    set _wq [_ion_flow_water_query_box $_wsel_txt $comx $comy $comz $Lx $Ly $Lz $_cur_spheres $scan_r]
+                } else {
+                    set _wq [_ion_flow_water_query $_wsel_txt $comx $comy $comz $Lx $Ly $Lz \
+                        $_iux $_iuy $_iuz $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}]]
+                }
             }
             if {$_wfast} {
                 if {![info exists _wset_written($_nsf)]} {
@@ -41540,7 +41550,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
                 if {$_wbytes >= [_ion_flow_coords_budget]} {
                     if {![_ion_flow_project_flush $_wjob $_wfh $_wcfh]} { set _wfail 1; break }
                     set _wjb [_ion_flow_project_open $scan_r [expr {$zmin-$_iflow_pad}] [expr {$zmax+$_iflow_pad}] \
-                                  [$_wsel_obj get index]]
+                                  [$_wsel_obj get index] $_flow_tunnel]
                     if {![llength $_wjb]} { set _wfail 1; break }
                     lassign $_wjb _wjob _wfh _wcfh
                     set _wbytes 0
@@ -41560,9 +41570,13 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
                     if {$Lx>0} { set rx [expr {$rx-$Lx*round($rx/double($Lx))}] }
                     if {$Ly>0} { set ry [expr {$ry-$Ly*round($ry/double($Ly))}] }
                     if {$Lz>0} { set rz [expr {$rz-$Lz*round($rz/double($Lz))}] }
-                    set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
-                    set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
-                    set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+                    if {$_flow_tunnel} {
+                        lassign [_ion_flow_path_coord [expr {$comx+$rx}] [expr {$comy+$ry}] [expr {$comz+$rz}] $_cur_spheres] z R
+                    } else {
+                        set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
+                        set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
+                        set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+                    }
                     if {$R >= $scan_r} continue
                     lappend _w_z($_wi) $z
                     lappend _w_r($_wi) $R
@@ -41678,7 +41692,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     if {$_dbg_ionflow} {
         catch {vmdcon -info "VMDHole ionflow DEBUG: trace assembly + coord offset = [expr {[clock milliseconds]-$_DBG_t2}]ms ([llength $traces] traces)"}
     }
-    return [dict create axis [list $ux $uy $uz] origin [list $mx $my $mz] \
+    return [dict create axis [list $ux $uy $uz] origin [list $mx $my $mz] path $_flow_tunnel \
         zmin $zmin zmax $zmax zc $zc \
         bulk_lo $_blo bulk_hi $_bhi coord_offset $_coff \
         rmin_hole $rmin_hole rmax_hole $rmax_hole scan_r $scan_r nframes $nf nions $nions \
@@ -41763,7 +41777,7 @@ proc ::VMDHole::_ion_flow_water_static {molid wsel nf} {
     return 1
 }
 
-proc ::VMDHole::_ion_flow_project_open {scan_r zlo zhi widx} {
+proc ::VMDHole::_ion_flow_project_open {scan_r zlo zhi widx {path 0}} {
     # Start one --ionflow-project job: a scratch directory holding the job file
     # and, when the caller streams coordinates, the binary blob they go into.
     # `widx` is the atom index of each column of that stream (empty = the older
@@ -41774,6 +41788,7 @@ proc ::VMDHole::_ion_flow_project_open {scan_r zlo zhi widx} {
     if {[catch {file mkdir $dir}]} { return {} }
     if {[catch {open [file join $dir in.txt] w} jc]} { catch {file delete -force $dir}; return {} }
     puts $jc "scan_r $scan_r"
+    if {$path} { puts $jc "path 1" }
     set cc ""
     if {[llength $widx]} {
         set cpath [file join $dir coords.bin]
@@ -43117,6 +43132,9 @@ proc ::VMDHole::_draw_ion_flow_occupancy {} {
         }
     }
     set rlabel "R from pore axis (Å)"; set zlabel "Z along pore axis (Å)"
+    if {[dict exists $d path] && [dict get $d path]} {
+        set rlabel "Distance from the route (Å)"; set zlabel "Distance along the route (Å)"
+    }
     # anchor s at H-6 (not anchor n at H-12): a 9pt bold line is ~12px tall, so
     # anchoring its TOP 12px above the edge pushed its bottom past H - measured
     # 2px off-canvas via $cv bbox. anchor s puts the text's bottom edge (not its

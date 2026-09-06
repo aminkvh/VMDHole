@@ -2638,6 +2638,13 @@ static int tunnel_cluster_c(const char *infile, const char *outfile,
              n >= 0 : n inline lines "idx x y z"
              n <  0 : this frame's nw points come from the next block of the
                       coordinate stream, with atom indices from the index list
+        path 1                             optional: sphere lines carry
+             "cx cy cz r s tx ty tz" (arc length from the route's start and
+             the unit tangent there); z and R are then the arc length and the
+             distance from the route at the nearest centre's tangent, in
+             place of the axis projection - a tunnel is measured along
+             itself, so a bend does not read as bulk. u is still read but
+             unused; zwin and scan_r apply to the path coordinates.
    OUT: per frame, in input order:
             F <frame> <nkept>   then nkept lines "idx z R d3"
         or, with "group 1", one line per atom index that was ever kept:
@@ -2656,7 +2663,7 @@ static int tunnel_cluster_c(const char *infile, const char *outfile,
    so the two paths agree bit for bit on x86-64; d3 is only ever compared
    against a shell threshold downstream. Frames are independent: OpenMP over
    frames, output written afterwards in order. */
-struct ifp_set { int n; double *x, *y, *z, *r; };
+struct ifp_set { int n; double *x, *y, *z, *r, *s, *tx, *ty, *tz; };
 struct ifp_frame {
     int frame, set, n;              /* n < 0: points come from the stream */
     long slot;                      /* stream block index when n < 0 */
@@ -2682,7 +2689,7 @@ static int ionflow_project(const char *infile, const char *outfile)
     FILE *f, *o;
     char line[512];
     double scan_r = -1.0, zlo = 0.0, zhi = 0.0;
-    int have_zwin = 0, group = 0;
+    int have_zwin = 0, group = 0, path = 0;
     char coords_path[4096]; int have_coords = 0; long nw = 0;
     int *widx = NULL; long nwidx = 0;
     unsigned char *stream = NULL; long nstream = 0;
@@ -2699,6 +2706,8 @@ static int ionflow_project(const char *infile, const char *outfile)
         } else if (strncmp(line, "zwin", 4) == 0) {
             if (sscanf(line, "zwin %lf %lf", &zlo, &zhi) != 2) goto bad_line;
             have_zwin = 1;
+        } else if (strncmp(line, "path", 4) == 0) {
+            if (sscanf(line, "path %d", &path) != 1) goto bad_line;
         } else if (strncmp(line, "group", 5) == 0) {
             if (sscanf(line, "group %d", &group) != 1) goto bad_line;
         } else if (strncmp(line, "coords", 6) == 0) {
@@ -2726,15 +2735,23 @@ static int ionflow_project(const char *infile, const char *outfile)
                 int nc = scap ? scap : 64;
                 while (nc <= id) nc *= 2;
                 sets = xrealloc(sets, nc*sizeof(*sets), "sets");
-                for (k = scap; k < nc; k++) { sets[k].n = -1; sets[k].x = sets[k].y = sets[k].z = sets[k].r = NULL; }
+                for (k = scap; k < nc; k++) { sets[k].n = -1; sets[k].x = sets[k].y = sets[k].z = sets[k].r = NULL;
+                                              sets[k].s = sets[k].tx = sets[k].ty = sets[k].tz = NULL; }
                 scap = nc;
             }
             sets[id].n = n;
             sets[id].x = xa_malloc((n?n:1)*sizeof(double)); sets[id].y = xa_malloc((n?n:1)*sizeof(double));
             sets[id].z = xa_malloc((n?n:1)*sizeof(double)); sets[id].r = xa_malloc((n?n:1)*sizeof(double));
+            sets[id].s = sets[id].tx = sets[id].ty = sets[id].tz = NULL;
+            if (path) {
+                sets[id].s  = xa_malloc((n?n:1)*sizeof(double)); sets[id].tx = xa_malloc((n?n:1)*sizeof(double));
+                sets[id].ty = xa_malloc((n?n:1)*sizeof(double)); sets[id].tz = xa_malloc((n?n:1)*sizeof(double));
+            }
             for (k = 0; k < n; k++) {
-                if (!fgets(line, sizeof line, f) ||
-                    sscanf(line, "%lf %lf %lf %lf", &sets[id].x[k], &sets[id].y[k], &sets[id].z[k], &sets[id].r[k]) != 4) {
+                if (!fgets(line, sizeof line, f)) { fprintf(stderr,"\n--ionflow-project: short sphere set %d\n", id); goto done; }
+                if (path ? sscanf(line, "%lf %lf %lf %lf %lf %lf %lf %lf", &sets[id].x[k], &sets[id].y[k], &sets[id].z[k], &sets[id].r[k],
+                                  &sets[id].s[k], &sets[id].tx[k], &sets[id].ty[k], &sets[id].tz[k]) != 8
+                         : sscanf(line, "%lf %lf %lf %lf", &sets[id].x[k], &sets[id].y[k], &sets[id].z[k], &sets[id].r[k]) != 4) {
                     fprintf(stderr,"\n--ionflow-project: short sphere set %d\n", id); goto done;
                 }
             }
@@ -2817,12 +2834,37 @@ static int ionflow_project(const char *infile, const char *outfile)
             if (p->L[0] > 0) rx = rx - p->L[0]*round(rx/p->L[0]);
             if (p->L[1] > 0) ry = ry - p->L[1]*round(ry/p->L[1]);
             if (p->L[2] > 0) rz = rz - p->L[2]*round(rz/p->L[2]);
+            wx = p->com[0]+rx; wy = p->com[1]+ry; wz = p->com[2]+rz;
+            if (path) {
+                /* nearest centre's tangent frame: same arithmetic order as
+                   the plugin's _ion_flow_path_coord */
+                double best = 1e30, proj, perp; int bi = -1;
+                for (m = 0; m < S->n; m++) {
+                    double dx = wx-S->x[m], dy = wy-S->y[m], dz = wz-S->z[m];
+                    double dd = dx*dx+dy*dy+dz*dz;
+                    double surf = sqrt(dd)-S->r[m];
+                    if (surf < mind) mind = surf;
+                    if (dd < best) { best = dd; bi = m; }
+                }
+                if (bi < 0) continue;
+                {
+                    double dx = wx-S->x[bi], dy = wy-S->y[bi], dz = wz-S->z[bi];
+                    proj = dx*S->tx[bi]+dy*S->ty[bi]+dz*S->tz[bi];
+                }
+                z = S->s[bi]+proj;
+                perp = best-proj*proj;
+                R = perp > 0.0 ? sqrt(perp) : 0.0;
+                if (have_zwin && (z <= zlo || z >= zhi)) continue;
+                if (R >= scan_r) continue;
+                tslot[kept] = (int)j; tz[kept] = z; tr[kept] = R; td3[kept] = mind;
+                kept++;
+                continue;
+            }
             z = rx*p->u[0]+ry*p->u[1]+rz*p->u[2];
             if (have_zwin && (z <= zlo || z >= zhi)) continue;
             qx = rx-z*p->u[0]; qy = ry-z*p->u[1]; qz = rz-z*p->u[2];
             R = sqrt(qx*qx+qy*qy+qz*qz);
             if (R >= scan_r) continue;
-            wx = p->com[0]+rx; wy = p->com[1]+ry; wz = p->com[2]+rz;
             for (m = 0; m < S->n; m++) {
                 double dx = wx-S->x[m], dy = wy-S->y[m], dz = wz-S->z[m];
                 double surf = sqrt(dx*dx+dy*dy+dz*dz)-S->r[m];
@@ -2903,7 +2945,8 @@ done:
         free(fr[i].kidx); free(fr[i].kslot); free(fr[i].kz); free(fr[i].kr); free(fr[i].kd3);
     }
     free(fr);
-    for (k = 0; k < scap; k++) { free(sets[k].x); free(sets[k].y); free(sets[k].z); free(sets[k].r); }
+    for (k = 0; k < scap; k++) { free(sets[k].x); free(sets[k].y); free(sets[k].z); free(sets[k].r);
+                                 free(sets[k].s); free(sets[k].tx); free(sets[k].ty); free(sets[k].tz); }
     free(sets); free(widx); free(stream);
     return rc;
 
@@ -3336,7 +3379,7 @@ int main (int argc, char *argv[])
 	  if (strcmp(argv[1], "--hole-features") == 0) {
 	    /* capability probe: the plugin greps stdout for these tokens to decide
 	       which accelerated outputs this binary supports. */
-	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords sossmooth"
+	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords ionflowpath sossmooth"
 #ifdef VMDHOLE_MULTICALL
 	            " nm mesh lobes tunnelserve"
 #endif

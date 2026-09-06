@@ -117,6 +117,8 @@ tabs and CSV exports operate on the selected tracked route.
 ## 7. Available downstream analyses
 
 Tunnel mode supports the radius/profile, Over Time, Mean Profile, Trends,
-Histogram, property, lining, and suitable Ion Flow views. It does not provide
+Histogram, property, lining, and Ion & Water views. Ion & Water measures the
+selected route along itself, as distance along the route and distance from
+it, so a bent tunnel plots as it is. It does not provide
 tunnel hydration, tunnel ellipse fitting, or pore-mode bulk-to-bulk permeation.
 Water free-energy and density properties require a pore-mode hydration result.

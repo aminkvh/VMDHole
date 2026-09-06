@@ -4395,7 +4395,7 @@ chk "...reusing an existing one rather than rewriting it" \
 # expr - which aborts the script rather than failing the assertion.
 set _bht2 [info body ::VMDHole::build_hydro_trinorm]
 set _ci [string first "colorize_hydrophobic" $_bht2]
-set _li [expr {$_ci >= 0 ? [string first "lining_sph ne" $_bht2 $_ci] : -1}]
+set _li [expr {$_ci >= 0 ? [string first {$lsph $molid $frame} $_bht2 $_ci] : -1}]
 chk "the Tcl colouring fallback uses the shared lining cloud too" \
     [expr {$_ci >= 0 && $_li > $_ci}] 1
 # Both surface stages route through the ONE command builder that switches to
@@ -5018,6 +5018,55 @@ chk "property colouring lines against the smoothing window's spheres" \
     [expr {[string first {_smooth_union_sph $frame $sph_file} $_bht] >= 0}] 1
 chk "...in the compiled recolour" [expr {[string first {run_sos_triangle_recolor $plot0 $plot $lsph} $_bht] >= 0}] 1
 chk "...and the mesh itself stays the frame's own" [expr {[string first {surface_mesh $sph_file $plot0 draw} $_bht] >= 0}] 1
+# Tunnel Ion Flow measures along the route: on a quarter-circle route of
+# radius 20 A a point on the arc at 45 deg reads as arc length pi*20/4 and
+# zero distance from the route; 1 A outward reads as 1 A from it. The old
+# axis projection put that point far off-axis, i.e. in bulk.
+set _qc {}; set _qr {}
+for {set _k 0} {$_k <= 90} {incr _k} {
+    set _a [expr {$_k*3.14159265358979/180}]
+    lappend _qc [list [expr {20*cos($_a)}] [expr {20*sin($_a)}] 0.0]; lappend _qr 2.0
+}
+set _path [::VMDHole::_ion_flow_path_spheres $_qc $_qr]
+chk "path spheres: one entry of 8 fields per centre" [expr {[llength $_path] == 91 && [llength [lindex $_path 45]] == 8}] 1
+chk "path spheres: arc length reaches a quarter circle" [expr {abs([lindex $_path 90 4] - 3.14159265358979*10) < 0.05}] 1
+set _a45 [expr {45.5*3.14159265358979/180}]
+lassign [::VMDHole::_ion_flow_path_coord [expr {20*cos($_a45)}] [expr {20*sin($_a45)}] 0.0 $_path] _ps _pr
+chk "path coord: a point on the arc at 45.5 deg has arc length ~15.9 A" [expr {abs($_ps - 20*$_a45) < 0.05}] 1
+chk "path coord: ...and ~0 distance from the route" [expr {$_pr < 0.02}] 1
+lassign [::VMDHole::_ion_flow_path_coord [expr {21*cos($_a45)}] [expr {21*sin($_a45)}] 0.0 $_path] _ps _pr
+chk "path coord: 1 A outward is 1 A from the route" [expr {abs($_pr - 1.0) < 0.02}] 1
+if {[::VMDHole::sos_triangle_has_feature ionflowpath]} {
+    # the kernel's path mode against the Tcl reference on the same points
+    set _pd [file join [::VMDHole::_scratch_base] "smoke_ifpath_[pid]"]; file mkdir $_pd
+    set _fh [open [file join $_pd in.txt] w]
+    puts $_fh "scan_r 50"; puts $_fh "path 1"; puts $_fh "S 0 [llength $_path]"
+    foreach _e $_path { puts $_fh $_e }
+    set _pts {}
+    foreach _deg {10.3 33.7 45.5 70.1} _off {0.0 1.0 -0.5 2.5} {
+        set _a [expr {$_deg*3.14159265358979/180}]
+        lappend _pts [list [expr {(20+$_off)*cos($_a)}] [expr {(20+$_off)*sin($_a)}] [expr {0.3*$_off}]]
+    }
+    puts $_fh "F 0 0 0 0 0 0 0 0 0 0 1 [llength $_pts]"
+    set _i 0; foreach _p $_pts { puts $_fh "$_i $_p"; incr _i }
+    close $_fh
+    catch {exec [::VMDHole::tool_path sos_triangle] --ionflow-project [file join $_pd in.txt] [file join $_pd out.txt]}
+    set _ok 0; set _n 0
+    if {![catch {open [file join $_pd out.txt] r} _oh]} {
+        while {[gets $_oh _l] >= 0} {
+            if {[string match "F *" $_l]} continue
+            lassign $_l _ix _kz _kr _kd
+            lassign [::VMDHole::_ion_flow_path_coord {*}[lindex $_pts $_ix] $_path] _tz _tr
+            incr _n
+            if {abs($_kz-$_tz) < 1e-9 && abs($_kr-$_tr) < 1e-9} { incr _ok }
+        }
+        close $_oh
+    }
+    chk "kernel path mode agrees with the Tcl reference on every point" "$_ok/$_n" "4/4"
+    file delete -force $_pd
+} else {
+    chk "kernel path mode (skipped: binary has no ionflowpath)" 1 1
+}
 # The CVECT stick is a rotation: a quarter turn of x about z is y, and the
 # length never changes.
 set ::VMDHole::state(cvect) "1 0 0"
@@ -5027,10 +5076,11 @@ chk "stick tilt: x turned 90 deg about z is y" \
     [expr {abs($_rx) < 1e-6 && abs($_ry-1) < 1e-6 && abs($_rz) < 1e-6}] 1
 ::VMDHole::_axis_stick_rotate 1 0 0 30
 lassign $::VMDHole::state(cvect) _rx _ry _rz
+# the field holds 4 decimals, so 1e-3 is the resolution of the check
 chk "stick tilt keeps CVECT a unit vector" \
-    [expr {abs(sqrt($_rx*$_rx+$_ry*$_ry+$_rz*$_rz)-1) < 1e-6}] 1
+    [expr {abs(sqrt($_rx*$_rx+$_ry*$_ry+$_rz*$_rz)-1) < 1e-3}] 1
 chk "stick tilt: 30 deg about x moves y toward z" \
-    [expr {abs($_ry-cos(30*3.14159265358979/180)) < 1e-6 && abs($_rz-sin(30*3.14159265358979/180)) < 1e-6}] 1
+    [expr {abs($_ry-cos(30*3.14159265358979/180)) < 1e-3 && abs($_rz-sin(30*3.14159265358979/180)) < 1e-3}] 1
 chk "stick tilt drops the two-point CVECT definition" \
     [expr {$::VMDHole::state(cvect_def_p1) eq "" && $::VMDHole::state(cvect_def_p2) eq ""}] 1
 set ::VMDHole::state(cvect) "0 0 1"
