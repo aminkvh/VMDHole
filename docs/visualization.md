@@ -69,7 +69,7 @@ in-memory cache. Relevant controls are:
 
 - **Prebuild surfaces**: prepare all selected frames before playback.
 - **Surface cache**: retain a limited number of meshes.
-- **Playback detail**: use a coarser representation during rapid frame changes.
+- **Playback stride** (Settings, `sos_triangle` mesher only): draw every Nth triangle while the trajectory plays.
 - **Keep visualization**: retain generated VMD objects after a run or reset.
 
 Prebuilding improves interactive playback but increases initial runtime and

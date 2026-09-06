@@ -171,6 +171,71 @@ if {\$nfr < 2} {
         incr bad
     }
 
+    # ---- the worst-case guard blanks a pair in BOTH orientations ----
+    # _tunnel_apply_maxdev blanked D(i,j) only; the in-frame agglomeration read
+    # D(a,b) in member order, so once merges reordered the clusters a blanked
+    # pair was read through its finite mirror and the guard silently lapsed:
+    # 8 of 50 frames on the real pool grouped differently from the kernel.
+    array set _D  {0,1 1.0 1,0 1.0}
+    array set _HD {0,1 50.0 1,0 50.0}
+    set _mdsave \$::VMDHole::state(tunnel_cluster_maxdev)
+    set ::VMDHole::state(tunnel_cluster_maxdev) 12
+    ::VMDHole::_tunnel_apply_maxdev _D _HD [list {{0 0 0}} {{1 0 0}}] 2 3.0
+    if {\$_D(0,1) >= 1e29 && \$_D(1,0) >= 1e29} {
+        puts \$o "PASS maxdev guard blanks D(i,j) and D(j,i)"
+    } else {
+        puts \$o "FAIL maxdev guard: D(0,1)=\$_D(0,1) D(1,0)=\$_D(1,0)"
+        incr bad
+    }
+    # Three routes, A and B 1 A apart, C on A for 11 of 12 points then 20 A
+    # off: its mean distance passes 3.0 but its worst case does not. The
+    # merge order (A+B first, then C against the pair read in reverse index
+    # order) is exactly the one the half-blank let through.
+    set _pa {}; set _pb {}; set _pc {}
+    for {set k 0} {\$k < 12} {incr k} {
+        lappend _pa 0.0 0.0 [expr {\$k*1.0}] 1.0
+        lappend _pb 1.0 0.0 [expr {\$k*1.0}] 1.0
+        lappend _pc [expr {\$k == 11 ? 20.0 : 0.0}] 0.0 [expr {\$k*1.0}] 1.0
+    }
+    set _tuns [list [list 1.5 0 0 0 \$_pa] [list 1.4 0 0 0 \$_pb] [list 1.3 0 0 0 \$_pc]]
+    set _kern [::VMDHole::tunnel_cluster \$_tuns 3.0]
+    rename ::VMDHole::sos_triangle_has_feature ::VMDHole::_tc_real_feat
+    proc ::VMDHole::sos_triangle_has_feature {feat} {
+        if {\$feat eq "tunnelcluster"} { return 0 }
+        return [::VMDHole::_tc_real_feat \$feat]
+    }
+    set _ref [::VMDHole::tunnel_cluster \$_tuns 3.0]
+    rename ::VMDHole::sos_triangle_has_feature {}
+    rename ::VMDHole::_tc_real_feat ::VMDHole::sos_triangle_has_feature
+    set _sk {}; foreach _c \$_kern { lappend _sk [lsort -integer \$_c] }
+    set _sr {}; foreach _c \$_ref  { lappend _sr [lsort -integer \$_c] }
+    if {[llength \$_ref] == 2 && [lsort \$_sr] eq [lsort \$_sk]} {
+        puts \$o "PASS in-frame clustering: kernel and Tcl reference agree under the worst-case guard (\$_kern)"
+    } else {
+        puts \$o "FAIL in-frame clustering: kernel=\$_kern reference=\$_ref (want 2 clusters, identical)"
+        incr bad
+    }
+    set ::VMDHole::state(tunnel_cluster_maxdev) \$_mdsave
+
+    # ---- the tunnel kernels answer through the resident mesher ----
+    if {[::VMDHole::sos_triangle_has_feature tunnelserve]} {
+        set _mids [list [list {0 0 0} {0 0 1} {0 0 2}] [list {1 0 0} {1 0 1} {1 0 2}] [list {9 0 0} {9 0 1} {9 0 2}]]
+        set ::VMDHole::_tunnel_serve -1
+        set _srv [::VMDHole::_tunnel_cluster_c \$_mids 3.0 12]
+        set _via \$::VMDHole::_tunnel_serve
+        set ::VMDHole::_tunnel_serve 0
+        set _exe [::VMDHole::_tunnel_cluster_c \$_mids 3.0 12]
+        set ::VMDHole::_tunnel_serve -1
+        if {\$_via == 1 && \$_srv eq \$_exe && [llength \$_srv] == 2} {
+            puts \$o "PASS tunnel kernel served by the resident mesher, same groups as the exec path (\$_srv)"
+        } else {
+            puts \$o "FAIL served kernel: via=\$_via served=\$_srv exec=\$_exe"
+            incr bad
+        }
+    } else {
+        puts \$o "PASS (skipped) binary has no tunnelserve feature"
+    }
+
     # ---- the kernel's representative-distance column IS the Tcl reference ----
     # _tunnel_xframe_build picks each frame's representative by proximity to
     # the cluster. Doing that in Tcl cost 15.3 s of an 18.5 s build at n=1837,

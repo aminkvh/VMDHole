@@ -18,14 +18,36 @@ OPT="${OPT:--O2}"
 echo ">> Building sos_triangle_fast ($OPT) ..."
 # OpenMP is optional: without it the pragmas are ignored and the binary runs
 # serially (Apple clang has no -fopenmp, and CI builds on macOS too).
-if $CC $OPT -fopenmp -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" \
+# One binary: VMDHole's own tools ride inside it (sos_triangle --nm-search,
+# --mesh, --conn-lobes), so a user installs sos_triangle and nothing else.
+# The standalone builds below are for development and byte-parity tests.
+MULTI="-DVMDHOLE_MULTICALL $HERE/nm/nm_search.c $HERE/nm/mesh_csg.c $HERE/conn_lobes.c"
+if $CC $OPT -fopenmp -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" $MULTI \
         "$HERE/voronoi/vor_predicates.c" "$HERE/voronoi/vor_delaunay.c" -lm -lpthread 2>/dev/null; then
   echo "   (OpenMP enabled)"
 else
-  $CC $OPT -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" \
+  $CC $OPT -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" $MULTI \
         "$HERE/voronoi/vor_predicates.c" "$HERE/voronoi/vor_delaunay.c" -lm -lpthread
   echo "   (serial, no OpenMP)"
 fi
+
+echo ">> Building conn_lobes ($OPT) ..."
+if $CC $OPT -fopenmp -o "$HERE/conn_lobes" "$HERE/conn_lobes.c" -lm 2>/dev/null; then
+  echo "   (OpenMP enabled)"
+else
+  $CC $OPT -o "$HERE/conn_lobes" "$HERE/conn_lobes.c" -lm
+  echo "   (serial, no OpenMP)"
+fi
+
+echo ">> Building nm tools (pore search + mesher) ($OPT) ..."
+for t in nm_search mesh_csg; do
+  if $CC $OPT -fopenmp -o "$HERE/nm/$t" "$HERE/nm/$t.c" -lm 2>/dev/null; then
+    echo "   $t (OpenMP enabled)"
+  else
+    $CC $OPT -o "$HERE/nm/$t" "$HERE/nm/$t.c" -lm
+    echo "   $t (serial, no OpenMP)"
+  fi
+done
 
 echo ">> Building mole_tunnel_engine ($OPT) ..."
 # Its own executable, not a mode of sos_triangle: it needs the exact predicates

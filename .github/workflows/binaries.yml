@@ -108,6 +108,8 @@ jobs:
             cp "native/mole_tunnel_engine$x" "$d/"
           fi
           cp "native/hydro_project$x"   "$d/"
+          # nm_search, conn_lobes and mesh_csg ride inside sos_triangle
+          # (sos_triangle --nm-search|--mesh|--conn-lobes); nothing else ships.
           # a working radius file so a from-zip user can run without a separate
           # HOLE install (HOLE 2's own simple.rad, Apache-2.0)
           mkdir -p "$d/rad"
@@ -127,7 +129,8 @@ jobs:
             if [ -d accel_out ]; then
               echo "  hole                HOLE 2 with the VMDHole acceleration patches"
               echo "  sph_process         patched (parallel surface cull)"
-              echo "  sos_triangle        the fast triangulation (drop-in for stock)"
+              echo "  sos_triangle        the fast triangulation, the marching-cubes mesher,"
+              echo "                      the Nelder-Mead search and the Connolly classifier"
               echo "  mole_tunnel_engine  tunnel search"
               echo "  hydro_project       hydration acceleration"
               echo "  vmdhole_accel.manifest  read by the plugin's acceleration indicator"

@@ -17,7 +17,8 @@
 #  through hole::sph_process's 3-argument signature; feeding them the
 #  relevant .sph records raises rather than silently mishandling them.
 #
-#  Read directly against sph_process.f, sph_process_read.f, ptgen.f, sphqpu.f.
+#  Read directly against sph_process.f, sph_process_read.f, ptgen.f, sphqpu.f,
+#  and for CAPSULE records sphqpc.f, hocapr.f, hocapd.f.
 
 namespace eval hole {}
 
@@ -76,11 +77,15 @@ proc hole::_ptgen {dotden} {
 }
 
 proc hole::_sph_read {sph_file} {
-    # Returns a list of {x y z rad effr last} records, parsed at the FIXED
-    # column positions sph_process_read.f reads (not whitespace-split - the
-    # residue-number field can run into the coordinates with no space).
+    # Returns a list of {x y z rad effr last x2 y2 z2} records, parsed at the
+    # FIXED column positions sph_process_read.f reads (not whitespace-split -
+    # the residue-number field can run into the coordinates with no space).
+    # A sphere has x2 y2 z2 equal to x y z. A CAPSULE slice is a QC1 record
+    # followed by its QC2 partner (wpdbsp.f): the two cap centres, the capsule
+    # radius, and the equal-area radius sphqpc.f computes from them.
     set fh [open $sph_file r]
     set spheres {}
+    set pend ""
     while {[gets $fh line] >= 0} {
         if {[string range $line 0 11] eq "LAST-REC-END"} {
             if {[llength $spheres]} {
@@ -92,10 +97,7 @@ proc hole::_sph_read {sph_file} {
         }
         if {[string range $line 0 3] ne "ATOM"} { continue }
         set tag [string range $line 10 21]
-        if {$tag ne "1  QSS SPH S"} {
-            if {[string match "1  QC*SPH S" $tag]} {
-                error "hole::sph_process: CAPSULE .sph records (QC1/QC2) are not ported"
-            }
+        if {$tag ni {"1  QSS SPH S" "1  QC1 SPH S" "1  QC2 SPH S"}} {
             error "hole::sph_process: unrecognized .sph ATOM record: $line"
         }
         set x [string trim [string range $line 30 37]]
@@ -106,6 +108,17 @@ proc hole::_sph_read {sph_file} {
                 ![string is double -strict $z] || ![string is double -strict $rad]} {
             error "hole::sph_process: malformed .sph ATOM record: $line"
         }
+        if {$tag eq "1  QC1 SPH S"} { set pend [list $x $y $z $rad]; continue }
+        if {$tag eq "1  QC2 SPH S"} {
+            if {$pend eq ""} { error "hole::sph_process: QC2 record without its QC1: $line" }
+            lassign $pend x1 y1 z1 rad
+            set len [expr {sqrt(($x1-$x)*($x1-$x) + ($y1-$y)*($y1-$y) + ($z1-$z)*($z1-$z))}]
+            # sphqpc.f: EFFRAD = SQRT(SPRAD*(SPRAD + 0.63661977*length))
+            set effr [expr {sqrt($rad*($rad + 0.63661977*$len))}]
+            lappend spheres [list $x1 $y1 $z1 $rad $effr 0 $x $y $z]
+            set pend ""
+            continue
+        }
         set effr ""
         if {[string length $line] >= 66} {
             set effr [string trim [string range $line 60 65]]
@@ -115,7 +128,7 @@ proc hole::_sph_read {sph_file} {
         if {$effr eq "" || ![string is double -strict $effr] || abs($effr) < 1e-6} {
             set effr $rad
         }
-        lappend spheres [list $x $y $z $rad $effr 0]
+        lappend spheres [list $x $y $z $rad $effr 0 $x $y $z]
     }
     close $fh
     return $spheres
@@ -158,6 +171,30 @@ proc hole::sph_process {sph_file sos_file dotden {color 0}} {
 
     set fh [open $sos_file w]
     set np [llength $hdrs]
+    if {[hole::_sph_has_capsule $spheres]} {
+        # sph_process.f hands a file with capsule records to sphqpc.f, whose
+        # pass loop calls SPHCHC for every pass: under -sos the LAST pass takes
+        # the colour -1 end-cap header, so with -colour the high-radius band
+        # goes out under it and there is no separate end-cap pass. Reproduced
+        # as is: this is what HOLE writes.
+        for {set p 0} {$p < $np} {incr p} {
+            if {$np == 1} { set hdr [lindex $hdrs 0] } \
+            elseif {$p == $np - 1} { set hdr {1.0 -1.0 -1.0 -1.0 0.0 0.0 0.0} } \
+            else { set hdr [lindex $hdrs $p] }
+            hole::_write_sos_line $fh $hdr
+            set lo [lindex $cuts $p]
+            set hi [lindex $cuts [expr {$p + 1}]]
+            for {set i 0} {$i < $n} {incr i} {
+                lassign [lindex $spheres $i] cx cy cz rad effr last
+                if {$last} { continue }
+                if {$rad <= 0} { continue }
+                if {$effr <= $lo || $effr > $hi} { continue }
+                hole::_emit_capsule_dots $fh $spheres $i $templ $ptno
+            }
+        }
+        close $fh
+        return
+    }
     for {set p 0} {$p < $np} {incr p} {
         hole::_write_sos_line $fh [lindex $hdrs $p]
         set lo [lindex $cuts $p]
@@ -217,6 +254,77 @@ proc hole::_emit_sphere_dots {fh spheres i templ ptno} {
             set dy [expr {$ry - $oy}]
             set dz [expr {$rz - $oz}]
             if {[expr {$dx*$dx + $dy*$dy + $dz*$dz}] < [expr {$orad*$orad}]} {
+                set buried 1
+                break
+            }
+        }
+        if {$buried} { continue }
+        hole::_write_sos_line $fh [list 4.0 $rx $ry $rz $nx $ny $nz]
+    }
+}
+
+proc hole::_sph_has_capsule {spheres} {
+    foreach s $spheres {
+        lassign $s x y z rad effr last x2 y2 z2
+        if {$x2 != $x || $y2 != $y || $z2 != $z} { return 1 }
+    }
+    return 0
+}
+
+proc hole::_capsule_d2 {px py pz x1 y1 z1 x2 y2 z2} {
+    # hocapd.f: squared distance from a point to the segment between the two
+    # cap centres.
+    set ux [expr {$x2-$x1}]; set uy [expr {$y2-$y1}]; set uz [expr {$z2-$z1}]
+    set len [expr {sqrt($ux*$ux+$uy*$uy+$uz*$uz)}]
+    if {$len > 0.0} { set ux [expr {$ux/$len}]; set uy [expr {$uy/$len}]; set uz [expr {$uz/$len}] }
+    set vx [expr {$px-$x1}]; set vy [expr {$py-$y1}]; set vz [expr {$pz-$z1}]
+    set plen [expr {$ux*$vx+$uy*$vy+$uz*$vz}]
+    if {$plen <= 0.0} { return [expr {$vx*$vx+$vy*$vy+$vz*$vz}] }
+    if {$plen >= $len} {
+        return [expr {($px-$x2)*($px-$x2)+($py-$y2)*($py-$y2)+($pz-$z2)*($pz-$z2)}]
+    }
+    set vx [expr {$vx-$plen*$ux}]; set vy [expr {$vy-$plen*$uy}]; set vz [expr {$vz-$plen*$uz}]
+    return [expr {$vx*$vx+$vy*$vy+$vz*$vz}]
+}
+
+proc hole::_emit_capsule_dots {fh spheres i templ ptno} {
+    # sphqpc.f: a dot in each template direction from the capsule's midpoint,
+    # at the radius of the capsule surface in that direction (hocapr.f), kept
+    # unless it lies inside any other record (hocapd.f). No per-record axis
+    # swap and the template direction is written as the normal, as there.
+    set pi [expr {2.0*acos(0.0)}]
+    lassign [lindex $spheres $i] x1 y1 z1 rad effr last x2 y2 z2
+    set cx [expr {0.5*($x1+$x2)}]; set cy [expr {0.5*($y1+$y2)}]; set cz [expr {0.5*($z1+$z2)}]
+    set vx [expr {$x1-$x2}]; set vy [expr {$y1-$y2}]; set vz [expr {$z1-$z2}]
+    set caplen [expr {sqrt($vx*$vx+$vy*$vy+$vz*$vz)}]
+    if {$caplen > 0.0} { set vx [expr {$vx/$caplen}]; set vy [expr {$vy/$caplen}]; set vz [expr {$vz/$caplen}] }
+    set half [expr {0.5*$caplen}]
+    set alphac [expr {atan2($rad, $half)}]
+    set n [llength $spheres]
+    for {set d 0} {$d < $ptno} {incr d} {
+        lassign [lindex $templ $d] nx ny nz
+        # hocapr.f: the capsule's radius along this direction (a sphere when
+        # the two centres coincide)
+        set cosa [expr {$vx*$nx+$vy*$ny+$vz*$nz}]
+        if {$cosa > 1.0} { set cosa 1.0 } elseif {$cosa < -1.0} { set cosa -1.0 }
+        set alpha [expr {acos($cosa)}]
+        if {$half < 1e-9} {
+            set erad $rad
+        } elseif {$alpha > $alphac && $alpha < $pi-$alphac} {
+            set erad [expr {$rad/sin($alpha)}]
+        } else {
+            if {$alpha > 0.5*$pi} { set alpha [expr {$pi-$alpha}] }
+            set hc [expr {$half*cos($alpha)}]
+            set erad [expr {$hc + sqrt($hc*$hc - ($half*$half - $rad*$rad))}]
+        }
+        set rx [hole::_f32 [expr {$cx + $erad*$nx}]]
+        set ry [hole::_f32 [expr {$cy + $erad*$ny}]]
+        set rz [hole::_f32 [expr {$cz + $erad*$nz}]]
+        set buried 0
+        for {set j 0} {$j < $n} {incr j} {
+            if {$j == $i} { continue }
+            lassign [lindex $spheres $j] ox oy oz orad oeff olast ox2 oy2 oz2
+            if {[hole::_capsule_d2 $rx $ry $rz $ox $oy $oz $ox2 $oy2 $oz2] < $orad*$orad} {
                 set buried 1
                 break
             }

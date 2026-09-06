@@ -7,7 +7,7 @@
 # checked elsewhere against dumps and against the C's output file; here the
 # input comes from VMD and the caller is the plugin.
 #
-# The binary is taken out of reach by overriding _mole_engine_path rather than
+# The binary is taken out of reach by overriding tool_path rather than
 # by moving files, so the test cannot damage a working install.
 package provide Tk 8.5
 source [file join $env(VH) vmdhole.tcl]
@@ -29,8 +29,8 @@ set t0 [clock milliseconds]
 set c [::VMDHole::_tunnel_search_mole 0 0 {} $cfg]
 set cms [expr {[clock milliseconds] - $t0}]
 
-set ::real_engine [::VMDHole::_mole_engine_path]
-proc ::VMDHole::_mole_engine_path {} { return "" }
+rename ::VMDHole::tool_path ::VMDHole::_real_tool_path
+proc ::VMDHole::tool_path {name} { if {$name eq "mole_engine"} { return "" }; ::VMDHole::_real_tool_path $name }
 set t0 [clock milliseconds]
 set t [::VMDHole::_tunnel_search_mole 0 0 {} $cfg]
 set tms [expr {[clock milliseconds] - $t0}]
@@ -39,7 +39,8 @@ set tms [expr {[clock milliseconds] - $t0}]
 # one above: _tunnel_search_mole existed and was called by nothing for a whole
 # release, so the selector said "mole" while every run did the lattice search.
 # Anything but a mole-* tag here means that has come back.
-proc ::VMDHole::_mole_engine_path {} { return $::real_engine }
+rename ::VMDHole::tool_path {}
+rename ::VMDHole::_real_tool_path ::VMDHole::tool_path
 set dispatch [::VMDHole::tunnel_search 0 0 {} [::VMDHole::_tunnel_cfg]]
 # render_tunnels_for_frame reads tunnel_results; run_tunnel_analysis normally
 # fills it, and this harness calls tunnel_search directly.

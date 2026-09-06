@@ -58,11 +58,17 @@ proc lift {src name} {
     return ""
 }
 foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe \
-           _mole_engine_path _hydro_project_path save_config _note} {
+           tool_path tool_exec_keys save_config _note} {
     set b [lift $src $p]
     if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
     namespace eval ::VMDHole $b
 }
+# the tool table the finder reads, lifted verbatim from the shipped file
+set ti [string first "variable _tools \{" $src]
+set tj [string first "\n}" $src $ti]
+namespace eval ::VMDHole [string range $src $ti [expr {$tj+1}]]
+namespace eval ::VMDHole { variable _tool_memo; array set _tool_memo {} }
+proc ::VMDHole::sos_triangle_has_feature {f} { return 0 }
 # stubs for the bits that need VMD / would write to $HOME
 proc vmdcon {args} {}
 proc ::VMDHole::save_config {} {}
@@ -120,29 +126,29 @@ if {$::VMDHole::state(sph_process_exec) eq $wantSph} {
 }
 
 # --- the two discovery walks OUTSIDE init_executables -----------------------
-# _mole_engine_path's fallback beside sos_triangle: clear the state hit that
+# tool_path mole_engine's fallback beside sos_triangle: clear the state hit that
 # init_executables just backfilled, so the sibling WALK itself is what runs.
 set ::VMDHole::state(mole_engine_exec) ""
 set ::VMDHole::state(sos_triangle_exec) [file join $WINENV sos_triangle.exe]
 set wantMole [file join $WINENV mole_tunnel_engine.exe]
-set gotMole [::VMDHole::_mole_engine_path]
+set gotMole [::VMDHole::tool_path mole_engine]
 if {$gotMole eq $wantMole} {
-    puts "OK _mole_engine_path's sibling walk found mole_tunnel_engine.exe"
+    puts "OK tool_path mole_engine's sibling walk found mole_tunnel_engine.exe"
 } else {
-    puts "BAD _mole_engine_path sibling walk: got '$gotMole', wanted '$wantMole'"
+    puts "BAD tool_path mole_engine sibling walk: got '$gotMole', wanted '$wantMole'"
 }
 
-# _hydro_project_path: no init_executables backfill exists for it, so this
+# tool_path hydro_project: no init_executables backfill exists for it, so this
 # walk is its only non-PATH discovery. It also execs the found binary with
 # --hole-features and requires "hydroproject" in the reply (the fixture
 # answers that). Unset the memo first or a previous "" would be returned.
-catch {unset ::VMDHole::_hydro_project_exe}
+array unset ::VMDHole::_tool_memo
 set wantHydro [file join $WINENV hydro_project.exe]
-set gotHydro [::VMDHole::_hydro_project_path]
+set gotHydro [::VMDHole::tool_path hydro_project]
 if {$gotHydro eq $wantHydro} {
-    puts "OK _hydro_project_path found hydro_project.exe beside sos_triangle"
+    puts "OK tool_path hydro_project found hydro_project.exe beside sos_triangle"
 } else {
-    puts "BAD _hydro_project_path: got '$gotHydro', wanted '$wantHydro'"
+    puts "BAD tool_path hydro_project: got '$gotHydro', wanted '$wantHydro'"
 }
 TCLEOF
 
@@ -154,6 +160,11 @@ if [ "$rc" -eq 3 ] || printf '%s\n' "$out" | grep -q '^FATAL'; then
 fi
 nok=$(printf '%s\n' "$out" | grep -c '^OK ')
 nbad=$(printf '%s\n' "$out" | grep -c '^BAD ')
+if [ "$nok" -eq 0 ]; then
+    printf '%s\n' "$out" | tail -8
+    echo "  FAIL  the driver ran no checks"
+    echo "  -> 0 passed, 1 failed"; exit 1
+fi
 if [ "$nbad" -eq 0 ]; then
     echo "  PASS  a caller-set engine path survives init_executables, and .exe discovery works ($nok checks)"
     echo "  -> 1 passed, 0 failed"

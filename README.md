@@ -97,7 +97,7 @@ location, pass either absolute or relative paths:
 ```
 
 In VMDHole, open **File → Settings** and select the resulting `hole`,
-`sph_process`, `sos_triangle`, and `mole_tunnel_engine` executables.
+`sph_process`, `sos_triangle` (which also carries the marching-cubes mesher, the Nelder-Mead search and the Connolly classifier), and `mole_tunnel_engine` executables.
 
 See the [installation guide](docs/installation.md) for platform requirements,
 binary choices, verification, and upgrades.

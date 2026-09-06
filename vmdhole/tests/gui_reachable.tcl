@@ -283,7 +283,7 @@ set PDB $::env(GUI_TEST_PDB)
 if {[info exists ::env(GUI_TEST_ENGINE)] && [file executable $::env(GUI_TEST_ENGINE)]} {
     set ::VMDHole::state(mole_engine_exec) $::env(GUI_TEST_ENGINE)
 }
-if {[file exists $PDB] && [file executable [::VMDHole::_mole_engine_path]]} {
+if {[file exists $PDB] && [file executable [::VMDHole::tool_path mole_engine]]} {
     set mid [mol new $PDB waitfor all]
     # Output goes to a scratch dir, not next to the structure: with work_dir on
     # "auto" the run writes tunnel_output_<name> beside the PDB, and the PDB
@@ -4213,7 +4213,6 @@ if {[winfo exists $_hp]} {
     foreach {_lbl _p} [list "MC steps" $_hp.hp.ms_e  "MC step size" $_hp.hp.md_e \
                             "MC kT" $_hp.hp.mk_e     "IGNORE" $_hp.hp.ig_e \
                             "Extra cards" $_hp.hp.ex_e "Pore method" $_hp.hp.pm_mb \
-                            "Connolly trim" $_hp.hp.ctrim_c \
                             "sideways gate" $_hp.hp.cgate_c \
                             "atom-name rewriter" $_hp.hp.fixnm_c] {
         if {![winfo exists $_p]} { report "$_lbl exists" 0 "$_p missing"; continue }
@@ -4401,18 +4400,34 @@ if {[winfo exists $_hp]} {
         # The mesh knob sets a CONNOLLY-only dot density, so it is shown only
         # there. The triangle knob applies to any method. Both are pore-only
         # (no tunnel-mode reader), so they live in the HOLE gear.
+        # Both are sos_triangle knobs, so they live in Settings after the mesher
+        # row and appear only when sos_triangle is the mesher.
         set _svpmP $::VMDHole::state(pore_method)
+        set _svmsP $::VMDHole::state(mesher)
+        ::VMDHole::show_settings_dialog
+        set _sd $::VMDHole::_settings_d
+        ::VMDHole::_set_mesher sos sos_triangle
+        update idletasks
         foreach _m {connolly spherical capsule} {
             set ::VMDHole::state(pore_method) $_m
             ::VMDHole::_update_method_dependent_controls
             update idletasks
             set _want [expr {$_m eq "connolly"}]
             report "the playback mesh knob shows only under connolly (at $_m)" \
-                [expr {[winfo ismapped $_hg.pb.cd_e] == $_want}] \
-                "(mesh=[winfo ismapped $_hg.pb.cd_e] want=$_want)"
+                [expr {[winfo ismapped $_sd.ms_dd.e3] == $_want}] \
+                "(mesh=[winfo ismapped $_sd.ms_dd.e3] want=$_want)"
             report "the playback triangle knob stays visible under $_m" \
-                [winfo ismapped $_hg.pb.ds_e] ""
+                [winfo ismapped $_sd.ms_dd.e2] ""
+            report "dot density stays visible under $_m" \
+                [winfo ismapped $_sd.ms_dd.e] ""
         }
+        ::VMDHole::_set_mesher csg {Marching cubes}
+        update idletasks
+        report "the sos_triangle knobs hide under the marching-cubes mesher" \
+            [expr {![winfo ismapped $_sd.ms_dd]}] ""
+        report "...and the marching-cubes grid entries take their place" \
+            [winfo ismapped $_sd.ms_vx] ""
+        ::VMDHole::_set_mesher $_svmsP [expr {$_svmsP eq "sos" ? "sos_triangle" : "Marching cubes"}]
         set ::VMDHole::state(pore_method) $_svpmP
         ::VMDHole::_update_method_dependent_controls
         set ::VMDHole::state(pore_method) $_svpmK
@@ -4872,7 +4887,7 @@ if {[winfo exists $_hp]} {
     ::VMDHole::_update_conn_controls
     update idletasks
     set _hidden 1; set _enabled 0
-    foreach _c {ctrim_c cgate_c} {
+    foreach _c {cgate_c} {
         # Not catch-guarded: a widget that stopped existing must fail as a
         # named missing knob, not as an errored group.
         report "the gear knob $_c still exists" [winfo exists $_hp.hp.$_c] 1
@@ -4885,7 +4900,7 @@ if {[winfo exists $_hp]} {
     ::VMDHole::_update_conn_controls
     update idletasks
     set _shown 1
-    foreach _c {ctrim_c cgate_c} {
+    foreach _c {cgate_c} {
         if {![winfo exists $_hp.hp.$_c] || ![winfo ismapped $_hp.hp.$_c]} { set _shown 0 }
     }
     report "the Connolly knobs come back under CONNOLLY" $_shown ""
@@ -4986,11 +5001,15 @@ if {[winfo exists $_hp]} {
     }
     catch {destroy $_gg}
 
-    # The inserted row must not have landed on top of the row it displaced.
+    # Rows a choice enables come after the choice: IGNORE (both engines) sits
+    # above the Search picker, the Monte Carlo rows and HOLE's own cards below
+    # it - and none of them on top of another.
     set _mcy [winfo rooty $_hp.hp.ms_e]
     set _igy [winfo rooty $_hp.hp.ig_e]
-    report "the MC row sits above IGNORE, not on it" \
-        [expr {$_igy > $_mcy}] "MC y=$_mcy, IGNORE y=$_igy"
+    set _sey [winfo rooty $_hp.hp.se_mb]
+    set _rsy [winfo rooty $_hp.hp.rs_e]
+    report "IGNORE sits above the Search picker, the MC row and the seed below it" \
+        [expr {$_igy < $_sey && $_sey < $_mcy && $_mcy < $_rsy}] "IGNORE y=$_igy, Search y=$_sey, MC y=$_mcy, seed y=$_rsy"
     destroy $_hp
 }
 

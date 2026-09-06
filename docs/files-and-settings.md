@@ -24,8 +24,16 @@ files record individual analyses.
 
 ## Executable settings
 
-**File → Settings** configures `hole`, `sph_process`, `sos_triangle`, the tunnel
-engine, and the radius file. Use the detected acceleration status to confirm the
+**File → Settings** configures the surface mesher and its grid, `hole`,
+`sph_process`, `sos_triangle`, the tunnel engine, and the radius file. The
+mesher, the Nelder-Mead search and the Connolly classifier are part of
+`sos_triangle` and need no paths of their own. Options that only apply to one
+choice appear after it: the grid and neck entries follow the marching-cubes
+mesher, the dot density entry sits beside `sos_triangle` and its playback
+rows follow it. In HOLE Parameters the Monte Carlo rows, the random seed, SHORTO
+and the extra cards follow the Search picker and show for Monte Carlo only. The
+Connolly surface engine lives with the HOLE parameters and appears only for
+Connolly runs. Use the detected acceleration status to confirm the
 selected binaries. See [Installation](installation.md) for recommended builds.
 
 
@@ -36,7 +44,8 @@ selected binaries. See [Installation](installation.md) for recommended builds.
 | Parallel jobs | More simultaneous frames; higher CPU and temporary-storage use |
 | Prebuild surfaces | Longer initial run; smoother later playback |
 | Surface cache | More memory; fewer mesh rebuilds |
-| Playback detail | Coarser interactive display; final selected frame remains full detail |
+| Smoothing | Average the surface over neighbouring analysed frames: *Follow VMD* takes the trajectory-smoothing window of the shown representations, *Off*, or a fixed half-width. The marching mesher averages the frames' distance fields, sos_triangle averages the dot clouds dot by dot; numbers stay per frame |
+| Playback stride (`sos_triangle` mesher only) | Draw every Nth triangle while the trajectory plays; the frame at rest is full detail. The marching-cubes mesher draws one full-detail mesh throughout |
 | Mean frame cap | Bounds expensive mean/property work on long trajectories |
 | Accurate 3D | Better property projection; higher calculation cost |
 

@@ -237,6 +237,54 @@ if {![file executable $sphbin] || ![file executable $tribin]} {
             } else { no ".sos ($tag) is byte-identical" "files differ" }
         }
     }
+    # CAPSULE: sph_process hands a file with QC1/QC2 records to sphqpc.f, a
+    # different pass structure from sphqpu.f's. The port must match it record
+    # for record, plain and coloured - on the frozen fixture as HOLE wrote it,
+    # escaped rows included (the plugin drops those before either runs).
+    set capkept [file join $HERE fixtures capsule_1GRM.sph]
+    if {[file readable $capkept]} {
+        foreach {tag cflag} {capsule_plain 0 capsule_color 1} {
+            set bargs [list -sos -dotden 4]
+            if {$cflag} { lappend bargs -color }
+            catch {exec {*}[list $sphbin {*}$bargs $capkept b_$tag.sos] >/dev/null 2>@1}
+            set rc [catch {exec {*}$tclsh $script --sph-process 4 $cflag $capkept t_$tag.sos} e]
+            if {$rc} {
+                no ".sos ($tag) built" $e
+            } elseif {![file exists "b_$tag.sos"]} {
+                no ".sos ($tag) reference built" "sph_process wrote nothing"
+            } else {
+                set bh [open b_$tag.sos r]; set bt [read $bh]; close $bh
+                set th [open t_$tag.sos r]; set tt [read $th]; close $th
+                if {$bt eq $tt && [string length $bt] > 0} { ok ".sos ($tag) is byte-identical to sph_process" \
+                } else { no ".sos ($tag) is byte-identical" "files differ" }
+            }
+        }
+    }
+    # Surface smoothing's dot-cloud average: the port must match sos_triangle
+    # --sos-smooth dot for dot. The frame against a +1 A shifted copy of its
+    # own cloud exercises every branch (found, not found, tie order).
+    if {[file exists [file join $TMP b_color.sos]] && ![catch {exec $tribin --hole-features < /dev/null} _feat] \
+            && [string match "*sossmooth*" $_feat]} {
+        set fh [open b_color.sos r]; set fo [open shifted.sos w]
+        while {[gets $fh l] >= 0} {
+            set v [regexp -all -inline {[-+0-9.eE]+} $l]
+            if {[llength $v] == 7 && [lindex $v 0] == 4.0} {
+                set l [format "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f" 4.0 [lindex $v 1] [lindex $v 2] [expr {[lindex $v 3]+1.0}] [lindex $v 4] [lindex $v 5] [lindex $v 6]]
+            }
+            puts $fo $l
+        }
+        close $fh; close $fo
+        catch {exec $tribin --sos-smooth b_sm.sos 2.0 b_color.sos shifted.sos b_color.sos >/dev/null 2>@1}
+        set rc [catch {exec {*}$tclsh $script --sos-smooth t_sm.sos 2.0 b_color.sos shifted.sos b_color.sos} e]
+        if {$rc} {
+            no ".sos smoothed" $e
+        } else {
+            set bh [open b_sm.sos r]; set bt [read $bh]; close $bh
+            set th [open t_sm.sos r]; set tt [read $th]; close $th
+            if {$bt eq $tt && [string length $bt] > 0} { ok "smoothed .sos is byte-identical to sos_triangle --sos-smooth" \
+            } else { no "smoothed .sos is byte-identical" "files differ" }
+        }
+    }
     if {[file exists [file join $TMP b_color.sos]]} {
         catch {exec sh -c "[list $tribin] -s < b_color.sos > b.plot 2>/dev/null"}
         set rc [catch {exec {*}$tclsh $script --sos-triangle b_color.sos t.plot} e]

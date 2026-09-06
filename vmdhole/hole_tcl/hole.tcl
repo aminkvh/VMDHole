@@ -1169,6 +1169,7 @@ source [file join [file dirname [file normalize [info script]]] capsule.tcl]
 # caller's cwd.
 source [file join [file dirname [file normalize [info script]]] sph_process.tcl]
 source [file join [file dirname [file normalize [info script]]] sos_triangle.tcl]
+source [file join [file dirname [file normalize [info script]]] sos_smooth.tcl]
 
 # ==============================================================================
 #  9. CLI

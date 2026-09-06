@@ -81,16 +81,17 @@ Open **File → Settings** and select:
 
 | Field | File |
 |---|---|
+| Surface mesher | Marching cubes (default) or `sos_triangle` |
 | HOLE exe | `hole` |
 | `sph_process` | `sph_process` |
-| `sos_triangle` | `sos_triangle` from a local rebuild, or release `sos_triangle_fast` |
+| `sos_triangle` | `sos_triangle` from a local rebuild, or release `sos_triangle_fast`. The marching-cubes mesher, the Nelder-Mead search and the Connolly classifier are built into it |
 | MOLE tunnel engine | `mole_tunnel_engine` |
 | Radius file | an appropriate HOLE `.rad` file |
 
 VMDHole checks the selected files in this window. The HOLE, `sph_process`, and
 `sos_triangle` rows show green **accelerated** indicators when the VMDHole
 features are recognized; stock binaries show **not accelerated**. The tunnel
-row reports **detected** or **not detected**. Hover over an indicator for
+engine row reports **detected** or **not detected**. Hover over an indicator for
 details, then save the settings for future sessions.
 
 ## 4. Verify the installation

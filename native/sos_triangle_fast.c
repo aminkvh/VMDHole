@@ -79,7 +79,14 @@ the surface file to  stdout */
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include "xalloc.h"
+#include "hole_io.h"
+#ifdef VMDHOLE_MULTICALL
+int nm_search_main(int argc, char **argv);
+int mesh_csg_main(int argc, char **argv);
+int conn_lobes_main(int argc, char **argv);
+#endif
 
 /* Checked realloc. The growth sites below all used "p = realloc(p, n)", which
    on failure loses the original pointer AND leaves p NULL for the very next
@@ -684,20 +691,6 @@ static const char *surface_color_name(double v)
   return hydro_color_name(v);
 }
 
-/* Pull a fixed PDB column range [a..b] (0-indexed, inclusive) out of a line as */
-/* a double, mirroring the [string range] parsing in colorize_hydrophobic.      */
-static double pdb_col(const char *line, int len, int a, int b)
-{
-  char buf[32];
-  int n = b - a + 1, i;
-  if (a >= len) return 0.0;
-  if (b >= len) b = len - 1, n = b - a + 1;
-  if (n <= 0 || n > 31) return 0.0;
-  for (i = 0; i < n; i++) buf[i] = line[a + i];
-  buf[n] = '\0';
-  return atof(buf);
-}
-
 /* Read channel spheres from the HOLE .sph PDB (ATOM/HETATM records). Every
    ATOM/HETATM line is kept, in file order - callers that need the RAW,
    unfiltered order (hydro_load()'s --hydro-values path, index-parallel to a
@@ -710,30 +703,23 @@ static double pdb_col(const char *line, int len, int a, int b)
    hydro_splice_spheres can drop them, mirroring the Tcl filter exactly. */
 static void hydro_read_spheres(void)
 {
-  FILE *f = fopen(hydro_sph_path, "r");
-  char line[512];
+  hio_reader rd; hio_rec a;
   int cap = 0;
-  if (!f) { fprintf(stderr, "\nhydro: cannot open sph file '%s'", hydro_sph_path); return; }
-  while (fgets(line, sizeof(line), f)) {
-    int len = (int)strlen(line);
-    double resseq;
-    if (strncmp(line, "ATOM  ", 6) != 0 && strncmp(line, "HETATM", 6) != 0) continue;
+  if (!hio_open(&rd, hydro_sph_path)) { fprintf(stderr, "\nhydro: cannot open sph file '%s'", hydro_sph_path); return; }
+  while (hio_next(&rd, &a)) {
     if (n_sph == cap) {
       cap = cap ? cap * 2 : 1024;
       sph_x = xrealloc(sph_x, cap*sizeof(double), "sph_x"); sph_y = xrealloc(sph_y, cap*sizeof(double), "sph_y");
       sph_z = xrealloc(sph_z, cap*sizeof(double), "sph_z"); sph_r = xrealloc(sph_r, cap*sizeof(double), "sph_r");
       sph_h = xrealloc(sph_h, cap*sizeof(double), "sph_h"); sph_flood = xrealloc(sph_flood, cap*sizeof(int), "sph_flood");
     }
-    sph_x[n_sph] = pdb_col(line, len, 30, 37);
-    sph_y[n_sph] = pdb_col(line, len, 38, 45);
-    sph_z[n_sph] = pdb_col(line, len, 46, 53);
-    sph_r[n_sph] = pdb_col(line, len, 60, 65);
+    sph_x[n_sph] = a.x; sph_y[n_sph] = a.y; sph_z[n_sph] = a.z;
+    sph_r[n_sph] = a.beta;
     sph_h[n_sph] = 0.0;
-    resseq = pdb_col(line, len, 22, 26);
-    sph_flood[n_sph] = (resseq == -999.0 || resseq == -888.0 || sph_r[n_sph] > 900.0) ? 1 : 0;
+    sph_flood[n_sph] = (a.resseq == -999 || a.resseq == -888 || sph_r[n_sph] > 900.0) ? 1 : 0;
     n_sph++;
   }
-  fclose(f);
+  hio_close(&rd);
 }
 
 /* Splice HOLE's two-arm .sph centerline into one continuous path, mirroring Tcl's
@@ -3099,8 +3085,129 @@ static void process_one_surface(void)
     hydro_mode = saved_hydro_mode; /* restore so next batch job sees the flag */
 }
 
+/* --sos-smooth OUT RHO CENTRE.sos WITH.sos...: a local average of dot clouds.
+   Every dot of the centre frame moves to the mean of itself and its nearest
+   same-facing dot (within RHO, normals agreeing) in each window frame; its
+   normal is the renormalised mean of theirs. Header and centreline records
+   are copied as they are, so the colour bands and the dot count of the
+   centre frame survive and the result triangulates exactly like any .sos.
+   The plugin's pure-Tcl port (hole::sos_smooth) does the same sums in the
+   same order and is byte-identical to this. */
+typedef struct { double x, y, z, nx, ny, nz; } sm_dot;
+typedef struct { sm_dot *d; int n; int *head, *next; int gx, gy, gz; double ox, oy, oz, cell; } sm_cloud;
+
+static int sm_read(const char *path, sm_dot **out) {
+  FILE *f = fopen(path, "r"); if (!f) return -1;
+  char line[512]; int n = 0, cap = 0; sm_dot *d = NULL;
+  while (fgets(line, sizeof line, f)) {
+    double v[7]; char *p = line, *e; int k;
+    for (k = 0; k < 7; k++) { v[k] = strtod(p, &e); if (e == p) break; p = e; }
+    if (k < 7 || v[0] != 4.0) continue;
+    if (n == cap) { cap = cap ? cap * 2 : 4096; d = xrealloc(d, cap * sizeof(sm_dot), "sm_dot"); }
+    d[n].x = v[1]; d[n].y = v[2]; d[n].z = v[3]; d[n].nx = v[4]; d[n].ny = v[5]; d[n].nz = v[6]; n++;
+  }
+  fclose(f); *out = d; return n;
+}
+
+static void sm_grid(sm_cloud *c, double cell) {
+  c->cell = cell;
+  double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30};
+  for (int i = 0; i < c->n; i++) {
+    double q[3] = {c->d[i].x, c->d[i].y, c->d[i].z};
+    for (int j = 0; j < 3; j++) { if (q[j] < lo[j]) lo[j] = q[j]; if (q[j] > hi[j]) hi[j] = q[j]; }
+  }
+  if (c->n == 0) { lo[0] = lo[1] = lo[2] = 0; hi[0] = hi[1] = hi[2] = 0; }
+  c->ox = lo[0] - cell; c->oy = lo[1] - cell; c->oz = lo[2] - cell;
+  c->gx = (int)((hi[0] - c->ox) / cell) + 2; c->gy = (int)((hi[1] - c->oy) / cell) + 2; c->gz = (int)((hi[2] - c->oz) / cell) + 2;
+  size_t ncell = (size_t)c->gx * c->gy * c->gz;
+  c->head = xrealloc(NULL, ncell * sizeof(int), "sm_head"); for (size_t i = 0; i < ncell; i++) c->head[i] = -1;
+  c->next = xrealloc(NULL, (c->n > 0 ? c->n : 1) * sizeof(int), "sm_next");
+  /* insert in DESCENDING index order so each cell's chain reads ascending */
+  for (int i = c->n - 1; i >= 0; i--) {
+    int ix = (int)((c->d[i].x - c->ox) / cell), iy = (int)((c->d[i].y - c->oy) / cell), iz = (int)((c->d[i].z - c->oz) / cell);
+    size_t id = ((size_t)ix * c->gy + iy) * c->gz + iz;
+    c->next[i] = c->head[id]; c->head[id] = i;
+  }
+}
+
+/* nearest same-facing dot of cloud c within rho of (x,y,z) with normal n; -1 if none */
+static int sm_nearest(const sm_cloud *c, double x, double y, double z, double nx, double ny, double nz, double rho) {
+  int ix = (int)((x - c->ox) / c->cell), iy = (int)((y - c->oy) / c->cell), iz = (int)((z - c->oz) / c->cell);
+  double best = rho * rho; int bi = -1;
+  for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+    int cx = ix + dx, cy = iy + dy, cz = iz + dz;
+    if (cx < 0 || cy < 0 || cz < 0 || cx >= c->gx || cy >= c->gy || cz >= c->gz) continue;
+    for (int i = c->head[((size_t)cx * c->gy + cy) * c->gz + cz]; i >= 0; i = c->next[i]) {
+      double ex = c->d[i].x - x, ey = c->d[i].y - y, ez = c->d[i].z - z;
+      double d2 = ex*ex + ey*ey + ez*ez;
+      if (d2 > best) continue;
+      if (c->d[i].nx*nx + c->d[i].ny*ny + c->d[i].nz*nz <= 0.0) continue;
+      if (d2 < best || bi < 0 || i < bi) { best = d2; bi = i; }
+    }
+  }
+  return bi;
+}
+
+static int sos_smooth(int argc, char **argv) {
+  if (argc < 5) { fprintf(stderr, "\n--sos-smooth needs OUT RHO CENTRE.sos [WITH.sos...]\n"); return 1; }
+  const char *outp = argv[2]; double rho = atof(argv[3]); const char *centre = argv[4];
+  int nw = argc - 5; sm_cloud *w = xrealloc(NULL, (nw > 0 ? nw : 1) * sizeof(sm_cloud), "sm_cloud");
+  for (int k = 0; k < nw; k++) {
+    w[k].n = sm_read(argv[5 + k], &w[k].d);
+    if (w[k].n < 0) { fprintf(stderr, "\n--sos-smooth: cannot read %s\n", argv[5 + k]); return 1; }
+    sm_grid(&w[k], rho);
+  }
+  FILE *in = fopen(centre, "r"); if (!in) { fprintf(stderr, "\n--sos-smooth: cannot read %s\n", centre); return 1; }
+  FILE *out = fopen(outp, "w"); if (!out) { fprintf(stderr, "\n--sos-smooth: cannot write %s\n", outp); fclose(in); return 1; }
+  char line[512]; long ndots = 0;
+  while (fgets(line, sizeof line, in)) {
+    double v[7]; char *p = line, *e; int k;
+    for (k = 0; k < 7; k++) { v[k] = strtod(p, &e); if (e == p) break; p = e; }
+    if (k < 7 || v[0] != 4.0) { fputs(line, out); continue; }
+    double sx = v[1], sy = v[2], sz = v[3], snx = v[4], sny = v[5], snz = v[6]; int cnt = 1;
+    for (int j = 0; j < nw; j++) {
+      int i = sm_nearest(&w[j], v[1], v[2], v[3], v[4], v[5], v[6], rho);
+      if (i < 0) continue;
+      sx += w[j].d[i].x; sy += w[j].d[i].y; sz += w[j].d[i].z;
+      snx += w[j].d[i].nx; sny += w[j].d[i].ny; snz += w[j].d[i].nz; cnt++;
+    }
+    sx /= cnt; sy /= cnt; sz /= cnt;
+    double nl = sqrt(snx*snx + sny*sny + snz*snz);
+    if (nl > 1e-12) { snx /= nl; sny /= nl; snz /= nl; } else { snx = v[4]; sny = v[5]; snz = v[6]; }
+    fprintf(out, "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f\n", 4.0, sx, sy, sz, snx, sny, snz);
+    ndots++;
+  }
+  fclose(in); fclose(out);
+  for (int k = 0; k < nw; k++) { free(w[k].d); free(w[k].head); free(w[k].next); }
+  free(w);
+  fprintf(stderr, "sos-smooth: %ld dots over %d window frames (rho %.2f)\n", ndots, nw, rho);
+  return 0;
+}
+
 int main (int argc, char *argv[])
 {
+#ifdef VMDHOLE_MULTICALL
+  /* One shipped binary carries VMDHole's own tools as well: sos_triangle
+     --nm-search|--mesh|--conn-lobes ARGS... runs nm_search, mesh_csg or
+     conn_lobes with ARGS as its own argv. The plugin finds them here when no
+     standalone build sits beside this file. */
+  if (argc > 1) {
+    if (strcmp(argv[1], "--nm-search")  == 0) {
+      /* nm_search re-execs itself once to pin OMP_WAIT_POLICY=PASSIVE, with
+         the argv it was handed - which here would be the shifted one, minus
+         this subcommand. Do that re-exec at this level with the full argv. */
+      if (!getenv("OMP_WAIT_POLICY") && !getenv("NM_NO_REEXEC")) {
+        setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
+        setenv("NM_NO_REEXEC", "1", 1);
+        execv("/proc/self/exe", argv);
+        execv(argv[0], argv);
+      }
+      argv[1] = argv[0]; return nm_search_main(argc - 1, argv + 1);
+    }
+    if (strcmp(argv[1], "--mesh")       == 0) { argv[1] = argv[0]; return mesh_csg_main(argc - 1, argv + 1); }
+    if (strcmp(argv[1], "--conn-lobes") == 0) { argv[1] = argv[0]; return conn_lobes_main(argc - 1, argv + 1); }
+  }
+#endif
 
   int exists;
   int current_point;
@@ -3229,7 +3336,11 @@ int main (int argc, char *argv[])
 	  if (strcmp(argv[1], "--hole-features") == 0) {
 	    /* capability probe: the plugin greps stdout for these tokens to decide
 	       which accelerated outputs this binary supports. */
-	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords\n");
+	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords sossmooth"
+#ifdef VMDHOLE_MULTICALL
+	            " nm mesh lobes tunnelserve"
+#endif
+	            "\n");
 	    return(0);
 	  } else if (strcmp(argv[1], "--recolor") == 0) {
 	    /* --recolor BASE.vmd_plot: recolour an existing mesh by hydropathy
@@ -3685,6 +3796,8 @@ int main (int argc, char *argv[])
 	    if (n_sph > 0) compute_ellipse(asym_rays, aout, 1);
 	    if (aout != stdout) fclose(aout);
 	    return(0);
+	  } else if (strcmp(argv[1], "--sos-smooth") == 0) {
+	    return sos_smooth(argc, argv);
 	  } else if (strcmp(argv[1], "--esp") == 0) {
 	    /* --esp CHARGEFILE OUTFILE: mean centerline electrostatic potential (needs
 	       --hydro-sph first). Pure speedup for electrostatic_potential_for_frame;
@@ -5839,3 +5952,13 @@ void help ()
 
  return;
 }
+
+#ifdef VMDHOLE_MULTICALL
+/* The resident mesher (mesh_csg --serve, same binary) answers the tunnel
+   clustering kernels for the plugin: forking VMD costs ~33 ms per call on a
+   loaded trajectory, the kernel itself a few ms per frame. */
+int vmdhole_tunnel_cluster(const char *in, const char *out, double threshold, double maxdev)
+{ return tunnel_cluster_c(in, out, threshold, maxdev); }
+int vmdhole_tunnel_dist(const char *in, const char *out, int want_max)
+{ return tunnel_dist(in, out, want_max); }
+#endif

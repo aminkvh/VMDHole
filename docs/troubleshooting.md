@@ -28,7 +28,7 @@ stage, and output path there.
 | Profile exists but no mesh | Check `sph_process` and `sos_triangle` paths and their console output |
 | Connolly produces zero triangles at high density | Use the accelerated surface converter or lower dot density |
 | Surface contains holes or spikes | Inspect Dots/Wireframe, adjust dot density, and verify that the centreline and terminal trimming are valid |
-| Playback stalls | Prebuild surfaces, increase cache within available memory, or reduce playback detail |
+| Playback stalls | Prebuild surfaces, increase cache within available memory, or raise the playback stride under the `sos_triangle` mesher |
 
 ## Tunnel problems
 

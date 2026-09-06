@@ -52,11 +52,13 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Parameter | Default | Definition |
 |---|---:|---|
 | Method | Spherical | Spherical probe, Connolly accessible cross-section, or Capsule anisotropic probe |
-| Dot density | 15 | Surface sampling density used by Connolly/surface stages |
+| Search | Monte Carlo (HOLE) | HOLE's seeded simulated annealing, or the deterministic Nelder-Mead search in `nm_search`. The Monte Carlo rows apply only to Monte Carlo; Capsule always uses HOLE. Both stop the profile at ENDRAD, so their Volume readouts agree |
+| Dot density (Settings, shown for `sos_triangle`) | 15 | sph_process dots per sphere; not used by the marching-cubes mesher |
 | Monte Carlo steps | blank (HOLE default 1000) | Optimization steps per search plane |
 | Monte Carlo step size | blank (HOLE default 0.1 Å) | Trial displacement scale |
 | Monte Carlo temperature | blank (HOLE default 0.1) | Simulated-annealing acceptance parameter |
-| Trim Connolly | off/default | Trim terminal Connolly geometry to the analysed pore |
+| Connolly surface (HOLE parameters, Connolly runs only) | HOLE conn | Under a Monte Carlo search, HOLE's `conn` or the `nm_search` port of it (same algorithm, byte-identical dots on the same centres). Nelder-Mead always uses the port |
+| Surface mesher (Settings → Engines, first row) | Marching cubes, grid 1.4 Å / neck 0.7 Å | Meshes the spherical, Connolly and tunnel surfaces with `mesh_csg`: marching cubes on the exact sphere union, with the edge crossings solved against the sphere itself rather than interpolated. One mesh serves both playback and the settled view, so the surface never changes shape when playback stops. The default matches `sos_triangle`'s triangle size at dot density 15; lower **grid** for a finer surface at more cost per frame. A Connolly run uses **grid** uniformly, because its whole surface is at probe scale and has no narrow neck to refine. The grid and neck entries appear only for the marching-cubes mesher. `sos_triangle` is the alternative; Capsule always uses HOLE. Property colouring recolours whichever mesh is current, and the marching-cubes one has no polygon limit, which is what let a dense Connolly run colour at all |
 | Hide sideways spill | off | Remove Connolly surface regions classified as lateral spill |
 | Margin | 2 Å | Distance beyond the traced pore wall that still belongs to the central pore |
 | Opening axial match tolerance | 6 Å | Maximum axial displacement used to match a lateral opening across frames |
@@ -113,7 +115,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Pore surface color | `hole_def` | HOLE radius banding, property, `pore_lat` pore/spill classification, `pore_lobes` individual Connolly openings, or a flat VMD color |
 | Tunnel surface color | automatic rank | Route/rank color, selected property, or a flat VMD color |
 | Material | Opaque | VMD material applied to the generated representation |
-| Playback detail | 4 | Frame stride/detail used while the trajectory slider is moving |
+| Playback stride (Settings, `sos_triangle` mesher only) | 4 | Draw every Nth triangle while the trajectory plays; the marching-cubes mesher always draws full detail |
 | Synchronize playback | on | Update VMDHole geometry with the VMD frame |
 | Pore lining threshold | 3 Å | Maximum atom-to-local-surface distance used to classify lining residues for display and residue-property averaging |
 | Property smoothing | 3 Å | Axial smoothing bandwidth |
@@ -176,9 +178,9 @@ barrier is a sampling-dependent lower bound.
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Ion Flow view | Occupancy % | Aggregate occupancy map, per-molecule Passage tracks (constriction crossings coloured by direction, drawn on top), or Count vs frame (molecules inside the pore per frame, one curve per ion type when all types are selected) |
-| Passage Show (Water only) | Crossings | Crossings draws only the stretches of line that cross the constriction; All entered draws every molecule that entered the pore, crossings still coloured on top |
-| Species | All detected | Filter cached observations by detected ion species; All = every ion type, never water. Water (one oxygen per molecule, from the Hydration water selection) is its own entry |
+| Ion Flow view | Occupancy % | Occupancy map, Passage tracks (water crossings coloured by direction), or Count vs frame (one curve per ion type when all are selected) |
+| Passage Show (Water only) | All crossing | All crossing, Passage up, Passage down, or All entered (adds the molecules that never crossed) |
+| Species | All detected | All = every ion type, never water; Water = one oxygen per molecule from the Hydration water selection |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |
 | Stride | 1 | Trajectory sampling stride for ion analysis |
 | Flip Z | off | Reverse plotted pore direction |

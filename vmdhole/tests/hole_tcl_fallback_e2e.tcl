@@ -191,7 +191,7 @@ if {[catch {::VMDHole::validate_inputs} verr]} {
                 chk "dots mode builds without a binary" "error: $derr" "no error"
             } else {
                 chk "dots mode: fast --points path correctly unavailable" \
-                    [::VMDHole::dots_fast_available] 0
+                    [::VMDHole::fast_available points] 0
                 chk "dots mode produces geometry" \
                     [::VMDHole::surface_has_geometry $dplot] 1
             }
@@ -207,11 +207,9 @@ catch {file delete -force $work2}
 #    reaches the engine through a control-file card, so a translation that
 #    dropped it would leave a perfectly valid SPHERICAL profile behind and
 #    nothing here would look wrong.
-#    Both build a surface, and by different routes: CAPSULE's .sph never reaches
-#    sph_process at all (create_plot_asset stitches stadium cross-sections in
-#    Tcl), while CONNOLLY's ~600-sphere cloud goes through the same
-#    sph_process -> sos_triangle chain as the spherical case - cheap here only
-#    because create_plot_asset trims and reduces the cloud first.
+#    Both go through the same sph_process -> sos_triangle chain as the
+#    spherical case: CONNOLLY's ~600-sphere cloud trimmed and reduced first,
+#    CAPSULE's kept slices through the Tcl port of sphqpc.f.
 #    endrad 4.0, not the 8.0 used elsewhere: same code, a third of the slices.
 foreach {meth dm} {capsule triangulated connolly triangulated} {
     set w3 [file join [::VMDHole::get_temp_base] "vmdhole_e2e_${meth}_[pid]"]

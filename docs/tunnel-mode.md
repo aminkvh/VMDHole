@@ -25,7 +25,9 @@ interpreted as route motion.
 The start point should lie in the buried cavity of interest. Enter coordinates,
 use a selection's centre of geometry (**COG**) or VMD's centre of rotation
 (**COR**), or enable automatic origin detection. A poor origin can return no
-routes or routes from the wrong cavity.
+routes or routes from the wrong cavity. The **⌖** button opens the on-screen
+stick described under pore mode, step 3, to nudge the start point relative to
+the current view.
 
 Custom exits restrict the search toward known surface regions. A custom path is
 defined by start and end points. **Use custom exits only** excludes other exit
@@ -71,6 +73,13 @@ Sort by a column to inspect a different property; sorting does not alter route
 identity. Expand a row for details. The row gear controls that route's
 representation, color, material, and property. The global gear applies display
 choices to routes without a per-route override.
+
+Route surfaces are meshed by `mesh_csg` (Settings → Engines → Spherical
+mesher), the same marching-cubes mesher the spherical pore uses, since a
+route is a union of spheres along its centre line. A route coloured by a
+property is meshed by `sos_triangle` instead, because the per-triangle
+recolouring reads that program's own mesh records. On a four-route frame of
+KcsA, meshing and drawing took 59 ms against 217 ms for `sos_triangle`.
 
 Tunnel properties are Kyte–Doolittle, Wimley–White, Kapcha–Rossky,
 Fauchère–Pliska, and the MOLE hydropathy, hydrophobicity, polarity, charge,

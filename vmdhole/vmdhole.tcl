@@ -283,7 +283,9 @@ namespace eval ::VMDHole:: {
     # plot_cache_max_value() (Settings > "Rendered-surface cache", default 20). Each entry is
     # ~15-20 MB, so a larger cache trades RAM for smoother long-range scrubbing.
     variable plot_cache
+    variable plot_stride_cache
     array set plot_cache {}
+    array set plot_stride_cache {}
     variable plot_cache_order {}
     # Memoized profile aggregation for the analysis tabs. collect_binned_radii
     # iterates every sample point of every frame (~millions on a 10K-frame run);
@@ -370,6 +372,59 @@ namespace eval ::VMDHole:: {
     # ALL seltext atoms; per-frame cost is only $sel frame + get {x y z}. Deleted
     # handles are evicted on the next write_hydro_sidecar_batch call (cap 20 entries).
     variable hydro_topo_cache [dict create]
+    # ---- Caches: one registry, one clear ------------------------------------
+    # Every cache the plugin keeps, with its empty form and the events that
+    # drop it. cache_clear takes tags or names; the smoke test refuses a
+    # cache variable that is not listed here.
+    #   run      a new result set (clear_results_for_new_settings)
+    #   results  the results list was rebuilt after a run (refresh_results_list)
+    #   plot     the rendered look changed: colour source, hydro method, display
+    #   keyed    invalidates itself by signature; listed so its lifetime is on record
+    #   session  process-lifetime lookups
+    variable _caches {
+        plot_cache                {form array tags {run plot}}
+        plot_stride_cache         {form array tags {run plot}}
+        plot_cache_order          {form list  tags {run plot}}
+        binned_cache              {form dict  tags {run results}}
+        hm_prop_cache             {form dict  tags {run results}}
+        hm_bundle_cache           {form dict  tags {run}}
+        hm_ellipse_bundle_cache   {form dict  tags {run}}
+        hm_render_cache           {form list  tags {run results}}
+        sphere_hydro_values_cache {form dict  tags {run}}
+        fastpath_sphere_cache     {form dict  tags {run}}
+        conn_site_cache           {form dict  tags {run results}}
+        _conn_cls_memo            {form dict  tags {run results}}
+        _conn_unroll_memo         {form dict  tags {run results}}
+        _2dmap_memo               {form array tags {results}}
+        hydro_topo_cache          {form dict  tags {run} free _free_hydro_topo_cache}
+        sphere_atom_cache         {form dict  tags {run}}
+        hydro3d_props_cache       {form dict  tags {run}}
+        trend_cache               {form list  tags {run}}
+        ion_flow_cache            {form str   tags {run}}
+        _fit_cache                {form unset tags {run}}
+        asym_cache                {form unset tags {run}}
+        asym_batch_cache          {form unset tags {keyed}}
+        bottleneck_cache          {form unset tags {keyed}}
+        formal_charge_cache       {form unset tags {keyed}}
+        _esp_cache                {form unset tags {keyed}}
+        _esp_profile_cache        {form unset tags {keyed}}
+        hydro_profile_cache       {form dict  tags {keyed}}
+        _axis_straightness_cache  {form unset tags {keyed}}
+        _bneck_segname_cache      {form unset tags {keyed}}
+        _mean_vol_fields_cache    {form unset tags {keyed}}
+        _perm_axes_cache          {form unset tags {keyed}}
+        _ionflow_water_menu_cache {form unset tags {keyed}}
+        _stab_selcache            {form list  tags {keyed}}
+        _csg_owned                {form unset tags {keyed}}
+        _axis_straight_memo       {form unset tags {keyed}}
+        _lining_sets_memo         {form unset tags {keyed}}
+        _pore_surf_memo           {form unset tags {keyed}}
+        _tool_memo                {form array tags {session}}
+        hydro_cap_cache           {form dict  tags {session}}
+        _hole_tcl_script_cache    {form unset tags {session}}
+        _ion_fallback_cache       {form unset tags {session}}
+        _vmd_color_names_cache    {form unset tags {session}}
+    }
     variable _props_fast_warned 0  ;# print the one-shot fallback note at most once
     # Re-entrancy guard for _sync_property_scheme_across_panels - each of
     # hydro_scheme/profile_color_scheme/mean_hydro_scheme writes the OTHER two
@@ -465,6 +520,10 @@ namespace eval ::VMDHole:: {
         cpoint {}
         show_cpoint_marker 0
         cvect {}
+        axis_stick_mode cpoint
+        surface_smooth follow
+        axis_stick_step_cpoint 1.0
+        axis_stick_step_cvect 0.15
         cvect_def_p1 {}
         cvect_def_p2 {}
         dynamic_axis 0
@@ -489,6 +548,17 @@ namespace eval ::VMDHole:: {
         extra_cards {}
         pore_method circular
         pore_method_disp Spherical
+        search_engine mc
+        search_engine_disp {Monte Carlo (HOLE)}
+        conn_engine hole
+        conn_engine_disp {HOLE conn}
+        nm_search_exec {}
+        conn_lobes_exec {}
+        mesh_csg_exec {}
+        mesher csg
+        mesher_disp {Marching cubes}
+        csg_voxel 1.4
+        csg_voxel_fine 0.7
         unroll_layer touch
         unroll_layer_disp {Wall distance}
         random_seed {}
@@ -577,7 +647,6 @@ namespace eval ::VMDHole:: {
         keep_input_pdb 0
         hole_fix_atom_names 0
         ion_radius_fallback 0
-        conn_trim_escaped 0
         conn_pore_gate 0
         conn_pore_margin 2.0
         conn_draft_dotden 6
@@ -672,7 +741,7 @@ namespace eval ::VMDHole:: {
         ion_flow_view density
         ion_flow_view_disp {Occupancy %}
         ion_flow_passage_show crossings
-        ion_flow_passage_show_disp {Crossings}
+        ion_flow_passage_show_disp {All crossing}
         ion_flow_swap_xy 0
         ion_flow_flip_z 0
         trends_metric min_r
@@ -850,6 +919,24 @@ proc ::VMDHole::load_config {} {
     if {[info exists state(surface_color)] && $state(surface_color) eq "hydrophobic"} {
         set state(surface_color) property
     }
+    # csg_voxel meant "the settled mesh" while the mesher still built a second,
+    # coarser mesh for playback (csg_voxel_draft). It now means the grid used
+    # everywhere, with csg_voxel_fine only around the narrow pore, so a value
+    # saved under the old pair is far finer than intended and costs several
+    # times the frame budget. Presence of the retired key identifies it.
+    if {[info exists state(csg_voxel_draft)]} {
+        array unset state csg_voxel_draft
+        set state(csg_voxel) 1.4
+        set state(csg_voxel_fine) 0.7
+    }
+    # A neck finer than the grid is the only combination that means anything;
+    # the other way round just makes a uniform grid, which is what it now does.
+    if {[info exists state(csg_voxel_fine)] && [info exists state(csg_voxel)]
+            && [string is double -strict $state(csg_voxel_fine)]
+            && [string is double -strict $state(csg_voxel)]
+            && $state(csg_voxel_fine) > $state(csg_voxel)} {
+        set state(csg_voxel_fine) $state(csg_voxel)
+    }
     # Default salt changed to physiological 150 mM NaCl (37C). Flip a config that
     # still holds the OLD shipped default (1 M KCl) so existing users get the new
     # default too; a deliberately-chosen different salt is left untouched.
@@ -888,8 +975,8 @@ proc ::VMDHole::load_config {} {
     # path. Lives HERE so the source-time load at the end of this file is
     # covered too, not only init_executables; caller presets are safe because
     # init_executables restores them after this returns.
-    foreach _k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec} {
-        if {$state($_k) ne "" && ![file executable $state($_k)]} {
+    foreach _k [tool_exec_keys] {
+        if {[info exists state($_k)] && $state($_k) ne "" && ![file executable $state($_k)]} {
             catch {vmdcon -warn "VMDHole: ignoring persisted $_k = $state($_k) (not executable)"}
             set state($_k) ""
         }
@@ -906,7 +993,7 @@ proc ::VMDHole::save_config {} {
     # load_config's skip_keys for the full exclusion list and why). Must stay in sync
     # with skip_keys, its read-side counterpart.
     set persistent_keys {
-        hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file
+        hole_exec sph_process_exec sos_triangle_exec mole_engine_exec nm_search_exec conn_lobes_exec mesh_csg_exec radius_file
         dot_density
         hydro_fast hole_accel sph_accel
         sync_visualization show_centerline show_hydro_scalebar
@@ -920,6 +1007,7 @@ proc ::VMDHole::save_config {} {
         trends_show_mean trends_kappa_preset trends_kappa_custom
         overwrite_results save_results
         ignore sample endrad shorto extra_cards random_seed mcstep mcdisp mckt
+        search_engine conn_engine mesher csg_voxel csg_voxel_fine surface_smooth
         lining_dist_thresh hydro_shell hydro_scheme hydro_avg_mode hydro_facing
         hydro_3d_accurate mean_hydro_3d_accurate hydrophob_kde_bandwidth
         chap_mode chap_fix_leu water_sel water_bulk water_temp water_dz
@@ -927,7 +1015,7 @@ proc ::VMDHole::save_config {} {
         mole_probe mole_interior mole_minlen mole_bottleneck mole_originradius
         mole_mindepth mole_mindeplen mole_cover mole_autocover mole_maxorigins
         mole_bottletol mole_maxsim mole_weight_disp mole_fbl mole_exits_only
-        mole_strict_interior tunnel_cluster_maxdev conn_trim_escaped
+        mole_strict_interior tunnel_cluster_maxdev
         conn_pore_gate conn_pore_margin conn_draft_dotden
         mean_3d_mode mean_display_mode conn_lobe_tolz conn_lobe_tola conn_lobe_minseen
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
@@ -973,6 +1061,133 @@ proc ::VMDHole::_find_exe {path} {
     return {}
 }
 
+# ---- Native tools: one table, one finder, one gate --------------------------
+# Every helper binary the plugin runs, by name. exe = file name beside hole/
+# sos_triangle; feat = the feature the shipped sos_triangle advertises when it
+# carries the tool, sub = the subcommand that selects it there; probe = the
+# --hole-features word that proves a same-named binary on PATH is the real one.
+# state(<name>_exec) is an explicit override for each.
+namespace eval ::VMDHole {
+variable _tools {
+    hole          {exe hole}
+    sph_process   {exe sph_process}
+    sos_triangle  {exe sos_triangle}
+    mole_engine   {exe mole_tunnel_engine}
+    nm_search     {exe nm_search   feat nm    sub --nm-search}
+    conn_lobes    {exe conn_lobes  feat lobes sub --conn-lobes}
+    mesh_csg      {exe mesh_csg    feat mesh  sub --mesh}
+    hydro_project {exe hydro_project probe hydroproject}
+}
+variable _tool_memo
+array set _tool_memo {}
+}
+
+proc ::VMDHole::tool_exec_keys {} {
+    variable _tools
+    set keys {}
+    foreach n [dict keys $_tools] { lappend keys ${n}_exec }
+    return $keys
+}
+
+proc ::VMDHole::tool_path {name} {
+    # The one discovery walk: override, the shipped sos_triangle when it carries
+    # the tool, a sibling of sos_triangle or hole, then PATH. "" when absent.
+    variable state
+    variable _tools
+    variable _tool_memo
+    set t [dict get $_tools $name]
+    set key ${name}_exec
+    if {[info exists state($key)] && [file executable $state($key)]} { return $state($key) }
+    if {[dict exists $t feat] && [info exists state(sos_triangle_exec)] \
+            && [sos_triangle_has_feature [dict get $t feat]]} {
+        return [string trim $state(sos_triangle_exec)]
+    }
+    if {[info exists _tool_memo($name)]} { return $_tool_memo($name) }
+    set exe [dict get $t exe]
+    set found ""
+    foreach anchor {sos_triangle_exec hole_exec} {
+        if {![info exists state($anchor)] || $state($anchor) eq ""} { continue }
+        set d [file dirname $state($anchor)]
+        if {$d eq "" || $d eq "."} { continue }
+        set found [_find_exe [file join $d $exe]]
+        if {$found ne ""} { break }
+    }
+    if {$found eq "" && ![catch {auto_execok $exe} a] && $a ne ""} { set found [lindex $a 0] }
+    if {$found ne "" && [dict exists $t probe]} {
+        # A same-named binary on PATH must answer --hole-features with this word.
+        if {[catch {exec $found --hole-features} f] || ![string match "*[dict get $t probe]*" $f]} {
+            set found ""
+        }
+        set _tool_memo($name) $found
+    }
+    return $found
+}
+
+proc ::VMDHole::tool_args {name} {
+    # The subcommand when the tool is served by the shipped sos_triangle.
+    variable state
+    variable _tools
+    set t [dict get $_tools $name]
+    if {![dict exists $t sub]} { return {} }
+    set p [tool_path $name]
+    if {$p ne "" && [info exists state(sos_triangle_exec)] \
+            && $p eq [string trim $state(sos_triangle_exec)]} { return [list [dict get $t sub]] }
+    return {}
+}
+
+proc ::VMDHole::fast_available {args} {
+    # The accelerator gate: Settings' on/off switch plus every named
+    # sos_triangle feature. The Tcl path behind each is the fallback.
+    variable state
+    if {[info exists state(hydro_fast)] && $state(hydro_fast) eq "off"} { return 0 }
+    foreach feat $args { if {![sos_triangle_has_feature $feat]} { return 0 } }
+    return 1
+}
+
+proc ::VMDHole::_sos_run {flags {in ""} {out ""}} {
+    # One shell runner for every sos_triangle mode: stdin, stdout, stderr dropped.
+    variable state
+    set cmd "[shell_quote $state(sos_triangle_exec)] $flags"
+    if {$in ne ""} { append cmd " < [shell_quote $in]" }
+    if {$out ne ""} { append cmd " > [shell_quote $out]" }
+    catch {exec sh -c "$cmd 2>/dev/null"}
+}
+
+proc ::VMDHole::cache_clear {args} {
+    # Reset every registered cache carrying one of the given tags, or named
+    # outright, to its empty form. Unknown names are an error: register first.
+    variable _caches
+    foreach want $args {
+        set hit 0
+        dict for {name spec} $_caches {
+            if {$want ne $name && $want ni [dict get $spec tags]} continue
+            set hit 1
+            if {[dict exists $spec free]} { catch {[dict get $spec free]} }
+            set v ::VMDHole::$name
+            switch -- [dict get $spec form] {
+                dict  { set $v [dict create] }
+                array { array unset $v; array set $v {} }
+                list  { set $v {} }
+                str   { set $v "" }
+                unset { unset -nocomplain $v }
+            }
+        }
+        if {!$hit} { error "cache_clear: no cache or tag named '$want'" }
+    }
+}
+
+proc ::VMDHole::_free_hydro_topo_cache {} {
+    # The topology cache owns persistent atomselect handles.
+    variable hydro_topo_cache
+    if {![info exists hydro_topo_cache]} return
+    catch {dict for {_k _td} $hydro_topo_cache { catch {[dict get $_td sel_handle] delete} }}
+}
+
+proc ::VMDHole::_sos_recolor_threads {} {
+    if {[sos_triangle_has_feature recolorthreads]} { return "--recolor-threads [resolve_job_count]" }
+    return ""
+}
+
 proc ::VMDHole::find_hole_exe {} {
     # The env dir first: the same override the test suite and batch recipes
     # already use to point one run at one tree. Six individual tests honour
@@ -1008,7 +1223,7 @@ proc ::VMDHole::init_executables {} {
     # Non-empty here means the caller assigned it: every one of these defaults
     # to the empty string.
     set _preset [dict create]
-    foreach _k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file} {
+    foreach _k [concat [tool_exec_keys] radius_file] {
         if {[info exists state($_k)] && $state($_k) ne ""} {
             dict set _preset $_k $state($_k)
         }
@@ -1031,9 +1246,11 @@ proc ::VMDHole::init_executables {} {
     # Backfill any sibling executables that are missing.
     if {[file executable $state(hole_exec)]} {
         set dir [file dirname $state(hole_exec)]
-        foreach {key name} {sph_process_exec sph_process sos_triangle_exec sos_triangle \
-                mole_engine_exec mole_tunnel_engine} {
-            if {$state($key) eq "" || ![file executable $state($key)]} {
+        variable _tools
+        dict for {tname t} $_tools {
+            set key ${tname}_exec; set name [dict get $t exe]
+            if {$tname eq "hole"} continue
+            if {![info exists state($key)] || $state($key) eq "" || ![file executable $state($key)]} {
                 set sib [_find_exe [file join $dir $name]]
                 if {$sib ne ""} { set state($key) $sib }
             }
@@ -1262,7 +1479,6 @@ proc ::VMDHole::_loggable_setting_labels {} {
         keep_input_pdb           "Keep input PDB"
         hole_fix_atom_names      "Rename atoms HOLE cannot read"
         ion_radius_fallback      "Fall back to ionic radii for unmatched atoms"
-        conn_trim_escaped        "Trim Connolly to the pore span"
         conn_pore_gate           "Hide the sideways spill"
         conn_pore_margin         "Sideways margin"
         conn_draft_dotden        "Connolly draft dot density"
@@ -1433,7 +1649,7 @@ proc ::VMDHole::show_gui {} {
     # file; the main window just never had the same guard at its own
     # construction start, only at the end.
     wm withdraw $w
-    wm title $w "VMDHole v$version[expr {$build eq "" ? "" : "  (build $build)"}]"
+    wm title $w "◎ VMDHole v$version[expr {$build eq "" ? "" : "  (build $build)"}]"
     wm protocol $w WM_DELETE_WINDOW ::VMDHole::close_gui
     # Quitting VMD without closing this window first never runs close_gui, so
     # the watchdog, the pending afters and any live shell pool are never told
@@ -2394,7 +2610,7 @@ proc ::VMDHole::build_gui {w} {
 
     # --- Tab: Ion Flow (pore-local ion density + flow map + constriction flux) ---
     frame $w.plotframe.nb.ionflow
-    $w.plotframe.nb add $w.plotframe.nb.ionflow -text "Ion Flow"
+    $w.plotframe.nb add $w.plotframe.nb.ionflow -text "Ion & Water"
     grid columnconfigure $w.plotframe.nb.ionflow 0 -weight 1
     grid rowconfigure    $w.plotframe.nb.ionflow 0 -weight 1
     canvas $w.plotframe.nb.ionflow.cv -bg white -highlightthickness 0
@@ -2411,7 +2627,7 @@ proc ::VMDHole::build_gui {w} {
     }
     bind $w.plotframe.nb.ionflow.cv <Leave> {%W configure -cursor {}}
     label $w.plotframe.nb.ionflow.placeholder -anchor center -justify center -wraplength 420 \
-        -text "Ion occupancy + flow field in the pore's R-Z frame, plus measured\nflux across the constriction. MD-trajectory only (needs ions and >=2 frames). Click Compute."
+        -text "Ion or water occupancy + flow field in the pore's R-Z frame, plus measured\nflux across the constriction. MD-trajectory only (needs a trajectory of >=2 frames). Click Compute."
     grid $w.plotframe.nb.ionflow.placeholder -row 0 -column 0 -sticky nsew
     set fb $w.plotframe.nb.ionflow.exportbar
     frame $fb
@@ -2436,13 +2652,13 @@ proc ::VMDHole::build_gui {w} {
     # Crossings = only molecules that crossed the constriction, Entered =
     # every molecule that entered the pore. Packed/forgotten by _ion_flow_sync_bar_vis.
     menubutton $fb.shw -textvariable ::VMDHole::state(ion_flow_passage_show_disp) \
-        -menu $fb.shw.m -relief raised -indicatoron 1 -width 9
+        -menu $fb.shw.m -relief raised -indicatoron 1 -width 11
     menu $fb.shw.m -tearoff 0
-    $fb.shw.m add radiobutton -label "Crossings" -value crossings \
-        -variable ::VMDHole::state(ion_flow_passage_show) -command ::VMDHole::_on_ion_flow_show_changed
-    $fb.shw.m add radiobutton -label "All entered" -value entered \
-        -variable ::VMDHole::state(ion_flow_passage_show) -command ::VMDHole::_on_ion_flow_show_changed
-    add_tooltip $fb.shw "Passage view, water only: Crossings draws only the stretches of line that cross the constriction; All entered draws every molecule that entered the pore, with the crossings still coloured on top (tens of thousands of lines for water)."
+    foreach {_lbl _val} {"All crossing" crossings "Passage up" up "Passage down" down "All entered" entered} {
+        $fb.shw.m add radiobutton -label $_lbl -value $_val \
+            -variable ::VMDHole::state(ion_flow_passage_show) -command ::VMDHole::_on_ion_flow_show_changed
+    }
+    add_tooltip $fb.shw "Water only. All crossing: only the stretches that cross the constriction. Passage up / Passage down: one direction. All entered: every molecule that entered the pore, crossings coloured on top."
     # The wall curve's caption used to carry this explanation inline, which made
     # the figure chatty. It is real information - the curve is a trajectory MEAN
     # per slice, so at the narrowest point it reads systematically wider than
@@ -2514,9 +2730,13 @@ Stricter than Passage, which counts ions that merely entered."
         -variable ::VMDHole::_vis_mean_shown -command ::VMDHole::toggle_mean_surface_visibility
     checkbutton $w.bottom.statusrow.vistoggle.tunnel -text "T" -indicatoron 0 -width 3 \
         -variable ::VMDHole::_vis_tunnel_shown -command ::VMDHole::toggle_tunnel_surface_visibility
-    pack $w.bottom.statusrow.vistoggle.pore -side left -padx {0 3}
-    pack $w.bottom.statusrow.vistoggle.mean -side left -padx {0 3}
-    pack $w.bottom.statusrow.vistoggle.tunnel -side left
+    # Gaps match the transport row's, so each toggle sits directly over a
+    # playback button rather than half a button off (see _match_row_buttons).
+    # Pad on the left only: the group is packed against the right edge, and
+    # which toggle is last depends on the mode.
+    pack $w.bottom.statusrow.vistoggle.pore -side left
+    pack $w.bottom.statusrow.vistoggle.mean -side left -padx {2 0}
+    pack $w.bottom.statusrow.vistoggle.tunnel -side left -padx {2 0}
     # Abort button lives on the options row (below the transport controls, on the
     # right) - not on this status row, whose -fill x summary label would reflow (and
     # lag) each time the button appeared. Created + shown/hidden there (see below +
@@ -2631,6 +2851,7 @@ Stricter than Passage, which counts ions that merely entered."
     add_tooltip $w.actions.close "Close the VMDHole window. Results stay loaded."
     add_tooltip $w.actions.cite "Open the citation list: what to cite for VMDHole, VMD, HOLE and the specific methods you report."
     grid $w.actions -row 3 -column 0 -columnspan 2 -sticky ew -padx 10 -pady {0 10}
+    catch {_match_row_buttons}
     # Initial enable/disable of the trajectory-only analyses (Hydration, Permeation).
     catch {_gate_trajectory_buttons}
     # Grey out ellipse options if the persisted method is Connolly (the menus were
@@ -2639,6 +2860,33 @@ Stricter than Passage, which counts ions that merely entered."
 }
 
 # -- Hover tooltips --------------------------------------------------------
+
+proc ::VMDHole::_match_row_buttons {} {
+    # Size Log and the P/M/T toggles to the playback buttons below: an empty
+    # image with -compound center makes -width/-height pixels, not characters.
+    variable w
+    set ref $w.bottom.transport.first
+    if {![winfo exists $ref]} { return }
+    update idletasks
+    set bw [winfo reqwidth $ref]; set bh [winfo reqheight $ref]
+    if {$bw < 8 || $bh < 8} { return }
+    if {[lsearch -exact [image names] ::VMDHole::_btn_spacer] < 0} {
+        image create photo ::VMDHole::_btn_spacer -width 1 -height 1
+        ::VMDHole::_btn_spacer blank
+    }
+    foreach _b [list $w.bottom.statusrow.log $w.bottom.statusrow.vistoggle.pore \
+                     $w.bottom.statusrow.vistoggle.mean $w.bottom.statusrow.vistoggle.tunnel] {
+        if {![winfo exists $_b]} { continue }
+        # Border and highlight differ between a button and a checkbutton, so
+        # measure each widget's chrome instead of assuming it.
+        if {[catch {$_b configure -image ::VMDHole::_btn_spacer -compound center \
+                        -padx 0 -pady 0 -width 1 -height 1}]} { continue }
+        update idletasks
+        set _dw [expr {[winfo reqwidth $_b]-1}]
+        set _dh [expr {[winfo reqheight $_b]-1}]
+        catch {$_b configure -width [expr {$bw-$_dw}] -height [expr {$bh-$_dh}]}
+    }
+}
 
 proc ::VMDHole::add_tooltip {widget text} {
     # Self-contained hover tooltip: plain Tk has no built-in tooltip widget
@@ -5562,7 +5810,7 @@ proc ::VMDHole::_traj_tab_placeholder_text {kind} {
             : "Run HOLE on multiple frames to see the pore radius over time."}] }
         ionflow { return [expr {$tunnel \
             ? "Ion occupancy + flow for the selected tunnel.\nNeeds ions, >=2 frames, and a near-straight\ntunnel. Click Compute." \
-            : "Ion occupancy + flow field in the pore's R-Z frame, plus measured\nflux across the constriction. MD-trajectory only (needs ions and >=2 frames). Click Compute."}] }
+            : "Ion or water occupancy + flow field in the pore's R-Z frame, plus measured\nflux across the constriction. MD-trajectory only (needs a trajectory of >=2 frames). Click Compute."}] }
         default { return "" }
     }
 }
@@ -5669,7 +5917,7 @@ proc ::VMDHole::draw_tunnel_profile_plot {} {
             && $frame ne "" && $id ne ""}]
     # +28 for the legend strip when Fill is on, matching draw_profile_plot's own
     # 44->72 bump for state(profile_color) - same template, same reason.
-    set ml 55; set mr 20; set mt 34; set mb [expr {$want_fill ? 68 : 40}]
+    set ml 55; set mr 20; set mt 40; set mb [expr {$want_fill ? 68 : 40}]
     set pw [expr {$cw-$ml-$mr}]; set ph [expr {$ch-$mt-$mb}]
     set xmin 0.0; set xmax [lindex $dists end]
     set ymin 1e30; set ymax -1e30
@@ -5740,6 +5988,21 @@ proc ::VMDHole::draw_tunnel_profile_plot {} {
     lassign $tuple bott len
     $cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} \
         -text "Tunnel $id profile - bottleneck [format %.2f $bott] Å at length [format %.1f $len] Å"
+    # The pore profile states what its curve is made of under the title; a
+    # tunnel's counterparts are where along the path the bottleneck sits, how
+    # many layers MOLE resolved, and the mean radius over them. Everything here
+    # comes from the points already plotted, so it costs nothing to draw.
+    set _tn [llength $radii]
+    if {$_tn > 0} {
+        set _tsum 0.0; set _tmin 1e30; set _tminat 0.0
+        foreach _r $radii _d $dists {
+            set _tsum [expr {$_tsum + $_r}]
+            if {$_r < $_tmin} { set _tmin $_r; set _tminat $_d }
+        }
+        $cv create text [expr {$ml+$pw/2}] 26 -anchor n -font {Helvetica 7} -fill "#666666" \
+            -text [format "bottleneck at %.1f Å along the path · %d layers · mean radius %.2f Å" \
+                [expr {abs($_tminat)}] $_tn [expr {$_tsum/$_tn}]]
+    }
     if {$swap} {
         $cv create text [expr {$ml+$pw/2}] [expr {$ch-6}] -anchor s -font {Helvetica 9 bold} -text "Radius (Å)"
         ::VMDHole::_cv_vtext $cv 14 [expr {$mt+$ph/2}] -anchor n -font {Helvetica 9 bold} -text "Distance along path (Å)"
@@ -6571,10 +6834,15 @@ proc ::VMDHole::build_tunnel_panel {parent} {
     label $parent.sp_l -text "Start point"
     entry $parent.sp_e -textvariable ::VMDHole::state(tunnel_start) -width 14
     frame $parent.sp_box
-    button $parent.sp_box.com -text "COG" -width 4 -command ::VMDHole::tunnel_use_selection_center
-    button $parent.sp_box.cor -text "COR" -width 4 -command ::VMDHole::tunnel_use_view_center
-    pack $parent.sp_box.com -side left
-    pack $parent.sp_box.cor -side left -padx {4 0}
+    button $parent.sp_box.stk -text "⌖" -font {Helvetica 14} -padx 1 -pady 0 -relief flat \
+        -command [list ::VMDHole::show_axis_stick_dialog tunnel_start]
+    button $parent.sp_box.com -text "COG" -command ::VMDHole::tunnel_use_selection_center
+    button $parent.sp_box.cor -text "COR" -command ::VMDHole::tunnel_use_view_center
+    pack $parent.sp_box.stk -side left
+    pack $parent.sp_box.com -side left -padx {4 0} -fill x -expand 1
+    pack $parent.sp_box.cor -side left -padx {4 0} -fill x -expand 1
+    add_tooltip $parent.sp_box.stk "Move the start point with an on-screen stick or step buttons,\
+        relative to the current view."
     grid $parent.sp_l -row $row -column 0 -sticky w  -padx 8 -pady 1
     grid $parent.sp_e -row $row -column 1 -sticky ew -padx 8 -pady 1
     grid $parent.sp_box -row $row -column 2 -sticky ew -padx 8 -pady 1
@@ -8148,12 +8416,29 @@ proc ::VMDHole::_tunnel_pair_distance {A B} {
     return [expr {0.5*($sab/[llength $A] + $sba/[llength $B])}]
 }
 
+proc ::VMDHole::_tunnel_kernel_run {verb inf outf spec} {
+    # sos_triangle's tunnel kernels (tunneldist WANTMAX, tunnelcluster
+    # "THRESHOLD MAXDEV"), through the resident mesher when the shipped binary
+    # carries them, else one exec. Forking VMD costs ~33 ms per call on a
+    # loaded trajectory; the kernel itself a few ms per frame. 1 when OUT was
+    # written.
+    variable state
+    variable _tunnel_serve
+    if {$_tunnel_serve != 0 && [sos_triangle_has_feature tunnelserve]} {
+        set reply [_csg_server_ask "$verb\t$inf\t$outf\t$spec"]
+        if {[string match "OK *" $reply]} { set _tunnel_serve 1; return 1 }
+        if {$reply ne ""} { set _tunnel_serve 0 }
+    }
+    set flag [expr {$verb eq "tunnelcluster" ? "--tunnel-cluster" : "--tunnel-dist"}]
+    set cmd "[shell_quote $state(sos_triangle_exec)] $flag [shell_quote $inf] [shell_quote $outf] $spec 2>/dev/null"
+    return [expr {![catch {exec sh -c $cmd}]}]
+}
+
 proc ::VMDHole::_tunnel_dist_matrix {mids {maxvar ""}} {
     # The pairwise matrix is nearly the entire cost of clustering
     # so it gets the same treatment as the
     # search: compiled when available, with the Tcl loop kept as the
     # reference that works standalone.
-    variable state
     set n [llength $mids]
     set out {}
     if {$n < 2} { return {} }
@@ -8174,9 +8459,7 @@ proc ::VMDHole::_tunnel_dist_matrix {mids {maxvar ""}} {
                 # keeps a mixed install working.
                 set _wantmax [expr {$maxvar ne "" \
                     && [sos_triangle_has_feature tunneldistmax] ? 1 : 0}]
-                set cmd "[shell_quote $state(sos_triangle_exec)] --tunnel-dist \
-                    [shell_quote $inf] [shell_quote $outf] $_wantmax 2>/dev/null"
-                if {![catch {exec sh -c $cmd}] && [file exists $outf]} {
+                if {[_tunnel_kernel_run tunneldist $inf $outf $_wantmax] && [file exists $outf]} {
                     if {![catch {open $outf r} rh]} {
                         if {$maxvar ne ""} { upvar 1 $maxvar _mx }
                         while {[gets $rh line] >= 0} {
@@ -8262,6 +8545,7 @@ proc ::VMDHole::_tunnel_apply_maxdev {Dvar HDvar mids n threshold} {
                 : [_tunnel_pair_hausdorff [lindex $mids $i] [lindex $mids $j]]}]
             if {$_h > $cap} {
                 set D($i,$j) 1e30
+                if {[info exists D($j,$i)]} { set D($j,$i) 1e30 }
                 incr blocked
             }
         }
@@ -8306,7 +8590,6 @@ proc ::VMDHole::_tunnel_cluster_c {mids threshold maxdev {repdistvar ""}} {
     # already has the matrix in memory, so clustering there turns that 38 MB
     # into n lines. Clusters are byte-identical: the C agglomeration mirrors the
     # Tcl tie-breaks exactly (strict "<" everywhere, lower index survives).
-    variable state
     if {![asymmetry_c_available] || ![sos_triangle_has_feature tunnelcluster]} { return "" }
     set n [llength $mids]
     if {$n < 2} { return "" }
@@ -8329,9 +8612,7 @@ proc ::VMDHole::_tunnel_cluster_c {mids threshold maxdev {repdistvar ""}} {
             foreach p $m { puts $fh $p }
         }
         close $fh
-        set cmd "[shell_quote $state(sos_triangle_exec)] --tunnel-cluster \
-            [shell_quote $inf] [shell_quote $outf] $threshold $maxdev 2>/dev/null"
-        if {![catch {exec sh -c $cmd}] && [file exists $outf]} {
+        if {[_tunnel_kernel_run tunnelcluster $inf $outf "$threshold $maxdev"] && [file exists $outf]} {
             if {![catch {open $outf r} rh]} {
                 array set grp {}
                 set order {}
@@ -8571,6 +8852,11 @@ proc ::VMDHole::tunnel_cluster {tunnels threshold} {
     if {$n == 0} { return {} }
     set mids {}
     foreach t $tunnels { lappend mids [_tunnel_mid_points $t] }
+    # The compiled kernel first (identical groups, one call instead of a
+    # distance matrix plus an interpreted agglomeration); the Tcl reference
+    # below when it is absent.
+    set kern [_tunnel_cluster_c $mids $threshold [_num_or tunnel_cluster_maxdev 12 0]]
+    if {$kern ne ""} { return [_tunnel_rank_by_bottleneck $kern $tunnels] }
     array set HD {}
     array set D [_tunnel_dist_matrix $mids HD]
     _tunnel_apply_maxdev D HD $mids $n $threshold
@@ -8597,7 +8883,11 @@ proc ::VMDHole::tunnel_cluster {tunnels threshold} {
         lappend nc $merged
         set clusters $nc
     }
-    # rank clusters by their best member's bottleneck, widest first
+    return [_tunnel_rank_by_bottleneck $clusters $tunnels]
+}
+
+proc ::VMDHole::_tunnel_rank_by_bottleneck {clusters tunnels} {
+    # Clusters ordered by their best member's bottleneck, widest first.
     set keyed {}
     foreach c $clusters {
         set best 0.0
@@ -8820,7 +9110,7 @@ proc ::VMDHole::_tunnel_search_mole {molid frame seed cfg} {
     # is still strongly preferred and the caller is told which path ran.
     variable state
     variable _mole_tcl_warned
-    set exe [_mole_engine_path]
+    set exe [tool_path mole_engine]
     if {$exe eq ""} {
         # Warn here, not at the call site: a silent 120x slowdown reads as "the
         # plugin hung", and this is the one place that knows the binary is gone.
@@ -15453,7 +15743,8 @@ proc hole::write_capsule_sph {discovery path args} {
 #  through hole::sph_process's 3-argument signature; feeding them the
 #  relevant .sph records raises rather than silently mishandling them.
 #
-#  Read directly against sph_process.f, sph_process_read.f, ptgen.f, sphqpu.f.
+#  Read directly against sph_process.f, sph_process_read.f, ptgen.f, sphqpu.f,
+#  and for CAPSULE records sphqpc.f, hocapr.f, hocapd.f.
 
 namespace eval hole {}
 
@@ -15512,11 +15803,15 @@ proc hole::_ptgen {dotden} {
 }
 
 proc hole::_sph_read {sph_file} {
-    # Returns a list of {x y z rad effr last} records, parsed at the FIXED
-    # column positions sph_process_read.f reads (not whitespace-split - the
-    # residue-number field can run into the coordinates with no space).
+    # Returns a list of {x y z rad effr last x2 y2 z2} records, parsed at the
+    # FIXED column positions sph_process_read.f reads (not whitespace-split -
+    # the residue-number field can run into the coordinates with no space).
+    # A sphere has x2 y2 z2 equal to x y z. A CAPSULE slice is a QC1 record
+    # followed by its QC2 partner (wpdbsp.f): the two cap centres, the capsule
+    # radius, and the equal-area radius sphqpc.f computes from them.
     set fh [open $sph_file r]
     set spheres {}
+    set pend ""
     while {[gets $fh line] >= 0} {
         if {[string range $line 0 11] eq "LAST-REC-END"} {
             if {[llength $spheres]} {
@@ -15528,10 +15823,7 @@ proc hole::_sph_read {sph_file} {
         }
         if {[string range $line 0 3] ne "ATOM"} { continue }
         set tag [string range $line 10 21]
-        if {$tag ne "1  QSS SPH S"} {
-            if {[string match "1  QC*SPH S" $tag]} {
-                error "hole::sph_process: CAPSULE .sph records (QC1/QC2) are not ported"
-            }
+        if {$tag ni {"1  QSS SPH S" "1  QC1 SPH S" "1  QC2 SPH S"}} {
             error "hole::sph_process: unrecognized .sph ATOM record: $line"
         }
         set x [string trim [string range $line 30 37]]
@@ -15542,6 +15834,17 @@ proc hole::_sph_read {sph_file} {
                 ![string is double -strict $z] || ![string is double -strict $rad]} {
             error "hole::sph_process: malformed .sph ATOM record: $line"
         }
+        if {$tag eq "1  QC1 SPH S"} { set pend [list $x $y $z $rad]; continue }
+        if {$tag eq "1  QC2 SPH S"} {
+            if {$pend eq ""} { error "hole::sph_process: QC2 record without its QC1: $line" }
+            lassign $pend x1 y1 z1 rad
+            set len [expr {sqrt(($x1-$x)*($x1-$x) + ($y1-$y)*($y1-$y) + ($z1-$z)*($z1-$z))}]
+            # sphqpc.f: EFFRAD = SQRT(SPRAD*(SPRAD + 0.63661977*length))
+            set effr [expr {sqrt($rad*($rad + 0.63661977*$len))}]
+            lappend spheres [list $x1 $y1 $z1 $rad $effr 0 $x $y $z]
+            set pend ""
+            continue
+        }
         set effr ""
         if {[string length $line] >= 66} {
             set effr [string trim [string range $line 60 65]]
@@ -15551,7 +15854,7 @@ proc hole::_sph_read {sph_file} {
         if {$effr eq "" || ![string is double -strict $effr] || abs($effr) < 1e-6} {
             set effr $rad
         }
-        lappend spheres [list $x $y $z $rad $effr 0]
+        lappend spheres [list $x $y $z $rad $effr 0 $x $y $z]
     }
     close $fh
     return $spheres
@@ -15594,6 +15897,30 @@ proc hole::sph_process {sph_file sos_file dotden {color 0}} {
 
     set fh [open $sos_file w]
     set np [llength $hdrs]
+    if {[hole::_sph_has_capsule $spheres]} {
+        # sph_process.f hands a file with capsule records to sphqpc.f, whose
+        # pass loop calls SPHCHC for every pass: under -sos the LAST pass takes
+        # the colour -1 end-cap header, so with -colour the high-radius band
+        # goes out under it and there is no separate end-cap pass. Reproduced
+        # as is: this is what HOLE writes.
+        for {set p 0} {$p < $np} {incr p} {
+            if {$np == 1} { set hdr [lindex $hdrs 0] } \
+            elseif {$p == $np - 1} { set hdr {1.0 -1.0 -1.0 -1.0 0.0 0.0 0.0} } \
+            else { set hdr [lindex $hdrs $p] }
+            hole::_write_sos_line $fh $hdr
+            set lo [lindex $cuts $p]
+            set hi [lindex $cuts [expr {$p + 1}]]
+            for {set i 0} {$i < $n} {incr i} {
+                lassign [lindex $spheres $i] cx cy cz rad effr last
+                if {$last} { continue }
+                if {$rad <= 0} { continue }
+                if {$effr <= $lo || $effr > $hi} { continue }
+                hole::_emit_capsule_dots $fh $spheres $i $templ $ptno
+            }
+        }
+        close $fh
+        return
+    }
     for {set p 0} {$p < $np} {incr p} {
         hole::_write_sos_line $fh [lindex $hdrs $p]
         set lo [lindex $cuts $p]
@@ -15653,6 +15980,77 @@ proc hole::_emit_sphere_dots {fh spheres i templ ptno} {
             set dy [expr {$ry - $oy}]
             set dz [expr {$rz - $oz}]
             if {[expr {$dx*$dx + $dy*$dy + $dz*$dz}] < [expr {$orad*$orad}]} {
+                set buried 1
+                break
+            }
+        }
+        if {$buried} { continue }
+        hole::_write_sos_line $fh [list 4.0 $rx $ry $rz $nx $ny $nz]
+    }
+}
+
+proc hole::_sph_has_capsule {spheres} {
+    foreach s $spheres {
+        lassign $s x y z rad effr last x2 y2 z2
+        if {$x2 != $x || $y2 != $y || $z2 != $z} { return 1 }
+    }
+    return 0
+}
+
+proc hole::_capsule_d2 {px py pz x1 y1 z1 x2 y2 z2} {
+    # hocapd.f: squared distance from a point to the segment between the two
+    # cap centres.
+    set ux [expr {$x2-$x1}]; set uy [expr {$y2-$y1}]; set uz [expr {$z2-$z1}]
+    set len [expr {sqrt($ux*$ux+$uy*$uy+$uz*$uz)}]
+    if {$len > 0.0} { set ux [expr {$ux/$len}]; set uy [expr {$uy/$len}]; set uz [expr {$uz/$len}] }
+    set vx [expr {$px-$x1}]; set vy [expr {$py-$y1}]; set vz [expr {$pz-$z1}]
+    set plen [expr {$ux*$vx+$uy*$vy+$uz*$vz}]
+    if {$plen <= 0.0} { return [expr {$vx*$vx+$vy*$vy+$vz*$vz}] }
+    if {$plen >= $len} {
+        return [expr {($px-$x2)*($px-$x2)+($py-$y2)*($py-$y2)+($pz-$z2)*($pz-$z2)}]
+    }
+    set vx [expr {$vx-$plen*$ux}]; set vy [expr {$vy-$plen*$uy}]; set vz [expr {$vz-$plen*$uz}]
+    return [expr {$vx*$vx+$vy*$vy+$vz*$vz}]
+}
+
+proc hole::_emit_capsule_dots {fh spheres i templ ptno} {
+    # sphqpc.f: a dot in each template direction from the capsule's midpoint,
+    # at the radius of the capsule surface in that direction (hocapr.f), kept
+    # unless it lies inside any other record (hocapd.f). No per-record axis
+    # swap and the template direction is written as the normal, as there.
+    set pi [expr {2.0*acos(0.0)}]
+    lassign [lindex $spheres $i] x1 y1 z1 rad effr last x2 y2 z2
+    set cx [expr {0.5*($x1+$x2)}]; set cy [expr {0.5*($y1+$y2)}]; set cz [expr {0.5*($z1+$z2)}]
+    set vx [expr {$x1-$x2}]; set vy [expr {$y1-$y2}]; set vz [expr {$z1-$z2}]
+    set caplen [expr {sqrt($vx*$vx+$vy*$vy+$vz*$vz)}]
+    if {$caplen > 0.0} { set vx [expr {$vx/$caplen}]; set vy [expr {$vy/$caplen}]; set vz [expr {$vz/$caplen}] }
+    set half [expr {0.5*$caplen}]
+    set alphac [expr {atan2($rad, $half)}]
+    set n [llength $spheres]
+    for {set d 0} {$d < $ptno} {incr d} {
+        lassign [lindex $templ $d] nx ny nz
+        # hocapr.f: the capsule's radius along this direction (a sphere when
+        # the two centres coincide)
+        set cosa [expr {$vx*$nx+$vy*$ny+$vz*$nz}]
+        if {$cosa > 1.0} { set cosa 1.0 } elseif {$cosa < -1.0} { set cosa -1.0 }
+        set alpha [expr {acos($cosa)}]
+        if {$half < 1e-9} {
+            set erad $rad
+        } elseif {$alpha > $alphac && $alpha < $pi-$alphac} {
+            set erad [expr {$rad/sin($alpha)}]
+        } else {
+            if {$alpha > 0.5*$pi} { set alpha [expr {$pi-$alpha}] }
+            set hc [expr {$half*cos($alpha)}]
+            set erad [expr {$hc + sqrt($hc*$hc - ($half*$half - $rad*$rad))}]
+        }
+        set rx [hole::_f32 [expr {$cx + $erad*$nx}]]
+        set ry [hole::_f32 [expr {$cy + $erad*$ny}]]
+        set rz [hole::_f32 [expr {$cz + $erad*$nz}]]
+        set buried 0
+        for {set j 0} {$j < $n} {incr j} {
+            if {$j == $i} { continue }
+            lassign [lindex $spheres $j] ox oy oz orad oeff olast ox2 oy2 oz2
+            if {[hole::_capsule_d2 $rx $ry $rz $ox $oy $oz $ox2 $oy2 $oz2] < $orad*$orad} {
                 set buried 1
                 break
             }
@@ -16046,6 +16444,115 @@ proc hole::sos_triangle {sos_file out_plot} {
 }
 
 # ---- end sos_triangle.tcl ----
+# ---- begin sos_smooth.tcl (inlined from vmdhole/hole_tcl/) ----
+# hole::sos_smooth - the pure-Tcl port of sos_triangle --sos-smooth.
+#  A local average of dot clouds: every dot of the centre frame moves to the
+#  mean of itself and its nearest same-facing dot (within rho, normals
+#  agreeing) in each window frame; its normal is the renormalised mean of
+#  theirs. Header and centreline records are copied as they are. The sums run
+#  in the same order as the C, so the two are byte-identical.
+
+namespace eval hole {}
+
+proc hole::_sm_read {path} {
+    # dots only: {x y z nx ny nz} per record of type 4
+    set fh [open $path r]
+    set dots {}
+    while {[gets $fh line] >= 0} {
+        set v [regexp -all -inline {[-+0-9.eE]+} $line]
+        if {[llength $v] < 7 || [lindex $v 0] != 4.0} continue
+        lappend dots [lrange $v 1 6]
+    }
+    close $fh
+    return $dots
+}
+
+proc hole::_sm_grid {dots cell arrname} {
+    # cell -> ascending list of dot indices; returns {ox oy oz}
+    upvar 1 $arrname g
+    array unset g
+    set lo {1e30 1e30 1e30}; set hi {-1e30 -1e30 -1e30}
+    foreach d $dots {
+        foreach j {0 1 2} {
+            set q [lindex $d $j]
+            if {$q < [lindex $lo $j]} { lset lo $j $q }
+            if {$q > [lindex $hi $j]} { lset hi $j $q }
+        }
+    }
+    if {![llength $dots]} { set lo {0 0 0} }
+    set ox [expr {[lindex $lo 0]-$cell}]; set oy [expr {[lindex $lo 1]-$cell}]; set oz [expr {[lindex $lo 2]-$cell}]
+    set i 0
+    foreach d $dots {
+        lassign $d x y z
+        set key "[expr {int(($x-$ox)/$cell)}],[expr {int(($y-$oy)/$cell)}],[expr {int(($z-$oz)/$cell)}]"
+        lappend g($key) $i
+        incr i
+    }
+    return [list $ox $oy $oz]
+}
+
+proc hole::_sm_nearest {dots arrname origin cell x y z nx ny nz rho} {
+    upvar 1 $arrname g
+    lassign $origin ox oy oz
+    set ix [expr {int(($x-$ox)/$cell)}]; set iy [expr {int(($y-$oy)/$cell)}]; set iz [expr {int(($z-$oz)/$cell)}]
+    set best [expr {$rho*$rho}]; set bi -1
+    foreach dx {-1 0 1} { foreach dy {-1 0 1} { foreach dz {-1 0 1} {
+        set key "[expr {$ix+$dx}],[expr {$iy+$dy}],[expr {$iz+$dz}]"
+        if {![info exists g($key)]} continue
+        foreach i $g($key) {
+            lassign [lindex $dots $i] qx qy qz qnx qny qnz
+            set ex [expr {$qx-$x}]; set ey [expr {$qy-$y}]; set ez [expr {$qz-$z}]
+            set d2 [expr {$ex*$ex+$ey*$ey+$ez*$ez}]
+            if {$d2 > $best} continue
+            if {$qnx*$nx+$qny*$ny+$qnz*$nz <= 0.0} continue
+            if {$d2 < $best || $bi < 0 || $i < $bi} { set best $d2; set bi $i }
+        }
+    }}}
+    return $bi
+}
+
+proc hole::sos_smooth {out rho centre with_list} {
+    set clouds {}
+    set k 0
+    foreach w $with_list {
+        set dots [hole::_sm_read $w]
+        set origin [hole::_sm_grid $dots $rho grid$k]
+        lappend clouds [list $dots $origin]
+        incr k
+    }
+    set fin [open $centre r]
+    set fout [open $out w]
+    set ndots 0
+    while {[gets $fin line] >= 0} {
+        set v [regexp -all -inline {[-+0-9.eE]+} $line]
+        if {[llength $v] < 7 || [lindex $v 0] != 4.0} { puts $fout $line; continue }
+        lassign $v _t x y z nx ny nz
+        set sx [expr {double($x)}]; set sy [expr {double($y)}]; set sz [expr {double($z)}]
+        set snx [expr {double($nx)}]; set sny [expr {double($ny)}]; set snz [expr {double($nz)}]
+        set cnt 1
+        set j 0
+        foreach c $clouds {
+            lassign $c dots origin
+            set i [hole::_sm_nearest $dots grid$j $origin $rho $x $y $z $nx $ny $nz $rho]
+            incr j
+            if {$i < 0} continue
+            lassign [lindex $dots $i] qx qy qz qnx qny qnz
+            set sx [expr {$sx+$qx}]; set sy [expr {$sy+$qy}]; set sz [expr {$sz+$qz}]
+            set snx [expr {$snx+$qnx}]; set sny [expr {$sny+$qny}]; set snz [expr {$snz+$qnz}]
+            incr cnt
+        }
+        set sx [expr {$sx/$cnt}]; set sy [expr {$sy/$cnt}]; set sz [expr {$sz/$cnt}]
+        set nl [expr {sqrt($snx*$snx+$sny*$sny+$snz*$snz)}]
+        if {$nl > 1e-12} { set snx [expr {$snx/$nl}]; set sny [expr {$sny/$nl}]; set snz [expr {$snz/$nl}] } \
+        else { set snx $nx; set sny $ny; set snz $nz }
+        puts $fout [format "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f" 4.0 $sx $sy $sz $snx $sny $snz]
+        incr ndots
+    }
+    close $fin; close $fout
+    return $ndots
+}
+
+# ---- end sos_smooth.tcl ----
 
 # ==============================================================================
 #  9. CLI
@@ -16318,6 +16825,7 @@ proc ::vmdhole_fb_usage {} {
         ?-method spherical|connolly|capsule? ?-probe N? ?-grid N?"
     puts stderr "       tclsh SCRIPT --sph-process DOTDEN COLOR IN.sph OUT.sos"
     puts stderr "       tclsh SCRIPT --sos-triangle IN.sos OUT.plot"
+    puts stderr "       tclsh SCRIPT --sos-smooth OUT.sos RHO CENTRE.sos WITH.sos..."
     exit 2
 }
 
@@ -16588,6 +17096,13 @@ proc ::vmdhole_fb_main {argv} {
             puts "pure-Tcl sos_triangle: wrote $out"
             return
         }
+        --sos-smooth {
+            if {[llength $argv] < 4} { ::vmdhole_fb_usage }
+            lassign $argv _ out rho centre
+            set n [hole::sos_smooth $out $rho $centre [lrange $argv 4 end]]
+            puts "pure-Tcl sos_smooth: wrote $out ($n dots)"
+            return
+        }
     }
     array set o {-pdb "" -rad "" -sph "" -tsv "" -cpoint "" -cvect "" \
                  -sample 0.25 -endrad 22.0 -seed 1 -method spherical \
@@ -16824,26 +17339,6 @@ proc ::VMDHole::_sos_triangle_cmd {sos_file out_file} {
             [shell_quote $sos_file] [shell_quote $out_file] > /dev/null"
 }
 
-proc ::VMDHole::_surface_mesh_script {dd sph sos plot} {
-    # The two-line /bin/sh mesh job (Tunnel mode runs these in its own pool).
-    # A proc rather than two puts at the call site so a test can run the exact
-    # text that ships - the quoting is the fragile part, and that call site had
-    # no coverage of its own.
-    # MEASURED, not assumed: sph_process exits 1 on a dot-budget overflow but 0
-    # on a malformed .sph, and in BOTH cases truncates the .sos it opened. So a
-    # previous run's .sos does not in fact survive a failed stage today - the
-    # `rm -f` makes that an invariant of this script instead of a side effect
-    # of how a Fortran program opens its output, and `set -e` stops the loud
-    # failures before stage two and exits nonzero so the pool counts them.
-    #
-    # NOTE the coupling: with set -e a failed job leaves the PREVIOUS .plot
-    # untouched rather than overwriting it with an empty one. That is only safe
-    # because _tunnel_mesh_current rejects a .plot older than its .sph. Do not
-    # remove that check while this line stands.
-    return "#!/bin/sh\nset -e\nrm -f [shell_quote $sos]\n\
-[_sph_process_cmd $dd {-color } $sph $sos] >/dev/null 2>&1\n\
-[_sos_triangle_cmd $sos $plot] 2>/dev/null"
-}
 
 proc ::VMDHole::_surface_tcl_fallback {} {
     # 1 when the surface stages will run in Tcl. Callers use it to say so once,
@@ -16963,7 +17458,7 @@ proc ::VMDHole::_mole_fast_atoms_available {} {
     # reader. The manifest sits beside the binaries the build script installed,
     # so it is read from the engine's OWN directory - pointing the engine
     # somewhere else reports honestly instead of inheriting HOLE's status.
-    set exe [_mole_engine_path]
+    set exe [tool_path mole_engine]
     if {$exe eq ""} { return 0 }
     set m [file join [file dirname $exe] vmdhole_accel.manifest]
     if {![file exists $m]} { return 0 }
@@ -17102,21 +17597,700 @@ proc ::VMDHole::_tunnel_search_mole_tcl {molid frame seed cfg} {
             tetrahedra, $nch channels, $nvd voids; [llength $tunnels] tunnels"]
 }
 
-proc ::VMDHole::_mole_engine_path {} {
+# The subcommand that selects a tool inside the shipped sos_triangle; empty for
+# a standalone build of the tool.
+# Grid/neck entries mean nothing to sos_triangle; show them for the mesher only.
+proc ::VMDHole::_update_mesher_rows {} {
+    variable _settings_d
     variable state
-    if {[info exists state(mole_engine_exec)] && [file executable $state(mole_engine_exec)]} {
-        return $state(mole_engine_exec)
+    if {![info exists _settings_d] || ![winfo exists $_settings_d.ms_vx]} { return }
+    set csg [expr {$state(mesher) eq "csg"}]
+    if {$csg} { grid $_settings_d.ms_vx } else { grid remove $_settings_d.ms_vx }
+    if {[winfo exists $_settings_d.ms_dd]} {
+        if {$csg} { grid remove $_settings_d.ms_dd } else { grid $_settings_d.ms_dd }
     }
-    if {[info exists state(sos_triangle_exec)]} {
-        # _find_exe, not a bare [file executable]: same .exe-suffix resolution
-        # find_hole_exe and init_executables' sibling backfill already use -
-        # this fallback walk was the one mole-engine path still missing it.
-        set c [_find_exe [file join [file dirname $state(sos_triangle_exec)] mole_tunnel_engine]]
-        if {$c ne ""} { return $c }
+    # dot density and the playback thinning belong to sph_process/sos_triangle
+    if {[winfo exists $_settings_d.pb]} {
+        if {$csg} { grid remove $_settings_d.pb } else { grid $_settings_d.pb }
+        _update_conn_controls
     }
-    set c [auto_execok mole_tunnel_engine]
-    if {$c ne ""} { return [lindex $c 0] }
+}
+
+# Can the marching-cubes mesher (mesh_csg) build this run's geometry? A
+# spherical run is a union of probe spheres, which is its input; a Connolly
+# run too (the S-999 records are spheres, radius in the occupancy column); a
+# capsule run is a union of capsules, which it reads as segments swept by a
+# sphere. Tunnel and mean tubes are plain sphere unions under any method.
+proc ::VMDHole::_csg_can_mesh {{union 0}} {
+    variable state
+    if {![info exists state(mesher)] || $state(mesher) ne "csg"} { return 0 }
+    if {!$union && $state(pore_method) ni {circular connolly capsule}} { return 0 }
+    return [expr {[tool_path mesh_csg] ne ""}]
+}
+
+# Is it what DRAWS the surface right now? Property, lateral and lobe colouring
+# go through sos_triangle's per-triangle recolour, which finds triangles by the
+# literal "draw trinorm" - those runs still mesh with mesh_csg, through
+# _csg_base_mesh below, but the file they colour is written in that form.
+# Is it what DRAWS the surface right now? A colouring that recolours per
+# triangle is excluded, and not because it cannot be done: mesh_csg's --draw
+# mode writes the records sos_triangle's recolour modes read, and colouring a
+# marching-cubes mesh that way was measured correct. It is excluded because
+# the recolour costs ~9 us per triangle, several times what drawing costs, so
+# the mesher's two-times-denser mesh made property colouring SLOWER end to end
+# (149 ms against 93 ms per frame). Meshing was never the expensive half here.
+proc ::VMDHole::_csg_active {} {
+    variable state
+    if {![_csg_can_mesh]} { return 0 }
+    return [expr {$state(display_mode) in {triangulated wireframe}}]
+}
+
+# HOLE's own records, rather than a molecule-addressed mesh. Needed by anything
+# that reads the mesh back: conn_lobes' region split and sos_triangle's
+# recolour modes both find triangles by the literal "draw trinorm".
+proc ::VMDHole::_csg_draw_form {} {
+    variable state
+    if {$state(pore_method) eq "connolly"} { return 1 }
+    return [expr {$state(surface_color) in {property pore_lat pore_lobes}}]
+}
+
+# ---------------------------------------------------------------------------
+# ONE surface pipeline. A mesh is a pure function of (sphere file, mesher, grid,
+# form). Every mesh the plugin draws - the pore, a Connolly region, a tunnel, a
+# mean tube, the dots display, the base a property colouring starts from - is
+# built by surface_mesh (or surface_mesh_cmd for the job pools) and named by
+# surface_plot_name. The mesher serves the run when it can; the legacy pair
+# (sph_process + sos_triangle) otherwise, and as the fallback when the mesher
+# fails on a file. Nothing else in the plugin runs those tools for a surface.
+#   form: mol  - molecule-addressed records: the only form that is sourced
+#         draw - HOLE's own records: anything that reads the mesh back
+#         dots - one point per vertex, HOLE's records
+#   union: 1 = the .sph is a plain sphere union from the plugin's writer (a tunnel,
+#          a mean tube), so the mesher can take it under any pore method.
+
+# ---- Surface smoothing: a local average of the surfaces in a window -------
+# For frame f the window is the analysed frames f-N..f+N (clamped at the ends,
+# as VMD clamps its own trajectory smoothing). Each mesher averages what it
+# holds: the marching mesher the frames' distance fields on one grid, the
+# legacy pair the dot clouds dot by dot (sos_triangle --sos-smooth, or the Tcl
+# port). Neither averages coordinates or centrelines: a feature most frames
+# share stays where it is, a flicker averages down, curvature and lateral
+# openings survive. Analysis numbers stay per frame; this is the surface only.
+#   surface_smooth: follow (VMD's own window of the shown representations),
+#                   off, or an integer half-width.
+proc ::VMDHole::_surface_smooth_window {} {
+    variable state
+    set v [expr {[info exists state(surface_smooth)] ? $state(surface_smooth) : "follow"}]
+    if {$v eq "off" || $v eq ""} { return 0 }
+    if {[string is integer -strict $v]} { return [expr {$v < 0 ? 0 : $v}] }
+    set n 0
+    catch {
+        set molid [resolve_molid]
+        for {set r 0} {$r < [molinfo $molid get numreps]} {incr r} {
+            if {![mol showrep $molid $r]} continue
+            set w [mol smoothrep $molid $r]
+            if {[string is integer -strict $w] && $w > $n} { set n $w }
+        }
+    }
+    return $n
+}
+
+proc ::VMDHole::_surface_smooth_tag {} {
+    set n [_surface_smooth_window]
+    return [expr {$n > 0 ? "_s$n" : ""}]
+}
+
+proc ::VMDHole::_surface_smooth_with {frame} {
+    # The other frames of frame's window, as the sphere files a mesher takes
+    # (a capsule run's kept slices). {} when smoothing is off, the run is a
+    # tunnel search, or no neighbour has a sphere file yet.
+    variable results
+    variable result_frames
+    set n [_surface_smooth_window]
+    if {$n <= 0} { return {} }
+    if {[analysis_mode] eq "tunnel"} { return {} }
+    set order [lsort -integer $result_frames]
+    set i [lsearch -exact $order $frame]
+    if {$i < 0} { return {} }
+    set with {}
+    for {set j [expr {$i - $n}]} {$j <= $i + $n} {incr j} {
+        if {$j == $i || $j < 0 || $j >= [llength $order]} continue
+        set g [lindex $order $j]
+        if {![dict exists $results $g sph_file]} continue
+        set sph [dict get $results $g sph_file]
+        if {![file exists $sph]} continue
+        if {[_run_uses_card capsule]} { set sph [_capsule_sph_kept $sph] }
+        lappend with $sph
+    }
+    return $with
+}
+
+proc ::VMDHole::_surface_smooth_with_dir {run_dir} {
+    # The same, for a caller that has the run directory but not the frame.
+    variable results
+    dict for {f d} $results {
+        if {[dict exists $d run_dir] && [dict get $d run_dir] eq $run_dir} { return [_surface_smooth_with $f] }
+    }
+    return {}
+}
+
+proc ::VMDHole::_set_surface_smooth {val disp} {
+    variable state
+    variable last_geom_key
+    if {[info exists state(surface_smooth)] && $state(surface_smooth) eq $val} { return }
+    set state(surface_smooth) $val
+    set state(surface_smooth_disp) $disp
+    set last_geom_key ""
+    catch {apply_display_change}
+}
+
+proc ::VMDHole::_surface_smooth_label {v} {
+    switch -- $v {
+        follow { return "Follow VMD" }
+        off    { return "Off" }
+        default { return "$v frames" }
+    }
+}
+
+# The dot-cloud smoother for the legacy pair: the shipped sos_triangle when it
+# carries it, the pure-Tcl port otherwise.
+proc ::VMDHole::_sos_smooth_cmd {out rho centre wsos} {
+    variable state
+    set q {}
+    foreach w $wsos { lappend q [shell_quote $w] }
+    if {[sos_triangle_has_feature sossmooth]} {
+        return "[shell_quote $state(sos_triangle_exec)] --sos-smooth [shell_quote $out] $rho [shell_quote $centre] [join $q]"
+    }
+    return "[shell_quote [_hole_tcl_exe]] [shell_quote [_hole_tcl_script]] --sos-smooth [shell_quote $out] $rho [shell_quote $centre] [join $q]"
+}
+
+# Neighbour dots move to their nearest same-facing dot within this distance.
+proc ::VMDHole::_surface_smooth_rho {} { return 2.0 }
+
+# The centre frame's .sos, smoothed against its window when there is one:
+# every window frame's cloud is built once per dot density (kept next to its
+# sphere file) and the centre's dots are averaged against them in place.
+proc ::VMDHole::_legacy_sos {sph sos color dd with} {
+    variable state
+    if {[catch {run_sph_process $sph $sos $color $dd}]} { return 0 }
+    if {![llength $with]} { return 1 }
+    set ddn [expr {$dd ne "" ? $dd : $state(dot_density)}]
+    set wsos {}
+    foreach w $with {
+        set ws "[file rootname $w]_dd${ddn}.sos"
+        if {![file exists $ws] || [file mtime $ws] < [file mtime $w]} {
+            if {[catch {run_sph_process $w $ws $color $dd}]} continue
+        }
+        if {[file exists $ws] && [file size $ws] > 0} { lappend wsos $ws }
+    }
+    if {![llength $wsos]} { return 1 }
+    set sm "[file rootname $sos]_sm.sos"
+    catch {exec sh -c "[_sos_smooth_cmd $sm [_surface_smooth_rho] $sos $wsos] > /dev/null 2>&1"}
+    if {[file exists $sm] && [file size $sm] > 0} { file rename -force $sm $sos }
+    return 1
+}
+
+proc ::VMDHole::surface_mesh_tag {{union 0}} {
+    if {![_csg_can_mesh $union]} { return "" }
+    return "_csg[string map {/ _} [_csg_voxel_spec]]"
+}
+
+proc ::VMDHole::surface_plot_name {dir base form {union 0}} {
+    set tag [surface_mesh_tag $union]
+    if {$tag ne "" && $form eq "draw"} { append tag "_draw" }
+    if {$tag ne "" && $form eq "dots"} { append tag "_dots" }
+    set stag [expr {$union ? "" : [_surface_smooth_tag]}]
+    return [file join $dir "$base$stag$tag.vmd_plot"]
+}
+
+proc ::VMDHole::surface_mesh {sph plot form {dotden ""} {color 1} {union 0} {with {}}} {
+    variable state
+    if {![file exists $sph]} { return 0 }
+    if {[_csg_can_mesh $union]} {
+        set verb [dict get {mol mesh draw meshdraw dots meshdots} $form]
+        set spec [_csg_voxel_spec]
+        set _mopts [_csg_mesh_opts $sph]
+        if {[llength $with]} { lappend _mopts --with {*}$with }
+        if {[llength $_mopts]} { append spec \t [join $_mopts \t] }
+        if {[_csg_server_mesh $sph $plot $spec $verb] > 0 && [surface_has_geometry $plot]} { return 1 }
+        catch {file delete $plot}
+        catch {vmdcon -warn "VMDHole: the mesher failed on [file tail $sph]; using sph_process + sos_triangle."}
+    }
+    if {[_run_uses_card capsule]} { set sph [_capsule_sph_kept $sph] }
+    set sos [file rootname $plot].sos
+    set dd $dotden
+    if {![_legacy_sos $sph $sos $color $dd $with]} { catch {file delete $sos}; return 0 }
+    if {$form eq "dots"} {
+        if {[fast_available points]} {
+            run_sos_triangle_points $sos $plot
+        } else {
+            set tmp [file rootname $plot]_trinorm.tmp
+            catch {run_sos_triangle $sos $tmp}
+            catch {dots_from_trinorm $tmp $plot}
+            catch {file delete $tmp}
+        }
+        catch {file delete $sos}
+        return [surface_has_geometry $plot]
+    }
+    catch {run_sos_triangle $sos $plot}
+    # sos_triangle's fixed polygon budget: step the density down until it fits
+    if {$dd eq ""} { set dd $state(dot_density) }
+    if {![string is integer -strict $dd] || $dd < 1} { set dd 15 }
+    set retry 0
+    while {![surface_has_geometry $plot] && $dd > 2 && $retry < 4} {
+        set dd [expr {max(2, $dd / 2)}]
+        incr retry
+        catch {vmdcon -info "VMDHole: sos_triangle produced no surface; retrying at dot density $dd."}
+        if {![_legacy_sos $sph $sos $color $dd $with]} { break }
+        catch {run_sos_triangle $sos $plot}
+    }
+    catch {file delete $sos}
+    return [surface_has_geometry $plot]
+}
+
+# The same build as one shell command, for run_shell_pool.
+proc ::VMDHole::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {union 0} {with {}}} {
+    variable state
+    if {[_csg_can_mesh $union]} {
+        set flag [dict get {mol {} draw --draw dots --dots} $form]
+        set wflag ""
+        if {[llength $with]} { set wflag "--with"; foreach w $with { append wflag " [shell_quote $w]" } }
+        return "[shell_quote [tool_path mesh_csg]] [tool_args mesh_csg] [shell_quote $sph]\
+            [shell_quote $plot] [_csg_voxel_spec] $flag [_csg_mesh_opts $sph] $wflag > /dev/null 2>&1"
+    }
+    if {[_run_uses_card capsule]} { set sph [_capsule_sph_kept $sph] }
+    set sos [file rootname $plot].sos
+    set dd [expr {$dotden ne "" ? $dotden : $state(dot_density)}]
+    set cflag [expr {$color ? "-colour " : ""}]
+    set tri [expr {$form eq "dots" && [fast_available points]
+        ? "[shell_quote $state(sos_triangle_exec)] -s --points < [shell_quote $sos] > [shell_quote $plot]"
+        : [_sos_triangle_cmd $sos $plot]}]
+    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1"
+    if {[llength $with]} {
+        # window clouds are shared between neighbouring frames' jobs: written
+        # to a private name and renamed into place, so two workers cannot
+        # half-write the same file
+        set wsos {}
+        foreach w $with {
+            set ws "[file rootname $w]_dd${dd}.sos"
+            set tmp "$ws.tmp[expr {int(rand()*1e9)}]"
+            append chain " && { \[ -s [shell_quote $ws] \] || { [_sph_process_cmd $dd $cflag $w $tmp] > /dev/null 2>&1 && mv -f [shell_quote $tmp] [shell_quote $ws]; }; }"
+            lappend wsos $ws
+        }
+        set sm "[file rootname $sos]_sm.sos"
+        append chain " && [_sos_smooth_cmd $sm [_surface_smooth_rho] $sos $wsos] > /dev/null 2>&1 && mv -f [shell_quote $sm] [shell_quote $sos]"
+    }
+    return "$chain && $tri 2>/dev/null; rm -f [shell_quote $sos]"
+}
+
+# This run's mesh, built if it is not already on disk. "" when the mesher
+# cannot serve the run, and the caller then falls back to sos_triangle.
+proc ::VMDHole::_csg_base_mesh {run_dir sph_file} {
+    if {![_csg_can_mesh]} { return "" }
+    set form [expr {[_csg_draw_form] ? "draw" : "mol"}]
+    set plot [surface_plot_name $run_dir "hole_triangulated[_conn_surface_suffix]" $form]
+    if {[file exists $plot] && [file exists $sph_file] && [file mtime $plot] >= [file mtime $sph_file] \
+            && [surface_has_geometry $plot]} { return $plot }
+    return [expr {[surface_mesh $sph_file $plot $form "" 1 0 [_surface_smooth_with_dir $run_dir]] ? $plot : ""}]
+}
+
+# 0 = the grid used everywhere, 1 = the finer grid around small pore spheres.
+# A tunnel is a plain union of spheres with no clip records, so the mesher takes
+# its .sph unchanged. Tunnel meshes are written in HOLE's own records rather
+# than addressed to a molecule: a route is always drawn in its own colour, so it
+# never takes the sourcing path anyway, and a property-coloured route has to be
+# readable by sos_triangle's per-triangle recolour.
+proc ::VMDHole::_csg_tunnel_active {} {
+    variable state
+    if {![info exists state(mesher)] || $state(mesher) ne "csg"} { return 0 }
+    return [expr {[tool_path mesh_csg] ne ""}]
+}
+
+
+proc ::VMDHole::_tunnel_wants_csg {i} {
+    if {![_csg_tunnel_active]} { return 0 }
+    return [expr {[_tunnel_effective_repr $i] ne "centerline"}]
+}
+
+# A route's mesh: the plain name under sos_triangle, the tagged one under the mesher.
+proc ::VMDHole::_tunnel_plot {fd i} {
+    return [surface_plot_name $fd [format "tunnel_%02d" $i] draw 1]
+}
+
+proc ::VMDHole::_csg_voxel {fine} {
+    variable state
+    set v [expr {$fine ? $state(csg_voxel_fine) : $state(csg_voxel)}]
+    if {![string is double -strict $v] || $v < 0.15 || $v > 3.0} { set v [expr {$fine ? 0.7 : 1.4}] }
+    return [format %.2f $v]
+}
+
+# ONE mesh serves playback and the settled view: mesh_csg's "OUTER/NECK" grid
+# (coarse cells everywhere, fine cells around the small pore spheres). A
+# playback mesh that differs from the settled one makes the surface visibly
+# change shape when playback stops, which is worse than either mesh alone.
+proc ::VMDHole::_capsule_run_axis {run_dir} {
+    # This run's ACTUALLY-RESOLVED axis (vmdhole_frame_axis.dat, written
+    # unconditionally by run_analysis - see _frame_axis_persisted), not the
+    # live state(cpoint)/cvect: those are the RUN's nominal fields, blank when
+    # the user lets HOLE guess (CGUESS), or stale once a redraw is requested
+    # (a different frame, a colour or display change) without a fresh run.
+    # Every capsule consumer of the axis (the mesher, the legacy sph_process
+    # pair, the two-track centreline) goes through this one proc so they
+    # cannot drift onto three different answers for "what is the axis".
+    # Falls back to the live fields for a run_dir that predates the manifest.
+    variable state
+    set fa [_frame_axis_persisted $run_dir]
+    if {[llength $fa] == 6} {
+        lassign $fa cx cy cz vx vy vz
+        return [list [list $cx $cy $cz] [list $vx $vy $vz]]
+    }
+    return [list $state(cpoint) $state(cvect)]
+}
+
+proc ::VMDHole::_csg_mesh_opts {sph_file} {
+    # A capsule run hands the mesher its axis. HOLE's capsule search leaves
+    # escaped slices in the .sph with nothing marking them; the mesher keeps a
+    # slice only within ENDRAD of the axis (mesh_csg --axis), the rule HOLE's
+    # own profile applies.
+    #
+    # The axis this frame's search ACTUALLY used, not state(cpoint)/cvect:
+    # those are the RUN's nominal fields - blank when the user lets HOLE guess
+    # (CGUESS), or stale once a redraw is requested (a different frame, a
+    # colour or display change) without a fresh run. Filtering slices by a
+    # blank or stale field instead of the real axis is exactly the failure
+    # this avoids: it rejects a real slice as off-axis, so the tube shows only
+    # in a few places instead of its full length. run_analysis writes the
+    # real per-frame result to vmdhole_frame_axis.dat next to the .sph
+    # unconditionally - see _frame_axis_persisted.
+    variable state
+    if {![_run_uses_card capsule]} { return {} }
+    lassign [_capsule_run_axis [file dirname $sph_file]] _cp _cv
+    lassign $_cp cx cy cz
+    lassign $_cv vx vy vz
+    foreach v [list $cx $cy $cz $vx $vy $vz $state(endrad)] {
+        if {![string is double -strict $v]} { return {} }
+    }
+    return [list --axis $cx $cy $cz $vx $vy $vz $state(endrad)]
+}
+
+proc ::VMDHole::_capsule_sph_kept {sph_file} {
+    # A capsule .sph with only the kept slices (the rule the mesher applies
+    # with --axis), as QC1/QC2 pairs. sph_process - HOLE's or the Tcl port -
+    # meshes the escaped records too, as blobs tens of A wide.
+    # Axis: this frame's actually-resolved one, not the live state fields - see
+    # _csg_mesh_opts, which this mirrors so the legacy pair and the mesher
+    # agree on exactly which slices are real.
+    variable state
+    set out "[file rootname $sph_file]_kept.sph"
+    if {[file exists $out] && [file mtime $out] >= [file mtime $sph_file]} { return $out }
+    lassign [_capsule_run_axis [file dirname $sph_file]] cpoint cvect
+    set slices [_capsule_rings $sph_file $cvect $cpoint $state(endrad)]
+    if {![llength $slices]} { return $sph_file }
+    if {[catch {set fh [open $out w]}]} { return $sph_file }
+    set i 0
+    foreach sl $slices {
+        lassign [lindex $sl 2] x1 y1 z1 x2 y2 z2 R
+        puts $fh [format "ATOM      1  QC1 SPH S%4d    %8.3f%8.3f%8.3f%6.2f%6.2f" $i $x1 $y1 $z1 $R 0.0]
+        puts $fh [format "ATOM      1  QC2 SPH S%4d    %8.3f%8.3f%8.3f%6.2f%6.2f" $i $x2 $y2 $z2 $R 0.0]
+        incr i
+    }
+    close $fh
+    return $out
+}
+
+proc ::VMDHole::_csg_voxel_spec {args} {
+    variable state
+    # A Connolly surface is at probe scale everywhere - there is no narrow neck
+    # to refine, and refining by sphere radius would refine the whole thing.
+    if {$state(pore_method) eq "connolly"} { return [_csg_voxel 0] }
+    set o [_csg_voxel 0]
+    set n [_csg_voxel 1]
+    if {$n < $o} { return "$o/$n" }
+    return $o
+}
+
+
+
+
+
+proc ::VMDHole::_set_mesher {val disp} {
+    variable state
+    variable last_geom_key
+    if {[info exists state(mesher)] && $state(mesher) eq $val} { return }
+    set state(mesher) $val
+    set state(mesher_disp) $disp
+    set last_geom_key ""
+    _update_mesher_rows
+    catch {apply_display_change}
+}
+
+# Persistent mesher: one `mesh_csg --serve` child per session, one request per
+# line, so a frame costs a pipe round-trip instead of a process spawn.
+# Returns the triangle count, or -1 (caller falls back to sos_triangle).
+namespace eval ::VMDHole {
+    variable _csg_chan;   if {![info exists _csg_chan]}   { set _csg_chan "" }
+    # Plot files THIS session's mesher wrote, path -> mtime. Only these take the
+    # fast draw path below; anything read back from disk (a saved run reopened
+    # later, an imported result directory) keeps the parse-as-data path, so
+    # opening someone else's output can still never execute Tcl.
+    variable _csg_owned;  if {![info exists _csg_owned]}  { set _csg_owned {} }
+    # -1 not asked yet, 1 the resident mesher answers the tunnel kernels, 0 it does not
+    variable _tunnel_serve; if {![info exists _tunnel_serve]} { set _tunnel_serve -1 }
+}
+
+proc ::VMDHole::_csg_own_plot {path} {
+    variable _csg_owned
+    set mt 0
+    catch {set mt [file mtime $path]}
+    if {$mt != 0} { dict set _csg_owned $path $mt }
+}
+
+# SOURCE a mesh_csg mesh instead of parsing it into entries and issuing one
+# `graphics` call per triangle. mesh_csg writes its records as
+# `graphics $::VMDHole::_gmol ...`, so setting that variable and sourcing the
+# file replays the surface with no parse and no rewrite: 4.56 -> 2.57 us per
+# triangle on a cold file, which is what playback draws (a new mesh every
+# frame). ONLY files this session's own mesher wrote are eligible - a saved
+# run reopened later, or an imported result directory, keeps the
+# parse-as-data path, so opening someone else's output can never execute Tcl.
+proc ::VMDHole::_csg_fast_render {plot_file mol ov material} {
+    variable _csg_owned
+    if {$ov ne ""} { return 0 }
+    if {![dict exists $_csg_owned $plot_file]} { return 0 }
+    set mt 0
+    catch {set mt [file mtime $plot_file]}
+    if {$mt == 0 || $mt != [dict get $_csg_owned $plot_file]} { return 0 }
+    catch {graphics $mol materials on}
+    catch {graphics $mol material $material}
+    variable _gmol
+    set _gmol $mol
+    if {[catch {uplevel #0 [list source $plot_file]} err]} {
+        catch {graphics $mol delete all}
+        catch {vmdcon -warn "VMDHole: fast surface draw failed ($err); using the parsed path."}
+        return 0
+    }
+    return 1
+}
+
+# Persistent mesher: one `mesh_csg --serve` child per session, one request per
+# line, so a frame costs a pipe round-trip instead of a process spawn.
+# Returns the triangle count, or -1 (caller falls back to sos_triangle).
+proc ::VMDHole::_csg_server_ask {request} {
+    # One request line to the resident mesher; its reply, "" when it could not
+    # be reached (the channel is reopened once).
+    variable _csg_chan
+    set exe [tool_path mesh_csg]
+    if {$exe eq ""} { return "" }
+    for {set attempt 0} {$attempt < 2} {incr attempt} {
+        if {$_csg_chan eq ""} {
+            if {[catch {
+                set _csg_chan [open [list |$exe {*}[tool_args mesh_csg] --serve] r+]
+                fconfigure $_csg_chan -buffering line -blocking 1 -translation lf
+            }]} { set _csg_chan ""; return "" }
+        }
+        set reply ""
+        if {[catch {
+            puts $_csg_chan $request
+            set reply [gets $_csg_chan]
+        }] || $reply eq ""} {
+            _csg_server_close
+            continue
+        }
+        return $reply
+    }
     return ""
+}
+
+proc ::VMDHole::_csg_server_mesh {sph plot voxel {verb mesh}} {
+    set reply [_csg_server_ask "$verb\t$sph\t$plot\t$voxel"]
+    if {[string match "OK *" $reply]} {
+        if {$verb eq "mesh"} { _csg_own_plot $plot }
+        return [lindex $reply 1]
+    }
+    if {[string match "EXT *" $reply]} { return [lrange $reply 1 end] }
+    return -1
+}
+
+proc ::VMDHole::_csg_server_close {} {
+    variable _csg_chan
+    if {$_csg_chan eq ""} { return }
+    catch { puts $_csg_chan quit; flush $_csg_chan }
+    catch { close $_csg_chan }
+    set _csg_chan ""
+    variable _tunnel_serve
+    set _tunnel_serve -1
+}
+
+# Native classify+cluster: same dict shape _conn_classify_sph's Tcl body
+# returns (plus a "lobes" key _conn_frame_lobes reads straight off, so the
+# clustering pass runs once, inside this same process). Empty dict ({}) on
+# any problem - the caller re-does the whole thing in pure Tcl, so a stale
+# or missing binary degrades to the old behaviour, never a wrong answer.
+proc ::VMDHole::_conn_classify_native {in_sph cvect_s cpoint_s margin {basis_s ""}} {
+    set exe [tool_path conn_lobes]
+    if {$exe eq "" || ![file exists $in_sph]} { return {} }
+    lassign $cvect_s ux uy uz
+    lassign $cpoint_s ox oy oz
+    foreach v {ux uy uz ox oy oz} { if {![string is double -strict [set $v]]} { return {} } }
+    if {![string is double -strict $margin]} { return {} }
+    set cmd [list $exe {*}[tool_args conn_lobes] classify $in_sph $ox $oy $oz $ux $uy $uz $margin]
+    if {$basis_s ne "" && [llength $basis_s] == 6} {
+        set _allnum 1
+        foreach _b $basis_s { if {![string is double -strict $_b]} { set _allnum 0; break } }
+        if {$_allnum} { lappend cmd {*}$basis_s }
+    }
+    if {[catch {exec {*}$cmd} out]} { return {} }
+    set lines [split $out "\n"]
+    set i 0
+    proc _cln_block {lines i} {
+        set hdr [lindex $lines $i]
+        set cnt [lindex $hdr 1]
+        if {![string is integer -strict $cnt]} { return [list {} $i] }
+        incr i
+        set block [lrange $lines $i [expr {$i+$cnt-1}]]
+        return [list $block [expr {$i+$cnt}]]
+    }
+    if {[catch {
+        lassign [_cln_block $lines $i] pore i
+        lassign [_cln_block $lines $i] keep i
+        lassign [_cln_block $lines $i] lat  i
+        lassign [_cln_block $lines $i] escr i
+        set esc_ranges {}
+        foreach r $escr { lassign $r lo hi; lappend esc_ranges [list $lo $hi] }
+        set lobehdr [lindex $lines $i]
+        set nlobe [lindex $lobehdr 1]
+        if {![string is integer -strict $nlobe]} { error "bad LOBE header" }
+        incr i
+        set lobes {}
+        for {set k 0} {$k < $nlobe} {incr k} {
+            set fields [lindex $lines $i]
+            incr i
+            set z  [lindex $fields 0]
+            set a  [lindex $fields 1]
+            set nn [lindex $fields 2]
+            set ef [lindex $fields 3]
+            set ka [lindex $fields 4]
+            set kb [lindex $fields 5]
+            if {$ka eq "-"} { set ka "" }
+            if {$kb eq "-"} { set kb "" }
+            set idx [lrange $fields 6 end]
+            lappend lobes [list $z $a $nn $idx $ef $ka $kb]
+        }
+        set marked [dict create]
+        if {$i < [llength $lines] && [lindex [lindex $lines $i] 0] eq "MARKED"} {
+            lassign [_cln_block $lines $i] mk i
+            foreach l $mk { dict set marked $l 1 }
+        }
+    } _err]} { return {} }
+    return [dict create pore $pore lateral $lat keep $keep \
+        n_pore [llength $pore] n_lat [llength $lat] escaped_ranges $esc_ranges lobes $lobes marked $marked]
+}
+
+# Engine for a run: "" = HOLE only; nm = Nelder-Mead search; nmconn = Nelder-Mead
+# + ported Connolly (HOLE's conn cannot run on foreign centres); mcconn = HOLE's
+# search + ported Connolly on HOLE's centres (the Settings > Connolly surface option).
+proc ::VMDHole::_nm_mode_for_run {tcl_fallback} {
+    variable state
+    if {$tcl_fallback} { return "" }
+    set want_nm [expr {[info exists state(search_engine)] && $state(search_engine) eq "nm"}]
+    set want_cf [expr {[info exists state(conn_engine)] && $state(conn_engine) eq "fast"}]
+    switch -- $state(pore_method) {
+        circular { return [expr {$want_nm ? "nm" : ""}] }
+        connolly {
+            if {$want_nm} { return "nmconn" }
+            return [expr {$want_cf ? "mcconn" : ""}]
+        }
+    }
+    return ""
+}
+
+proc ::VMDHole::_set_search_engine {val disp} {
+    variable state
+    variable result_frames
+    if {[info exists state(search_engine)] && $state(search_engine) eq $val} { return }
+    set had [llength $result_frames]
+    set state(search_engine) $val
+    set state(search_engine_disp) $disp
+    if {$had > 0} { clear_results_for_new_settings }
+    _update_search_rows
+}
+
+proc ::VMDHole::_set_conn_engine {val disp} {
+    variable state
+    variable result_frames
+    if {[info exists state(conn_engine)] && $state(conn_engine) eq $val} { return }
+    set had [llength $result_frames]
+    set state(conn_engine) $val
+    set state(conn_engine_disp) $disp
+    if {$had > 0 && $state(pore_method) eq "connolly"} { clear_results_for_new_settings }
+}
+
+# The MC rows apply only to HOLE's search: shown for Monte Carlo and capsule
+# (always HOLE), removed under Nelder-Mead; the picker is greyed under capsule.
+proc ::VMDHole::_update_search_rows {} {
+    variable state
+    variable _hp_frame
+    if {![info exists _hp_frame] || ![winfo exists $_hp_frame]} { return }
+    set hp $_hp_frame
+    set capsule [expr {$state(pore_method) eq "capsule"}]
+    set mc [expr {$capsule || $state(search_engine) ne "nm"}]
+    foreach w {ms_l ms_e md_l md_e mk_l mk_e rs_l rs_e sh_l sh_e ex_l ex_e} {
+        if {![winfo exists $hp.$w]} continue
+        if {$mc} { grid $hp.$w } else { grid remove $hp.$w }
+    }
+    set conn [expr {$state(pore_method) eq "connolly"}]
+    foreach w {ce_l ce_mb cgate_c} {
+        if {![winfo exists $hp.$w]} continue
+        if {$conn} { grid $hp.$w } else { grid remove $hp.$w }
+    }
+    if {[winfo exists $hp.se_mb]} {
+        $hp.se_mb configure -state [expr {$capsule ? "disabled" : "normal"}]
+    }
+}
+
+# Shell lines that run the Nelder-Mead engine for one frame, or "" when the
+# control file has something the engine cannot take (then HOLE runs as usual).
+proc ::VMDHole::_nm_run_lines {mode exe inp coord_name njobs} {
+    variable state
+    lassign [_hole_tcl_args_from_inp $inp] st a
+    if {$st ne "ok"} { return "" }
+    set d [dict create {*}$a]
+    foreach k {-cpoint -cvect} { if {![dict exists $d $k]} { return "" } }
+    lassign [dict get $d -cpoint] cx cy cz
+    lassign [dict get $d -cvect] vx vy vz
+    foreach v [list $cx $cy $cz $vx $vy $vz] { if {![string is double -strict $v]} { return "" } }
+    set sample [expr {[dict exists $d -sample] ? [dict get $d -sample] : 0.25}]
+    set endrad [expr {[dict exists $d -endrad] ? [dict get $d -endrad] : 22.0}]
+    set rad [dict get $d -rad]
+    set cmd "[shell_quote $exe] [tool_args nm_search] [shell_quote $coord_name] [shell_quote $rad] $cx $cy $cz $vx $vy $vz $sample $endrad"
+    append cmd " --sph hole_out.sph --tsv hole_profile.tsv --quiet"
+    if {$mode ne "nm"} {
+        set probe [expr {[dict exists $d -probe] ? [dict get $d -probe] : 1.15}]
+        set grid  [expr {[dict exists $d -grid]  ? [dict get $d -grid]  : 0}]
+        append cmd " --conn $probe $grid"
+    }
+    if {[dict exists $d -ignore] && [string trim [dict get $d -ignore]] ne ""} {
+        append cmd " --ignore [shell_quote [join [dict get $d -ignore] ,]]"
+    }
+    # one frame per core in a pool: the engine must not fan out on its own
+    set pre [expr {$njobs > 1 ? "OMP_NUM_THREADS=1 " : ""}]
+    set lines [list "rm -f hole_out.txt hole_out.sph hole_profile.tsv 2>/dev/null"]
+    if {$mode eq "mcconn"} {
+        set awk {/^ATOM/ {r=substr($0,23,4)+0; if (r==-999 || r==-888) next; if (seen[r]++) next; x=substr($0,31,8)+0; y=substr($0,39,8)+0; z=substr($0,47,8)+0; o=substr($0,55,6)+0; printf "%.4f %.3f %.3f %.3f %.2f\n", (x-cx)*vx+(y-cy)*vy+(z-cz)*vz, x, y, z, o}}
+        set vn [expr {sqrt($vx*$vx + $vy*$vy + $vz*$vz)}]
+        if {$vn < 1e-9} { return "" }
+        lappend lines "[_hole_omp_prefix $njobs][shell_quote $state(hole_exec)] < hole_sph.inp > hole_sph_out.txt 2>/dev/null"
+        lappend lines "_vh_rc=\$?"
+        lappend lines "if \[ \"\$_vh_rc\" -eq 0 \]; then"
+        lappend lines "awk -v cx=$cx -v cy=$cy -v cz=$cz -v vx=[expr {$vx/$vn}] -v vy=[expr {$vy/$vn}] -v vz=[expr {$vz/$vn}] '$awk' hole_out.sph > nm_centres.txt"
+        lappend lines "$pre$cmd --centres nm_centres.txt > nm_search.log 2>&1"
+        lappend lines "_vh_rc=\$?"
+        lappend lines "fi"
+    } else {
+        lappend lines "$pre$cmd > nm_search.log 2>&1"
+        lappend lines "_vh_rc=\$?"
+    }
+    return $lines
 }
 
 proc ::VMDHole::_tunnel_parse_text {txt} {
@@ -17658,7 +18832,7 @@ proc ::VMDHole::_write_tunnel_manifest {root molid frames cfg seed auto_origin e
     catch {set struct [molinfo $molid get filename]}
     set nm ""
     catch {set nm [get_molecule_basename $molid]}
-    set eng [_mole_engine_path]
+    set eng [tool_path mole_engine]
     set engstamp ""
     if {$eng ne "" && [file exists $eng]} {
         catch {set engstamp "[file size $eng]:[file mtime $eng]"}
@@ -17933,7 +19107,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
     set _t_prep [expr {([clock milliseconds]-$_t_mark)/1000.0}]; set _t_mark [clock milliseconds]
     # Auto shell is gone with the lattice engine: "bulk shell" is a grid notion
     # and MOLE has no grid - it peels from the convex hull with ProbeRadius.
-    set have_c [expr {[_mole_engine_path] ne ""}]
+    set have_c [expr {[tool_path mole_engine] ne ""}]
     set _engine [expr {$have_c ? "mole-c" : "mole-tcl"}]
     # When the binary is missing _tunnel_search_mole prints the reason itself,
     # once per run, and the pure-Tcl engine takes over.
@@ -17959,7 +19133,7 @@ proc ::VMDHole::run_tunnel_analysis {} {
             # the parser below happily read those stale tunnels back as this
             # frame's new result.
             puts $fh "rm -f [shell_quote [file join $fd out.dat]]"
-            puts $fh "OMP_NUM_THREADS=1 [shell_quote [_mole_engine_path]] \\"
+            puts $fh "OMP_NUM_THREADS=1 [shell_quote [tool_path mole_engine]] \\"
             puts $fh "  [shell_quote [file join $fd atoms.txt]] [shell_quote [file join $fd out.dat]] \\"
             puts $fh "  [_mole_cfg_args $cfg]$_o [_mole_cfg_flags $cfg] >/dev/null 2>&1"
             close $fh
@@ -18290,18 +19464,11 @@ proc ::VMDHole::_tunnel_mesh_jobs {fd ids {tag ""}} {
     if {![string is integer -strict $dd] || $dd < 1} { set dd 6 }
     set jobs {}
     foreach i $ids {
-        set plot [file join $fd [format "tunnel_%02d.plot" $i]]
+        set plot [_tunnel_plot $fd $i]
         set sph  [file join $fd [format "tunnel_%02d.sph" $i]]
-        # Already meshed by an earlier run/visit - the mesh is a pure function
-        # of the .sph, so never rebuild one that is still current for it.
         if {[_tunnel_mesh_current $plot $sph]} { continue }
         if {![file exists $sph]} { continue }
-        set sh [file join $fd [format "mesh_%02d.sh" $i]]
-        set fh [open $sh w]
-        puts $fh [_surface_mesh_script $dd $sph \
-            [file join $fd [format "tunnel_%02d.sos" $i]] $plot]
-        close $fh
-        lappend jobs [list "mesh $tag$i" [list |sh $sh]]
+        lappend jobs [list "mesh $tag$i" [list |sh -c [surface_mesh_cmd $sph $plot draw $dd 1 1]]]
     }
     return $jobs
 }
@@ -18369,7 +19536,7 @@ proc ::VMDHole::render_tunnels_for_frame {frame {draft 0}} {
     }
     set todo {}
     foreach i $want {
-        if {![_tunnel_mesh_current [file join $fd [format "tunnel_%02d.plot" $i]] \
+        if {![_tunnel_mesh_current [_tunnel_plot $fd $i] \
                                    [file join $fd [format "tunnel_%02d.sph" $i]]]} {
             lappend todo $i
         }
@@ -18379,8 +19546,20 @@ proc ::VMDHole::render_tunnels_for_frame {frame {draft 0}} {
     # goes through the job pool rather than a serial loop - it dominates a
     # single-frame run (measured ~90% of wall time) and is otherwise the one
     # single-threaded stretch the user sees.
-    if {[llength $todo] > 1} {
-        run_shell_pool [_tunnel_mesh_jobs $fd $todo] [resolve_job_count] \
+    # Marching-cubes tunnels go through the session's own mesher process, which
+    # costs a pipe round trip each. Pooling them instead would spawn one process
+    # per tunnel, and process creation from a loaded VMD is ~16 ms - more than
+    # meshing a tunnel takes. Whatever it cannot serve falls through to the pool.
+    set _todo_pool {}
+    foreach i $todo {
+        set _ok 0
+        if {[_tunnel_wants_csg $i]} {
+            set _ok [surface_mesh [file join $fd [format "tunnel_%02d.sph" $i]] [_tunnel_plot $fd $i] draw "" 1 1]
+        }
+        if {!$_ok} { lappend _todo_pool $i }
+    }
+    if {[llength $_todo_pool] > 1} {
+        run_shell_pool [_tunnel_mesh_jobs $fd $_todo_pool] [resolve_job_count] \
             "Meshing tunnels" "tunnel(s)"
     }
 
@@ -18389,11 +19568,9 @@ proc ::VMDHole::render_tunnels_for_frame {frame {draft 0}} {
     # command deliberately does not replicate.
     foreach i $want {
         set sph  [file join $fd [format "tunnel_%02d.sph" $i]]
-        set sos  [file join $fd [format "tunnel_%02d.sos" $i]]
-        set plot [file join $fd [format "tunnel_%02d.plot" $i]]
+        set plot [_tunnel_plot $fd $i]
         if {![_tunnel_mesh_current $plot $sph]} {
-            if {[catch {run_sph_process $sph $sos 1 6}]} { continue }
-            if {[catch {run_sos_triangle $sos $plot}]} { continue }
+            if {![surface_mesh $sph $plot draw 6 1 1]} { continue }
         }
         # Per-tunnel gear overrides (show_tunnel_gear_settings): material and
         # wireframe are orthogonal to color source and apply to EVERY branch
@@ -18524,7 +19701,7 @@ proc ::VMDHole::render_tunnels_for_frame {frame {draft 0}} {
                     # the main HOLE surface and the Mean Profile tube already
                     # use; the Tcl path stays as the fallback.
                     set _cdone 0
-                    if {[values_fast_available]} {
+                    if {[fast_available values]} {
                         set _vf [file join $fd [format "tunnel_%02d_%s_values.dat" $i $prop]]
                         if {![catch {
                             set _vals [_tunnel_property_values $frame $i $prop]
@@ -18927,18 +20104,24 @@ proc ::VMDHole::build_run_panel {parent} {
     #   COR  VMD's current Center Of Rotation (molinfo ... get center - set by
     #        Mouse > Center click, "Display > Reset View", or a manual molinfo set).
     frame $parent.cp_box
-    button $parent.cp_box.com -text "COG" -width 4 -command ::VMDHole::use_selection_center
+    # The stick sits first and tight; COG/COR share whatever width is left.
+    button $parent.cp_box.stk -text "⌖" -font {Helvetica 14} -padx 1 -pady 0 -relief flat \
+        -command [list ::VMDHole::show_axis_stick_dialog cpoint]
+    button $parent.cp_box.com -text "COG" -command ::VMDHole::use_selection_center
     button $parent.cp_box.cor -text "COR" -command ::VMDHole::use_view_center
-    pack $parent.cp_box.com -side left
-    pack $parent.cp_box.cor -side left -padx {4 0}
+    pack $parent.cp_box.stk -side left
+    pack $parent.cp_box.com -side left -padx {4 0} -fill x -expand 1
+    pack $parent.cp_box.cor -side left -padx {4 0} -fill x -expand 1
     grid $parent.cp_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
     grid $parent.cp_e   -row $row -column 1 -sticky ew -padx 8 -pady 2
-    grid $parent.cp_box -row $row -column 2 -sticky w  -padx 8 -pady 2
+    grid $parent.cp_box -row $row -column 2 -sticky ew -padx 8 -pady 2
     incr row
 
     add_tooltip $parent.cp_box.com "Fill with the centre of geometry of the selection typed here. Blank\
         uses the main Selection."
     add_tooltip $parent.cp_box.cor "Fill CPOINT with VMD's current center of rotation."
+    add_tooltip $parent.cp_box.stk "Move CPOINT with an on-screen stick or step buttons, relative to the\
+        current view."
 
     # Per-frame CPOINT handling (mutually exclusive; neither = static point). The scope
     # row below changes to match the checked box (_update_cpoint_scope_row).
@@ -18987,11 +20170,18 @@ proc ::VMDHole::build_run_panel {parent} {
 
     label $parent.cv_l  -text "CVECT"
     entry $parent.cv_e  -textvariable ::VMDHole::state(cvect) -width 14
-    button $parent.cv_b -text "Vector" -command ::VMDHole::show_vector_dialog
-    grid $parent.cv_l -row $row -column 0 -sticky w  -padx 8 -pady 2
-    grid $parent.cv_e -row $row -column 1 -sticky ew -padx 8 -pady 2
-    grid $parent.cv_b -row $row -column 2 -sticky ew -padx 8 -pady 2
-    add_tooltip $parent.cv_b "Set the channel axis direction from two picked points."
+    frame  $parent.cv_box
+    button $parent.cv_box.stk -text "⌖" -font {Helvetica 14} -padx 1 -pady 0 -relief flat \
+        -command [list ::VMDHole::show_axis_stick_dialog cvect]
+    button $parent.cv_box.vec -text "Vector" -command ::VMDHole::show_vector_dialog
+    pack $parent.cv_box.stk -side left
+    pack $parent.cv_box.vec -side left -padx {4 0} -fill x -expand 1
+    grid $parent.cv_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
+    grid $parent.cv_e   -row $row -column 1 -sticky ew -padx 8 -pady 2
+    grid $parent.cv_box -row $row -column 2 -sticky ew -padx 8 -pady 2
+    add_tooltip $parent.cv_box.vec "Set the channel axis direction from two picked points."
+    add_tooltip $parent.cv_box.stk "Tilt CVECT with an on-screen stick or step buttons, relative to the\
+        current view."
     incr row
 
     # (Align traj… button now lives on the Selection row, near the selection it fits.)
@@ -19167,8 +20357,6 @@ proc ::VMDHole::build_run_panel {parent} {
     # instead: tracing it would rebuild the mesh on every keystroke, and a
     # half-typed "3." is not a double, so it would render at the default first.
     _trace_once ::VMDHole::state(conn_pore_gate) write \
-        ::VMDHole::on_display_setting_changed
-    _trace_once ::VMDHole::state(conn_trim_escaped) write \
         ::VMDHole::on_display_setting_changed
     _trace_once ::VMDHole::state(ion_radius_fallback) write \
         ::VMDHole::_on_ion_radius_fallback_changed
@@ -19668,7 +20856,7 @@ proc ::VMDHole::show_settings_dialog {} {
     grid $d.work_l -row $row -column 0 -sticky w -padx 8 -pady 3
     grid $d.work_e -row $row -column 1 -sticky w -padx 8 -pady 3
     grid $d.work_b -row $row -column 2 -sticky w -padx 8 -pady 3
-    add_tooltip $d.work_b "Choose the folder HOLE output is written to."
+    add_tooltip $d.work_b "Output folder for HOLE runs."
     incr row
     frame $d.oc1
     checkbutton $d.oc1.save_c -text "Save results to disk" -variable ::VMDHole::state(save_results)
@@ -19700,6 +20888,62 @@ proc ::VMDHole::show_settings_dialog {} {
     label $d.bin_hdr -text "Engines" -font {Helvetica 9 bold}
     grid $d.bin_hdr -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady {12 2}
     incr row
+    label $d.ms_l -text "Surface mesher"
+    switch -- $::VMDHole::state(mesher) {
+        sos     { set ::VMDHole::state(mesher_disp) "sos_triangle" }
+        default { set ::VMDHole::state(mesher_disp) "Marching cubes" }
+    }
+    menubutton $d.ms_mb -textvariable ::VMDHole::state(mesher_disp) \
+        -relief raised -width 13 -anchor w -indicatoron 1 -menu $d.ms_mb.m
+    menu $d.ms_mb.m -tearoff 0
+    foreach {_msv _msd} {csg {Marching cubes} sos {sos_triangle}} {
+        $d.ms_mb.m add command -label $_msd -command [list ::VMDHole::_set_mesher $_msv $_msd]
+    }
+    frame $d.ms_vx
+    label $d.ms_vx.l1 -text "grid"
+    entry $d.ms_vx.e1 -textvariable ::VMDHole::state(csg_voxel) -width 5
+    label $d.ms_vx.l2 -text "neck"
+    entry $d.ms_vx.e2 -textvariable ::VMDHole::state(csg_voxel_fine) -width 5
+    pack $d.ms_vx.l1 $d.ms_vx.e1 $d.ms_vx.l2 $d.ms_vx.e2 -side left -padx {0 4}
+    # the mesher's own knob sits beside it on the same row: grid/neck for
+    # marching cubes, dot density for sos_triangle (_update_mesher_rows)
+    frame $d.ms_dd
+    label $d.ms_dd.l -text "dot density"
+    entry $d.ms_dd.e -textvariable ::VMDHole::state(dot_density) -width 5
+    label $d.ms_dd.l2 -text "playback"
+    entry $d.ms_dd.e2 -textvariable ::VMDHole::state(draft_stride) -width 5
+    label $d.ms_dd.l3 -text "Connolly"
+    entry $d.ms_dd.e3 -textvariable ::VMDHole::state(conn_draft_dotden) -width 5
+    pack $d.ms_dd.l $d.ms_dd.e $d.ms_dd.l2 $d.ms_dd.e2 $d.ms_dd.l3 $d.ms_dd.e3 -side left -padx {0 4}
+    grid $d.ms_l -row $row -column 0 -sticky w -padx 8 -pady 3
+    grid $d.ms_mb -row $row -column 1 -sticky w -padx 8 -pady 3
+    grid $d.ms_vx -row $row -column 2 -sticky w -padx 8 -pady 3
+    grid $d.ms_dd -row $row -column 2 -sticky w -padx 8 -pady 3
+    incr row
+    add_tooltip $d.ms_mb "Marching cubes (mesh_csg) or HOLE\'s sos_triangle."
+    add_tooltip $d.ms_vx "Cell size in \u00c5. Neck applies to spherical runs only."
+    add_tooltip $d.ms_dd.e "sph_process dots per sphere."
+    add_tooltip $d.ms_dd.e2 "Draw every Nth triangle while playing."
+    add_tooltip $d.ms_dd.e3 "Dot density while playing, for a frame with no surface yet."
+    label $d.sm_l -text "Smoothing"
+    set ::VMDHole::state(surface_smooth_disp) [_surface_smooth_label $::VMDHole::state(surface_smooth)]
+    menubutton $d.sm_mb -textvariable ::VMDHole::state(surface_smooth_disp) \
+        -relief raised -width 18 -anchor w -indicatoron 1 -menu $d.sm_mb.m
+    menu $d.sm_mb.m -tearoff 0
+    foreach _smv {follow off 1 2 3 5} {
+        $d.sm_mb.m add command -label [_surface_smooth_label $_smv] \
+            -command [list ::VMDHole::_set_surface_smooth $_smv [_surface_smooth_label $_smv]]
+    }
+    grid $d.sm_l  -row $row -column 0 -sticky w -padx 8 -pady 3
+    grid $d.sm_mb -row $row -column 1 -sticky w -padx 8 -pady 3
+    incr row
+    add_tooltip $d.sm_mb "Average the surface over neighbouring frames. Follow VMD uses the\
+        trajectory smoothing window of the shown representations. Numbers stay per frame."
+    set ::VMDHole::_settings_d $d
+    _update_mesher_rows
+
+    # Radius file kept last: it's the field a user edits least often (only to add
+    # a missing VDWR entry), so it sits at the bottom of the binaries section.
     label $d.hole_l -text "HOLE exe"
     entry $d.hole_e -textvariable ::VMDHole::state(hole_exec) -width 26
     # Browse + a COMPACT acceleration indicator on the same row (no separate
@@ -19758,13 +21002,14 @@ proc ::VMDHole::show_settings_dialog {} {
     grid $d.tri_bb -row $row -column 2 -sticky w -padx 8 -pady 3
     incr row
     bind $d.tri_e <FocusOut> "+[list ::VMDHole::update_hydro_fast_status $d 1]"
-    add_tooltip $d.tri_bb.acc "Use the fast surface/recolor features of this sos_triangle when available. Green = available; gray = a standard build (works, just slower). Untick to force the standard path."
+    add_tooltip $d.tri_bb.acc "Green: VMDHole build detected. Untick to force the stock path."
+
     ::VMDHole::update_hydro_fast_status $d
 
     # MOLE has one implementation, not an accelerated/stock pair like the three
     # binaries above, so this row gets a detected/not-detected status label,
     # same short style as the accel checkbuttons. Blank entry = auto-resolve
-    # (sibling of sos_triangle, then PATH) - see _mole_engine_path, which this
+    # (sibling of sos_triangle, then PATH) - see tool_path, which this
     # status mirrors exactly; init_executables backfills this field the same
     # way it does sph_process/sos_triangle, so it's rarely blank in practice.
     label $d.mole_l -text "MOLE tunnel engine"
@@ -19782,9 +21027,6 @@ proc ::VMDHole::show_settings_dialog {} {
     bind $d.mole_bb.status <Enter> "+[list ::VMDHole::_mole_engine_tip_show %W]"
     bind $d.mole_bb.status <Leave> "+::VMDHole::_tooltip_cancel"
     ::VMDHole::update_mole_engine_status $d
-
-    # Radius file kept last: it's the field a user edits least often (only to add
-    # a missing VDWR entry), so it sits at the bottom of the binaries section.
     label $d.rad_l -text "Radius file"
     entry $d.rad_e -textvariable ::VMDHole::state(radius_file) -width 32
     frame $d.rad_btns
@@ -19796,7 +21038,7 @@ proc ::VMDHole::show_settings_dialog {} {
     grid $d.rad_e -row $row -column 1 -sticky w -padx 8 -pady 3
     grid $d.rad_btns -row $row -column 2 -sticky w -padx 8 -pady 3
     incr row
-    add_tooltip $d.rad_btns.open "Opens the .rad file in your system's default handler, so you can add a missing VDWR entry - e.g. VDWR F??? ??? 1.47 for a non-standard fluorinated residue."
+    add_tooltip $d.rad_btns.open "Open the .rad file to add a missing VDWR entry."
 
     frame $d.btns
     button $d.btns.save  -text "Save Settings" -command ::VMDHole::save_config
@@ -19832,34 +21074,34 @@ proc ::VMDHole::show_hole_params_settings {} {
     # numeric cards sit 3-per-row; IGNORE / Extra cards need a wide entry for their
     # text lists, so they span all three columns below.
     frame $d.hp
-    grid columnconfigure $d.hp 0 -minsize 88
-    grid columnconfigure $d.hp 2 -minsize 88
-    grid columnconfigure $d.hp 4 -minsize 88
+    grid columnconfigure $d.hp 0 -minsize 78
+    grid columnconfigure $d.hp 2 -minsize 78
+    grid columnconfigure $d.hp 4 -minsize 78
     grid [label $d.hp.er_l -text "ENDRAD (Å)" -anchor w]                          -row 0 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.er_e -textvariable ::VMDHole::state(endrad) -width 7]           -row 0 -column 1 -sticky w -padx {4 20}
+    grid [entry $d.hp.er_e -textvariable ::VMDHole::state(endrad) -width 7]           -row 0 -column 1 -sticky w -padx {4 8}
     grid [label $d.hp.sa_l -text "SAMPLE" -anchor w]                                  -row 0 -column 2 -sticky w
-    grid [entry $d.hp.sa_e -textvariable ::VMDHole::state(sample) -width 7]           -row 0 -column 3 -sticky w -padx {4 20}
-    grid [label $d.hp.dd_l -text "Dot density" -anchor w]                             -row 0 -column 4 -sticky w
-    grid [entry $d.hp.dd_e -textvariable ::VMDHole::state(dot_density) -width 7]      -row 0 -column 5 -sticky w -padx {4 0}
-    grid [label $d.hp.sh_l -text "SHORTO" -anchor w]                                  -row 1 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.sh_e -textvariable ::VMDHole::state(shorto) -width 7]           -row 1 -column 1 -sticky w -padx {4 20}
-    grid [label $d.hp.rs_l -text "Random seed" -anchor w]                             -row 1 -column 2 -sticky w
-    grid [entry $d.hp.rs_e -textvariable ::VMDHole::state(random_seed) -width 7]      -row 1 -column 3 -sticky w -padx {4 20}
-    # Monte Carlo search controls. Grouped with the other numeric cards because
-    # that is what they are; blank = HOLE's own default.
-    grid [label $d.hp.ms_l -text "MC steps" -anchor w]                                -row 2 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ms_e -textvariable ::VMDHole::state(mcstep) -width 7]           -row 2 -column 1 -sticky w -padx {4 20}
-    grid [label $d.hp.md_l -text "MC step size" -anchor w]                            -row 2 -column 2 -sticky w
-    grid [entry $d.hp.md_e -textvariable ::VMDHole::state(mcdisp) -width 7]           -row 2 -column 3 -sticky w -padx {4 20}
-    grid [label $d.hp.mk_l -text "MC kT" -anchor w]                                   -row 2 -column 4 -sticky w
-    grid [entry $d.hp.mk_e -textvariable ::VMDHole::state(mckt) -width 7]             -row 2 -column 5 -sticky w -padx {4 0}
-    grid [label $d.hp.ig_l -text "IGNORE" -anchor w]                                  -row 3 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ig_e -textvariable ::VMDHole::state(ignore) -width 40]          -row 3 -column 1 -columnspan 5 -sticky w -padx {4 0}
-    grid [label $d.hp.ex_l -text "Extra HOLE cards" -anchor w]                        -row 4 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ex_e -textvariable ::VMDHole::state(extra_cards) -width 40]     -row 4 -column 1 -columnspan 5 -sticky w -padx {4 0}
+    grid [entry $d.hp.sa_e -textvariable ::VMDHole::state(sample) -width 7]           -row 0 -column 3 -sticky w -padx {4 8}
+    grid [label $d.hp.ig_l -text "IGNORE" -anchor w]                                  -row 1 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.ig_e -textvariable ::VMDHole::state(ignore) -width 40]          -row 1 -column 1 -columnspan 5 -sticky w -padx {4 0}
+    # Rows a choice enables come AFTER the choice: the Monte Carlo rows and
+    # HOLE's own cards (seed, SHORTO, extra cards) follow the Search picker and
+    # show for Monte Carlo only; Nelder-Mead is deterministic, prints nothing
+    # of HOLE's and takes no cards (_update_search_rows).
+    grid [label $d.hp.ms_l -text "MC steps" -anchor w]                                -row 4 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.ms_e -textvariable ::VMDHole::state(mcstep) -width 7]           -row 4 -column 1 -sticky w -padx {4 8}
+    grid [label $d.hp.md_l -text "MC step size" -anchor w]                            -row 4 -column 2 -sticky w
+    grid [entry $d.hp.md_e -textvariable ::VMDHole::state(mcdisp) -width 7]           -row 4 -column 3 -sticky w -padx {4 8}
+    grid [label $d.hp.mk_l -text "MC kT" -anchor w]                                   -row 4 -column 4 -sticky w
+    grid [entry $d.hp.mk_e -textvariable ::VMDHole::state(mckt) -width 7]             -row 4 -column 5 -sticky w -padx {4 0}
+    grid [label $d.hp.rs_l -text "Random seed" -anchor w]                             -row 5 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.rs_e -textvariable ::VMDHole::state(random_seed) -width 7]      -row 5 -column 1 -sticky w -padx {4 8}
+    grid [label $d.hp.sh_l -text "SHORTO" -anchor w]                                  -row 5 -column 2 -sticky w
+    grid [entry $d.hp.sh_e -textvariable ::VMDHole::state(shorto) -width 7]           -row 5 -column 3 -sticky w -padx {4 8}
+    grid [label $d.hp.ex_l -text "Extra HOLE cards" -anchor w]                        -row 6 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.ex_e -textvariable ::VMDHole::state(extra_cards) -width 40]     -row 6 -column 1 -columnspan 5 -sticky w -padx {4 0}
     # Pore-detection method: pick Spherical (default plain HOLE) / Connolly /
     # Capsule instead of typing a card. Sets pore_method (see write_control_file).
-    grid [label $d.hp.pm_l -text "Pore method" -anchor w]                             -row 5 -column 0 -sticky w -pady 3
+    grid [label $d.hp.pm_l -text "Pore method" -anchor w]                             -row 2 -column 0 -sticky w -pady 3
     menubutton $d.hp.pm_mb -textvariable ::VMDHole::state(pore_method_disp) \
         -relief raised -width 10 -anchor w -indicatoron 1 -menu $d.hp.pm_mb.m
     menu $d.hp.pm_mb.m -tearoff 0
@@ -19867,15 +21109,40 @@ proc ::VMDHole::show_hole_params_settings {} {
         $d.hp.pm_mb.m add command -label $_pmd \
             -command [list ::VMDHole::_set_pore_method $_pmv $_pmd]
     }
-    grid $d.hp.pm_mb -row 5 -column 1 -columnspan 3 -sticky w -padx {4 0}
-    checkbutton $d.hp.ctrim_c -text "Trim to pore span" \
-        -variable ::VMDHole::state(conn_trim_escaped)
-    grid $d.hp.ctrim_c -row 6 -column 0 -columnspan 2 -sticky w -pady 2
-    add_tooltip $d.hp.ctrim_c "Cuts the Connolly surface back to the traced pore. Axial only - it does not remove sideways spill."
-
+    grid $d.hp.pm_mb -row 2 -column 1 -sticky w -padx {4 20}
+    grid [label $d.hp.se_l -text "Search" -anchor w]                                -row 2 -column 2 -sticky w
+    switch -- $state(search_engine) {
+        nm      { set state(search_engine_disp) "Nelder-Mead" }
+        default { set state(search_engine_disp) "Monte Carlo" }
+    }
+    menubutton $d.hp.se_mb -textvariable ::VMDHole::state(search_engine_disp) \
+        -relief raised -width 12 -anchor w -indicatoron 1 -menu $d.hp.se_mb.m
+    menu $d.hp.se_mb.m -tearoff 0
+    foreach {_sev _sed} {mc {Monte Carlo} nm Nelder-Mead} {
+        $d.hp.se_mb.m add command -label $_sed \
+            -command [list ::VMDHole::_set_search_engine $_sev $_sed]
+    }
+    grid $d.hp.se_mb -row 2 -column 3 -sticky w -padx {4 8}
+    add_tooltip $d.hp.se_mb "Monte Carlo: HOLE\'s annealing, with the rows below. Nelder-Mead: deterministic and\
+        faster; no seed, SHORTO or extra cards (an extra card switches the run back to HOLE)."
+    grid [label $d.hp.ce_l -text "Connolly surface" -anchor w] -row 3 -column 4 -sticky w
+    switch -- $state(conn_engine) {
+        fast    { set state(conn_engine_disp) "Fast port" }
+        default { set state(conn_engine_disp) "HOLE conn" }
+    }
+    menubutton $d.hp.ce_mb -textvariable ::VMDHole::state(conn_engine_disp) \
+        -relief raised -width 10 -anchor w -indicatoron 1 -menu $d.hp.ce_mb.m
+    menu $d.hp.ce_mb.m -tearoff 0
+    foreach {_cev _ced} {hole {HOLE conn} fast {Fast port}} {
+        $d.hp.ce_mb.m add command -label $_ced -command [list ::VMDHole::_set_conn_engine $_cev $_ced]
+    }
+    grid $d.hp.ce_mb -row 3 -column 5 -sticky w -padx {4 0}
+    add_tooltip $d.hp.ce_mb "HOLE\'s conn, or the nm_search port of it: same dots, faster. Nelder-Mead always uses the port."
+    set ::VMDHole::_hp_frame $d.hp
+    after idle ::VMDHole::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
         -variable ::VMDHole::state(conn_pore_gate)
-    grid $d.hp.cgate_c -row 6 -column 2 -columnspan 2 -sticky w -pady 2
+    grid $d.hp.cgate_c -row 3 -column 2 -columnspan 2 -sticky w -pady 2
     add_tooltip $d.hp.cgate_c "Drops the Connolly volume that escapes sideways through openings, keeping the pore. Its Margin lives on the main panel, next to Show nearby."
     # Margin itself is NOT here - it moved to the main panel's color row, in
     # front of Color, because it governs what pore_lat/pore_lobes SHOW and is
@@ -19902,8 +21169,6 @@ proc ::VMDHole::show_hole_params_settings {} {
         reaches it is not stored. Required; pre-filled with HOLE's own default, 15."
     add_tooltip $d.hp.sa_e "Distance between successive search planes along the channel axis, in Å.\
         Required; pre-filled with HOLE's own default, 0.25."
-    add_tooltip $d.hp.dd_e "Dot density used to sample the Connolly surface. Required; pre-filled\
-        with this plugin's own default, 15 (HOLE's own default is 10)."
     add_tooltip $d.hp.sh_e "How much HOLE prints to the console: 0 = everything. Must be 0, 1 or 2\
         here - HOLE itself also accepts 3, but this plugin's profile plot needs the radius table\
         that 2 or higher omits. Required; pre-filled with 1."
@@ -19915,10 +21180,10 @@ proc ::VMDHole::show_hole_params_settings {} {
     label $d.pb_hdr -text "Playback & session" -font {Helvetica 9 bold}
     grid $d.pb_hdr -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady {12 2}
     incr row
-    checkbutton $d.prebuild_c \
-        -text "Pre-build all surfaces after a run (smoother scrubbing, slower for big trajectories)" \
+    checkbutton $d.prebuild_c -text "Pre-build all surfaces after a run" \
         -variable ::VMDHole::state(prebuild_surfaces)
     grid $d.prebuild_c -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 3
+    add_tooltip $d.prebuild_c "Smoother scrubbing; slower right after a run on a big trajectory."
     incr row
     frame $d.oc2
     checkbutton $d.oc2.keep_c -text "Keep visualization on close" -variable ::VMDHole::state(keep_visualization)
@@ -19928,17 +21193,6 @@ proc ::VMDHole::show_hole_params_settings {} {
     add_tooltip $d.oc2.keeppdb_c "Uncheck to save disk space - surfaces still redraw fine from the .sph file."
     grid $d.oc2 -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 3
     incr row
-    frame $d.pb
-    grid columnconfigure $d.pb 0 -minsize 88
-    grid [label $d.pb.ds_l -text "Playback triangles" -anchor w]                     -row 0 -column 0 -sticky w -pady 3
-    grid [entry $d.pb.ds_e -textvariable ::VMDHole::state(draft_stride) -width 7]    -row 0 -column 1 -sticky w -padx {4 20}
-    grid [label $d.pb.cd_l -text "Playback mesh (Connolly)" -anchor w]               -row 0 -column 2 -sticky w
-    grid [entry $d.pb.cd_e -textvariable ::VMDHole::state(conn_draft_dotden) -width 7] -row 0 -column 3 -sticky w -padx {4 0}
-    grid $d.pb -row $row -column 0 -columnspan 3 -sticky w -padx 8
-    incr row
-    add_tooltip $d.pb.cd_e "Dot density the CONNOLLY surface is BUILT at while scrubbing or playing - only matters for a frame with no surface yet. Other pore methods ignore it. Never exceeds the HOLE gear's Dot density."
-    add_tooltip $d.pb.ds_e "Draws every Nth triangle of the surface that already exists, while scrubbing or playing. Any pore method. Full detail when motion stops."
-
     grid [_settings_btn_row $d] -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady {10 10}
     incr row
     _center_toplevel $d
@@ -20490,7 +21744,7 @@ proc ::VMDHole::_about_fill_guide {t version} {
     $t insert end "radius binned by position along the channel, pooled over the selected frames - NOT a distribution of per-frame minimum radii.\n"
     $t insert end "Hydration      " mono
     $t insert end "from an explicit-water trajectory, the water density and free energy G(z) = -kT ln(rho/rho_bulk) along the axis. High G(z) means water is depleted (a dry, hydrophobic gate); low or negative means water is enriched. rho_bulk is MEASURED from your own trajectory (reported in the VMD console), not assumed, so it reflects your water model and conditions; if the system has too little free water to measure, the plugin says so and falls back to 0.0334 A^-3.\n"
-    $t insert end "Ion Flow       " mono
+    $t insert end "Ion & Water    " mono
     $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions. Species lists each ion type plus Water (one oxygen per molecule, the Hydration tab's water selection); All is the ion types together, never water. Views: Occupancy %, Passage (one line per molecule that entered; constriction crossings coloured by direction, red up / blue down, drawn on top) and Count vs frame (molecules inside the pore per frame).\n\n"
 
     $t insert end "Channel shape beyond a circle\n" h2
@@ -20536,7 +21790,7 @@ proc ::VMDHole::_about_fill_guide {t version} {
     $t insert end "For trajectories, matching compares route geometry between frames. Align trajectory is enabled by default in Tunnel mode; turn it off only when the loaded frames are already aligned.\n\n"
 
     $t insert end "The analysis tabs, in Tunnel mode\n" h2
-    $t insert end "Pore Profile, Trends, Over Time, Mean Profile and Histogram are the SAME tabs HOLE mode uses, reading the currently SELECTED route instead of a HOLE run - Export on each writes tunnel-specific data (e.g. distance from the route's own bottleneck, not a fixed channel coordinate). Ion Flow also works on a route's own centreline. Ellipse fit and G (ellipse) conductance are HOLE-only (no per-slice centre to fit against) and stay disabled here.\n\n"
+    $t insert end "Pore Profile, Trends, Over Time, Mean Profile and Histogram are the SAME tabs HOLE mode uses, reading the currently SELECTED route instead of a HOLE run - Export on each writes tunnel-specific data (e.g. distance from the route's own bottleneck, not a fixed channel coordinate). Ion & Water also works on a route's own centreline. Ellipse fit and G (ellipse) conductance are HOLE-only (no per-slice centre to fit against) and stay disabled here.\n\n"
     $t insert end "Over Time's \"Color by\" offers Property here as well as Radius. Which property is the one already chosen for this route in the tunnel list (its own gear override, else the header's), so the map, the 3D route and Pore Profile's Fill always show the same scale - there is no separate property picker on this row. It needs no Compute click: unlike HOLE mode, MOLE emits every frame's lining with the tunnels themselves.\n\n"
     $t insert end "Mean Profile averages the selected route over every frame it was found in, and its IsoSurface builds a real 3D tube from those frames' own centrelines - an AVERAGE, not a measured route, which the tube's name in VMD's molecule list says outright. It can be property-colored like any other tunnel surface: the value at each point along it is that point's trajectory-mean lining property, the same numbers the Fill under the curve is drawn from.\n\n"
     $t insert end "A column or frame with no data is drawn as \"no data\" grey rather than as a number - a frame the route is absent from is not a zero-radius frame.\n\n"
@@ -20759,6 +22013,7 @@ proc ::VMDHole::close_gui {} {
     variable state
     variable current_surface_mol
     variable results
+    _csg_server_close
     # Cancel any pending GUI-apply idle callbacks so a deferred handler can't fire
     # against the just-destroyed window (display/material re-apply, surface prebuild,
     # prewarm). The per-frame settle/scrub afters ARE torn down by remove_frame_trace
@@ -20774,6 +22029,7 @@ proc ::VMDHole::close_gui {} {
     # pumping against a destroyed window and VMD will not exit - reported as
     # "the vmdhole closed but I had to close the vmd terminal".
     catch {set state(abort_requested) 1}
+    catch {_drop_owned_reps}
     variable playing
     set playing 0
     foreach _av {display_apply_after prebuild_after material_after prewarm_after play_watchdog_after} {
@@ -22528,6 +23784,292 @@ proc ::VMDHole::_set_point_to_view_center {key label} {
 proc ::VMDHole::use_view_center {} { _set_point_to_view_center cpoint CPOINT }
 proc ::VMDHole::tunnel_use_view_center {} { _set_point_to_view_center tunnel_start "Tunnel start point" }
 
+# ---- On-screen CPOINT/CVECT control: a draggable "stick" plus step buttons --
+# Moves the point/direction in SCREEN-relative directions (up/down/left/right
+# as drawn), not fixed world axes, so dragging "up" always moves the same way
+# on screen no matter how the user has rotated the molecule. The trick: a
+# rotation matrix's ROWS are the model-space directions that the eye's own
+# right/up/toward axes point along (R is orthogonal, so the model-space
+# vector that rotates TO eye-space (1,0,0) is R^T*(1,0,0), which is R's first
+# ROW - see the comment on _view_right_up). Re-read every drag/click so a
+# rotation mid-drag is honoured immediately, not just at dialog-open time.
+proc ::VMDHole::_view_right_up {molid} {
+    set right {1.0 0.0 0.0}; set up {0.0 1.0 0.0}
+    catch {
+        set rm [lindex [molinfo $molid get rotate_matrix] 0]
+        set r0 [lindex $rm 0]; set r1 [lindex $rm 1]
+        set right [lrange $r0 0 2]; set up [lrange $r1 0 2]
+    }
+    set right [_normalize_dir $right]; if {$right eq {}} { set right {1.0 0.0 0.0} }
+    set up    [_normalize_dir $up];    if {$up    eq {}} { set up    {0.0 1.0 0.0} }
+    return [concat $right $up]
+}
+
+# The three things the stick can move, and the cue that belongs to each.
+proc ::VMDHole::_axis_stick_key {mode} {
+    return [expr {$mode eq "tunnel_start" ? "tunnel_start" : ($mode eq "cvect" ? "cvect" : "cpoint")}]
+}
+proc ::VMDHole::_axis_stick_cue_key {mode} {
+    return [expr {$mode eq "tunnel_start" ? "show_tunnel_start_marker" : "show_cpoint_marker"}]
+}
+proc ::VMDHole::_axis_stick_is_dir {mode} { return [expr {$mode eq "cvect"}] }
+
+proc ::VMDHole::_axis_stick_current {mode} {
+    # The point/direction as three literal numbers, resolving CPOINT's other
+    # normal form (a VMD atom selection) once, since the stick moves it by
+    # arithmetic from here on - exactly what typing over the selection by hand
+    # would do. Blank CVECT defaults to the Z axis, matching "Set to Z".
+    variable state
+    if {![_axis_stick_is_dir $mode]} {
+        set key [_axis_stick_key $mode]
+        set molid ""; catch {set molid [resolve_molid]}
+        if {$molid eq ""} { return {} }
+        set frame 0; catch {set frame [molinfo $molid get frame]}
+        set pt {}
+        if {[catch {set pt [_resolve_point_input $state($key) $molid $frame]}] || [llength $pt] != 3} {
+            return {}
+        }
+        return $pt
+    }
+    set u [_normalize_dir $state(cvect)]
+    if {$u eq {}} { set u {0.0 0.0 1.0} }
+    return $u
+}
+
+proc ::VMDHole::_axis_stick_apply {mode dx dy dz} {
+    # Add a screen-relative displacement (dx dy dz, already in world units) to
+    # CPOINT, or tilt CVECT by it and renormalize. Redraws the CPOINT/CVECT cue
+    # immediately, which is the point of a control meant to be watched live.
+    variable state
+    set cur [_axis_stick_current $mode]
+    if {$cur eq {}} { return }
+    lassign $cur cx cy cz
+    set key [_axis_stick_key $mode]
+    if {![_axis_stick_is_dir $mode]} {
+        set state($key) [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
+    } else {
+        set nv [_normalize_dir [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
+        if {$nv ne {}} { set state(cvect) [format_triplet $nv] }
+    }
+    catch {_sync_point_marker [_axis_stick_key $mode] [_axis_stick_cue_key $mode]}
+}
+
+proc ::VMDHole::_axis_stick_nudge {mode dir} {
+    # dir: right left up down. One step in the CURRENT screen orientation.
+    variable state
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return }
+    lassign [_view_right_up $molid] rx ry rz ux uy uz
+    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect) : $state(axis_stick_step_cpoint)}]
+    if {![string is double -strict $step]} { set step 1.0 }
+    switch -- $dir {
+        right { _axis_stick_apply $mode [expr {$rx*$step}] [expr {$ry*$step}] [expr {$rz*$step}] }
+        left  { _axis_stick_apply $mode [expr {-$rx*$step}] [expr {-$ry*$step}] [expr {-$rz*$step}] }
+        up    { _axis_stick_apply $mode [expr {$ux*$step}] [expr {$uy*$step}] [expr {$uz*$step}] }
+        down  { _axis_stick_apply $mode [expr {-$ux*$step}] [expr {-$uy*$step}] [expr {-$uz*$step}] }
+    }
+}
+
+proc ::VMDHole::_axis_stick_drag_start {d x y} {
+    variable _axis_stick_last
+    set _axis_stick_last [list $x $y]
+}
+
+proc ::VMDHole::_axis_stick_drag_motion {d x y} {
+    # Incremental screen delta since the LAST motion event (not from the pad's
+    # centre) - a trackpad, not a rate joystick: drag far in one gesture and
+    # the point keeps moving with the finger, no separate hold-to-repeat timer
+    # needed. The knob itself is drawn clamped to the pad's radius, for the
+    # "stick" look; only the raw delta drives the actual displacement.
+    variable state
+    variable _axis_stick_last
+    if {![info exists _axis_stick_last]} { set _axis_stick_last [list $x $y] }
+    lassign $_axis_stick_last lx ly
+    set dxpix [expr {$x-$lx}]; set dypix [expr {$y-$ly}]
+    set _axis_stick_last [list $x $y]
+    set cx 70; set cy 70; set r 52
+    set kx [expr {$x-$cx}]; set ky [expr {$y-$cy}]
+    set kd [expr {sqrt($kx*$kx+$ky*$ky)}]
+    if {$kd > $r} { set kx [expr {$kx*$r/$kd}]; set ky [expr {$ky*$r/$kd}] }
+    catch {$d.pad.canv coords knob [expr {$cx+$kx-8}] [expr {$cy+$ky-8}] [expr {$cx+$kx+8}] [expr {$cy+$ky+8}]}
+    if {$dxpix == 0 && $dypix == 0} { return }
+    set mode $state(axis_stick_mode)
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return }
+    lassign [_view_right_up $molid] rx ry rz ux uy uz
+    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect) : $state(axis_stick_step_cpoint)}]
+    if {![string is double -strict $step]} { set step 1.0 }
+    set sens [expr {$step/30.0}]
+    # Canvas y grows downward, so screen "up" is a NEGATIVE canvas dy.
+    set wx [expr {$dxpix*$sens*$rx - $dypix*$sens*$ux}]
+    set wy [expr {$dxpix*$sens*$ry - $dypix*$sens*$uy}]
+    set wz [expr {$dxpix*$sens*$rz - $dypix*$sens*$uz}]
+    _axis_stick_apply $mode $wx $wy $wz
+}
+
+proc ::VMDHole::_axis_stick_drag_end {d} {
+    variable _axis_stick_last
+    catch {unset _axis_stick_last}
+    catch {$d.pad.canv coords knob 62 62 78 78}
+}
+
+proc ::VMDHole::_axis_stick_sync_mode {d} {
+    variable state
+    set m $state(axis_stick_mode)
+    set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT (direction)" tunnel_start "Tunnel start point"} $m]
+    catch {$d.hdr configure -text "Moving: $lbl"}
+    catch {$d.step_l configure -text [expr {[_axis_stick_is_dir $m] ? "Step (tilt)" : "Step"}]}
+    catch {$d.step_e configure -textvariable ::VMDHole::state(axis_stick_step_[expr {[_axis_stick_is_dir $m] ? "cvect" : "cpoint"}])}
+    # Per-frame handling belongs to the thing being moved: CPOINT carries
+    # Track/Stabilize, CVECT its own Stabilize/Exact pair, the tunnel start
+    # point neither - so the choice sits with the point it governs.
+    catch {
+        if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
+        if {$m eq "cvect"}  { grid $d.pf.cv } else { grid remove $d.pf.cv }
+        if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
+    }
+    _axis_stick_sync_val_label $d
+}
+
+proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
+    # One control for both fields: a mode switch (Point/Vector) plus a
+    # draggable pad and four step buttons that always move the point/direction
+    # in the CURRENT screen's up/down/left/right, whatever the model's own
+    # rotation is - see _view_right_up. Reopening while already open just
+    # re-targets it, so the CPOINT and CVECT buttons can share one dialog.
+    variable w
+    variable state
+    if {$mode ne ""} { set state(axis_stick_mode) $mode }
+    set d "$w.axisstick"
+    variable _axis_stick_prev_cue
+    if {![winfo exists $d] || [wm state $d] eq "withdrawn"} {
+        # The cue is shown while the stick is open and put back the way it was
+        # when the stick closes.
+        variable _axis_stick_cue_var
+        set _axis_stick_cue_var [_axis_stick_cue_key $state(axis_stick_mode)]
+        set _axis_stick_prev_cue [expr {[info exists state($_axis_stick_cue_var)] ? $state($_axis_stick_cue_var) : 0}]
+    }
+    if {[winfo exists $d]} {
+        set state([_axis_stick_cue_key $state(axis_stick_mode)]) 1
+        _axis_stick_sync_mode $d
+        wm deiconify $d; raise $d
+        return
+    }
+    toplevel $d
+    wm withdraw $d
+    wm title $d "Move CPOINT / CVECT"
+    wm resizable $d 0 0
+    label $d.hdr -font {Helvetica 9 bold}
+    grid $d.hdr -row 0 -column 0 -columnspan 3 -sticky w -padx 10 -pady {10 4}
+    radiobutton $d.m_cp -text "CPOINT" -variable ::VMDHole::state(axis_stick_mode) -value cpoint -command [list ::VMDHole::_axis_stick_sync_mode $d]
+    radiobutton $d.m_cv -text "CVECT" -variable ::VMDHole::state(axis_stick_mode) -value cvect -command [list ::VMDHole::_axis_stick_sync_mode $d]
+    radiobutton $d.m_ts -text "Tunnel start" -variable ::VMDHole::state(axis_stick_mode) -value tunnel_start -command [list ::VMDHole::_axis_stick_sync_mode $d]
+    grid $d.m_cp -row 1 -column 0 -sticky w -padx 10
+    grid $d.m_cv -row 1 -column 1 -sticky w -padx 10
+    grid $d.m_ts -row 1 -column 2 -sticky w -padx 10
+    # Per-frame handling for whatever is being moved - the same variables and
+    # handlers the panel rows use, so the two stay in step either way.
+    frame $d.pf
+    grid $d.pf -row 6 -column 0 -columnspan 3 -sticky w -padx 10
+    frame $d.pf.cp
+    label       $d.pf.cp.l  -text "Per-frame:"
+    checkbutton $d.pf.cp.st -text "Stabilize" -variable ::VMDHole::state(stabilize_cpoint) -command [list ::VMDHole::_on_stabilize_toggled cpoint]
+    checkbutton $d.pf.cp.tk -text "Track" -variable ::VMDHole::state(track_cpoint) -command ::VMDHole::_on_track_cpoint_toggled
+    pack $d.pf.cp.l $d.pf.cp.st $d.pf.cp.tk -side left -padx {0 6}
+    grid $d.pf.cp -row 0 -column 0 -sticky w
+    frame $d.pf.cv
+    label       $d.pf.cv.l  -text "Per-frame:"
+    checkbutton $d.pf.cv.st -text "Stabilize endpoints" -variable ::VMDHole::state(stabilize_cvect) -command [list ::VMDHole::_axis_stick_cvect_excl stab]
+    checkbutton $d.pf.cv.ex -text "Exact selection" -variable ::VMDHole::state(cvect_exact) -command [list ::VMDHole::_axis_stick_cvect_excl exact]
+    pack $d.pf.cv.l $d.pf.cv.st $d.pf.cv.ex -side left -padx {0 6}
+    grid $d.pf.cv -row 0 -column 0 -sticky w
+    label $d.pf.none -text "Per-frame: the tunnel search re-runs from this point each frame." -foreground gray40 -font {Helvetica 8}
+    grid $d.pf.none -row 0 -column 0 -sticky w
+    add_tooltip $d.pf.cp.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
+    add_tooltip $d.pf.cp.tk "Moves CPOINT by the translation of a frozen patch of atoms - drift-free, rotation-blind."
+    add_tooltip $d.pf.cv.st "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
+    add_tooltip $d.pf.cv.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
+
+    frame $d.pad
+    grid $d.pad -row 2 -column 0 -columnspan 3 -pady {10 4}
+    button $d.pad.up    -text "↑" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d up]
+    button $d.pad.down  -text "↓" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d down]
+    button $d.pad.left  -text "←" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d left]
+    button $d.pad.right -text "→" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d right]
+    canvas $d.pad.canv -width 140 -height 140 -highlightthickness 0 -bg white
+    $d.pad.canv create oval 8 8 132 132 -outline gray60 -width 2
+    $d.pad.canv create line 70 8 70 132 -fill gray85
+    $d.pad.canv create line 8 70 132 70 -fill gray85
+    $d.pad.canv create oval 62 62 78 78 -fill #4a90d9 -outline "" -tags knob
+    grid $d.pad.up    -row 0 -column 1
+    grid $d.pad.left  -row 1 -column 0
+    grid $d.pad.canv  -row 1 -column 1
+    grid $d.pad.right -row 1 -column 2
+    grid $d.pad.down  -row 2 -column 1
+    add_tooltip $d.pad.canv "Drag: moves continuously in the direction you drag, relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation."
+    bind $d.pad.canv <ButtonPress-1> [list ::VMDHole::_axis_stick_drag_start $d %x %y]
+    bind $d.pad.canv <B1-Motion>     [list ::VMDHole::_axis_stick_drag_motion $d %x %y]
+    bind $d.pad.canv <ButtonRelease-1> [list ::VMDHole::_axis_stick_drag_end $d]
+
+    label $d.step_l -text "Step"
+    entry $d.step_e -width 8
+    grid $d.step_l -row 3 -column 0 -sticky e -padx 10 -pady {4 10}
+    grid $d.step_e -row 3 -column 1 -sticky w -padx 10 -pady {4 10}
+    add_tooltip $d.step_e "Distance per arrow click, and the drag sensitivity - a bigger step also makes the pad move faster per pixel dragged."
+
+    label $d.val_l -text "Value"
+    label $d.val_v -textvariable ::VMDHole::state(cpoint) -width 22 -anchor w -relief sunken
+    grid $d.val_l -row 4 -column 0 -sticky e -padx 10
+    grid $d.val_v -row 4 -column 1 -sticky w -padx 10 -pady {0 10}
+
+    button $d.close -text "Close" -command [list ::VMDHole::_axis_stick_close $d]
+    wm protocol $d WM_DELETE_WINDOW [list ::VMDHole::_axis_stick_close $d]
+    grid $d.close -row 7 -column 0 -columnspan 3 -pady {0 10}
+    grid columnconfigure $d 2 -weight 1
+    _axis_stick_sync_val_label $d
+    trace add variable ::VMDHole::state(axis_stick_mode) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    trace add variable ::VMDHole::state(cpoint) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    trace add variable ::VMDHole::state(cvect) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    bind $d <Destroy> [list ::VMDHole::_axis_stick_dialog_closed $d]
+    set state([_axis_stick_cue_key $state(axis_stick_mode)]) 1
+    _axis_stick_sync_mode $d
+    _center_toplevel $d
+}
+
+proc ::VMDHole::_axis_stick_close {d} {
+    variable state
+    variable _axis_stick_prev_cue
+    catch {wm withdraw $d}
+    variable _axis_stick_cue_var
+    if {[info exists _axis_stick_prev_cue] && [info exists _axis_stick_cue_var]} {
+        set state($_axis_stick_cue_var) $_axis_stick_prev_cue
+    }
+}
+
+proc ::VMDHole::_axis_stick_cvect_excl {which} {
+    # Stabilize and Exact are alternatives, the rule the Vector dialog applies.
+    variable state
+    if {$which eq "stab" && $state(stabilize_cvect)} { set state(cvect_exact) 0 }
+    if {$which eq "exact" && $state(cvect_exact)}    { set state(stabilize_cvect) 0 }
+}
+proc ::VMDHole::_axis_stick_nudge_cur {d dir} {
+    variable state
+    _axis_stick_nudge $state(axis_stick_mode) $dir
+}
+
+proc ::VMDHole::_axis_stick_sync_val_label {d} {
+    variable state
+    if {![winfo exists $d.val_v]} { return }
+    catch {$d.val_v configure -textvariable ::VMDHole::state([_axis_stick_key $state(axis_stick_mode)])}
+}
+proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d }
+
+proc ::VMDHole::_axis_stick_dialog_closed {d args} {
+    catch {trace remove variable ::VMDHole::state(axis_stick_mode) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+    catch {trace remove variable ::VMDHole::state(cpoint) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+    catch {trace remove variable ::VMDHole::state(cvect) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+}
+
 proc ::VMDHole::resolve_molid {} {
     variable state
     set id $state(molid)
@@ -22761,9 +24303,12 @@ proc ::VMDHole::collect_input_warnings {} {
     if {[string is integer -strict $state(shorto)] && $state(shorto) >= 2} {
         lappend warns "SHORTO = $state(shorto) makes HOLE omit the radius table that the pore-profile plot is built from, so the plot will be empty. Use SHORTO 0 or 1 to keep the in-GUI plot."
     }
+    # The 30,000-polygon ceiling is the STOCK sos_triangle's; the accelerated
+    # build allows 200,000, so warn only when the feature probe finds a stock binary.
     if {[string is integer -strict $state(dot_density)] && $state(dot_density) > 20 &&
-        $state(display_mode) in {dots triangulated wireframe}} {
-        lappend warns "Dot density = $state(dot_density) frequently exceeds sos_triangle's polygon limit, which makes the surface fail to render (the funnel disappears). 10-20 is recommended."
+        $state(display_mode) in {dots triangulated wireframe} &&
+        [llength [sos_triangle_features]] == 0} {
+        lappend warns "Dot density = $state(dot_density) can exceed the stock sos_triangle's polygon limit, which makes the surface fail to render (the funnel disappears). Use 10-20, or point Settings at the accelerated sos_triangle, whose limit is far higher."
     }
     foreach w [_ion_fallback_ambiguity_warnings] { lappend warns $w }
     return $warns
@@ -23155,8 +24700,7 @@ proc ::VMDHole::import_results_from_folder {{dialog {}}} {
         variable plot_cache
         variable plot_cache_order
         variable _surface_mismatch_warned
-        catch {array unset plot_cache}; array set plot_cache {}
-        set plot_cache_order {}
+        cache_clear plot
         set _surface_mismatch_warned 0
         set results      $imported
         set result_frames [lsort -integer -unique $imp_frames]
@@ -23179,8 +24723,7 @@ proc ::VMDHole::import_results_from_folder {{dialog {}}} {
         # signature (see _trend_series) is checked before it is trusted, so a reload
         # under different settings/re-run parameters just falls through to a fresh
         # per-metric recompute instead of serving stale data.
-        variable trend_cache
-        set trend_cache {}
+        cache_clear trend_cache
         catch {
             set _tf [file join $import_dir vmdhole_trends.dat]
             if {[file exists $_tf]} {
@@ -23627,57 +25170,17 @@ proc ::VMDHole::clear_results_for_new_settings {} {
     variable mol_results
     variable mol_result_frames
     variable hydration_data
-    variable binned_cache
-    variable hm_prop_cache
-    variable hm_bundle_cache
-    variable hm_ellipse_bundle_cache
-    variable hm_render_cache
-    variable plot_cache
-    variable plot_cache_order
-    variable sphere_hydro_values_cache
-    variable fastpath_sphere_cache
-    variable conn_site_cache
-    variable _conn_cls_memo
-    variable _conn_unroll_memo
     variable _hm_computed_scheme
     variable plot_data_version
     variable state
-    # The topology cache holds persistent atomselect HANDLES that must be
-    # deleted here too, plus three more result caches to clear.
-    variable hydro_topo_cache
-    variable sphere_atom_cache
-    variable hydro3d_props_cache
-    variable trend_cache
-    variable ion_flow_cache
     catch {clear_surface}
     set results [dict create]
     set result_frames {}
     catch {array unset mol_results};       array set mol_results {}
     catch {array unset mol_result_frames}; array set mol_result_frames {}
     set hydration_data {}
-    set binned_cache  [dict create]
-    set hm_prop_cache [dict create]
-    set hm_bundle_cache [dict create]
-    set hm_ellipse_bundle_cache [dict create]
-    set hm_render_cache {}
-    catch {array unset plot_cache};        array set plot_cache {}
-    set plot_cache_order {}
-    set sphere_hydro_values_cache [dict create]
-    set fastpath_sphere_cache [dict create]
-    # Free the persistent atomselect handles the topology cache owns before dropping it.
-    if {[info exists hydro_topo_cache]} {
-        catch {dict for {_k _td} $hydro_topo_cache { catch {[dict get $_td sel_handle] delete} }}
-    }
-    set hydro_topo_cache [dict create]
-    set sphere_atom_cache [dict create]
-    set hydro3d_props_cache [dict create]
-    if {![info exists trend_cache]} { set trend_cache {} } else { set trend_cache {} }
-    set ion_flow_cache ""
+    cache_clear run
     set _hm_computed_scheme ""
-    # Shared one-fit-per-frame ellipse cache + the assembled-asymmetry memo (both are also
-    # signature-invalidated by the plot_data_version bump below; cleared here to free the memory).
-    catch {unset ::VMDHole::_fit_cache}
-    catch {unset ::VMDHole::asym_cache}
     incr plot_data_version
     set state(selected_result_frame) {}
     catch {refresh_property_scheme_menus}
@@ -23750,7 +25253,7 @@ proc ::VMDHole::_hole_seed {} {
     return 1
 }
 
-proc ::VMDHole::write_control_file {path pdb_name sph_name {cpoint_in ""} {cvect_in ""}} {
+proc ::VMDHole::write_control_file {path pdb_name sph_name {cpoint_in ""} {cvect_in ""} {strip_conn 0}} {
     # cpoint_in / cvect_in override state(cpoint)/state(cvect) for this frame (used
     # by the per-frame dynamic-axis path); blank means "use the static value".
     variable state
@@ -23799,7 +25302,7 @@ proc ::VMDHole::write_control_file {path pdb_name sph_name {cpoint_in ""} {cvect
     # "conn 1.15 0.85"), so it never emits a duplicate.
     switch -- $state(pore_method) {
         connolly {
-            if {![_extra_cards_has_card conn] && ![_extra_cards_has_card connolly]} {
+            if {!$strip_conn && ![_extra_cards_has_card conn] && ![_extra_cards_has_card connolly]} {
                 puts $fh "conn"
             }
         }
@@ -23811,7 +25314,9 @@ proc ::VMDHole::write_control_file {path pdb_name sph_name {cpoint_in ""} {cvect
     # 2DMAPS, ...). Written verbatim, one per ';'-separated entry.
     foreach card [split $state(extra_cards) ";"] {
         set card [string trim $card]
-        if {$card ne ""} { puts $fh $card }
+        if {$card eq ""} continue
+        if {$strip_conn && [string tolower [lindex $card 0]] in {conn connolly}} continue
+        puts $fh $card
     }
     puts $fh "stop"
     close $fh
@@ -25887,8 +27392,7 @@ proc ::VMDHole::on_hydro_method_changed {args} {
     if {[info exists results]} {
         foreach f [dict keys $results] { dict set results $f asset {} }
     }
-    array unset plot_cache
-    set plot_cache_order {}
+    cache_clear plot
     # The Over Time heatmap is independent of the surface color scheme - it
     # has its own hm_prop_scheme. A pure surface-color (hydro_scheme) change
     # must not touch the heatmap's caches at all; only a LINING change
@@ -26091,10 +27595,7 @@ proc ::VMDHole::_apply_display_change_now {} {
         # The cached meshes no longer match the requested geometry/color-source.
         # Drop the in-memory parsed-plot cache and every frame's built asset so
         # each frame rebuilds to the new look the next time it is shown.
-        variable plot_cache
-        variable plot_cache_order
-        array unset plot_cache
-        set plot_cache_order {}
+        cache_clear plot
         foreach f [dict keys $results] { dict set results $f asset {} }
     }
     # Which frame to repaint: the selected result row, or - with no row selected
@@ -26315,35 +27816,6 @@ proc ::VMDHole::sos_triangle_has_feature {feat} {
     return [expr {[lsearch -exact [sos_triangle_features] $feat] >= 0}]
 }
 
-proc ::VMDHole::hydro_fast_available {} {
-    # Fast path is used when not disabled in Settings and the binary supports it.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature hydro]
-}
-
-proc ::VMDHole::dots_fast_available {} {
-    # Same toggle gates the fast dot-surface output (--points).
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature points]
-}
-
-proc ::VMDHole::ionflow_fast_available {} {
-    # The Ion Flow water pass in C (--ionflow-project), same on/off toggle as
-    # the other accelerated outputs. The Tcl loop it replaces stays as the
-    # fallback and gives bit-identical results.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature ionflowproject]
-}
-
-proc ::VMDHole::batch_fast_available {} {
-    # Batch mode: sos_triangle reads a list of (sos_file, out_file) pairs and
-    # processes them sequentially, eliminating per-frame shell-spawn overhead.
-    return [sos_triangle_has_feature batch]
-}
-
 proc ::VMDHole::write_hydro_sidecar {molid frame sph_file out_file} {
     # Dump channel-local atoms as "x y z h_kd h_ww" for the compiled coloring
     # pass. Mirrors the bbox + selection of colorize_hydrophobic so the binary
@@ -26519,77 +27991,25 @@ proc ::VMDHole::write_hydro_sidecar_batch {molid frame out_file scheme {facing 0
 proc ::VMDHole::run_sos_triangle_hydro {sos_file out_file sph_file sidecar scheme} {
     # Invoke the enhanced sos_triangle to triangulate AND color by nearest-
     # sphere hydropathy in a single compiled pass.
-    variable state
     set sph_file [_hydro_sph_for_binary $sph_file]
-    set cmd "[shell_quote $state(sos_triangle_exec)] -s \
-        --hydro-atoms [shell_quote $sidecar] \
-        --hydro-sph [shell_quote $sph_file] \
-        --hydro-scheme [shell_quote $scheme] \
-        --hydro-shell [hydro_shell_value] \
-        < [shell_quote $sos_file] > [shell_quote $out_file] 2>/dev/null"
-    catch {exec sh -c $cmd}
+    _sos_run "-s --hydro-atoms [shell_quote $sidecar] --hydro-sph [shell_quote $sph_file] \
+        --hydro-scheme [shell_quote $scheme] --hydro-shell [hydro_shell_value]" $sos_file $out_file
 }
 
 proc ::VMDHole::run_sos_triangle_points {sos_file out_file} {
     # Enhanced sos_triangle dot-surface output: emit unique vertices directly,
     # replacing the Tcl dots_from_trinorm pass.
-    variable state
-    set cmd "[shell_quote $state(sos_triangle_exec)] -s --points \
-        < [shell_quote $sos_file] > [shell_quote $out_file] 2>/dev/null"
-    catch {exec sh -c $cmd}
+    _sos_run "-s --points" $sos_file $out_file
 }
 
 proc ::VMDHole::run_sos_triangle_recolor {base_plot out_file sph_file sidecar scheme} {
     # Recolor an already-triangulated base mesh by nearest-sphere hydropathy
     # WITHOUT re-triangulating (≈10x faster than a full hydro pass; identical
     # output). Used for hydrophobicity scheme/color changes.
-    variable state
     set sph_file [_hydro_sph_for_binary $sph_file]
-    # Thread the --recolor loop (was single-threaded here; D10 - see run_sos_triangle_values_recolor).
-    set rthreads ""
-    if {[sos_triangle_has_feature recolorthreads]} { set rthreads "--recolor-threads [resolve_job_count]" }
-    set cmd "[shell_quote $state(sos_triangle_exec)] \
-        --recolor [shell_quote $base_plot] \
-        --hydro-atoms [shell_quote $sidecar] \
-        --hydro-sph [shell_quote $sph_file] \
-        --hydro-scheme [shell_quote $scheme] \
-        --hydro-shell [hydro_shell_value] $rthreads \
-        > [shell_quote $out_file] 2>/dev/null"
-    catch {exec sh -c $cmd}
-}
-
-proc ::VMDHole::recolor_fast_available {} {
-    # Fast recolor path is used when not disabled in Settings and the binary
-    # advertises the "recolor" capability.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature recolor]
-}
-
-proc ::VMDHole::batch_recolor_fast_available {} {
-    # Batched recolor: the binary's --batch-recolor mode recolors MULTIPLE
-    # frames' base meshes in one process (round-robin batched across workers by
-    # the caller), instead of spawning one --recolor process per frame - matters
-    # because each individual recolor is cheap, so per-process spawn overhead
-    # would otherwise be a large fraction of the total cost. Values-path only
-    # (see sos_triangle_fast.c); used when not disabled in Settings and the
-    # binary advertises the "batchrecolor" capability.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature batchrecolor]
-}
-
-proc ::VMDHole::values_fast_available {} {
-    # The agnostic per-sphere-values recolor path: the plugin computes ONE
-    # property value per sphere in Tcl (any scheme, any lining/facing/side-chain/
-    # residue-mean mode) and the binary just colors each vertex by its nearest
-    # sphere. Used when not disabled in Settings and the binary advertises the
-    # "values" capability. This makes EVERY scheme/mode - KR/charge/polarity/
-    # lipophilicity, pore-facing/side-chain/residue-mean included - render at
-    # compiled speed, with no slow Tcl-only color path.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [sos_triangle_has_feature values]
+    _sos_run "--recolor [shell_quote $base_plot] --hydro-atoms [shell_quote $sidecar] \
+        --hydro-sph [shell_quote $sph_file] --hydro-scheme [shell_quote $scheme] \
+        --hydro-shell [hydro_shell_value] [_sos_recolor_threads]" "" $out_file
 }
 
 proc ::VMDHole::hydro3d_fast_available {} {
@@ -26603,14 +28023,13 @@ proc ::VMDHole::hydro3d_fast_available {} {
     # axial values_fast_available path automatically).
     variable state
     if {![info exists state(hydro_3d_accurate)] || !$state(hydro_3d_accurate)} { return 0 }
-    if {$state(hydro_fast) eq "off"} { return 0 }
     # gz/dens/pfdens have no per-residue position at all (they're the separate
     # water-hydration interpolation path, a pure function of axial position). KR
     # IS supported: write_hydro3d_residue_sidecar writes one row per qualifying
     # atom for kr, which the true-3D lookup treats the same as any other
     # {x y z value} row.
     if {$state(hydro_scheme) in {gz dens pfdens esp}} { return 0 }
-    return [sos_triangle_has_feature hydro3d]
+    return [fast_available hydro3d]
 }
 
 proc ::VMDHole::hydro3d_props_fast_available {scheme} {
@@ -26624,10 +28043,8 @@ proc ::VMDHole::hydro3d_props_fast_available {scheme} {
     # hydration path), and the binary capability - callers fall back to their
     # existing path on 0. KR is supported (per-atom rows, see
     # write_hydro3d_residue_sidecar).
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
     if {$scheme in {gz dens pfdens esp}} { return 0 }
-    return [expr {[sos_triangle_has_feature hydro3dprops] && [sos_triangle_has_feature batchhydro3dprops]}]
+    return [fast_available hydro3dprops batchhydro3dprops]
 }
 
 proc ::VMDHole::_hydro3d_props_all_cached {frames scheme} {
@@ -27086,7 +28503,7 @@ proc ::VMDHole::hydro3d_lining_available {} {
     return [sos_triangle_has_feature hydro3dlining]
 }
 
-proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_override ""}} {
+proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_override ""} {fmt dat}} {
     # Write ALL channel-local atoms as "x y z value resid is_ca" for the C-side
     # pore-lining path (--hydro3d-atoms). Deliberately does NO lining test here -
     # that's the whole point (the binary does it, inside the parallel batch).
@@ -27103,7 +28520,12 @@ proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_overri
     set seltext [string trim $state(selection)]
     if {$seltext eq "" || $seltext eq "all"} { set seltext "protein" }
     set cl_sph {}
-    set fh [open [dict get $results $frame sph_file] r]
+    set _ext [_csg_sph_extent [dict get $results $frame sph_file]]
+    if {$_ext ne ""} {
+        lassign $_ext min_cx max_cx min_cy max_cy min_cz max_cz max_r
+        lappend cl_sph [list $min_cx $min_cy $min_cz $max_r]
+    }
+    set fh [open [expr {$_ext ne "" ? "/dev/null" : [dict get $results $frame sph_file]}] r]
     while {[gets $fh line] >= 0} {
         if {![string match {ATOM  *} $line] && ![string match {HETATM*} $line]} { continue }
         set cx [string trim [string range $line 30 37]]
@@ -27115,6 +28537,7 @@ proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_overri
     }
     close $fh
     if {[llength $cl_sph] < 1} { error "no centerline spheres parsed" }
+    if {$_ext eq ""} {
     set min_cx 1e20; set max_cx -1e20; set min_cy 1e20; set max_cy -1e20
     set min_cz 1e20; set max_cz -1e20; set max_r 0.0
     foreach s $cl_sph {
@@ -27124,6 +28547,7 @@ proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_overri
         if {$cz < $min_cz} { set min_cz $cz }; if {$cz > $max_cz} { set max_cz $cz }
         if {$r  > $max_r}  { set max_r  $r  }
     }
+    }
     set ext [expr {$max_r + [lining_dist_thresh_value] + 5.0}]
     set xlo [expr {$min_cx - $ext}]; set xhi [expr {$max_cx + $ext}]
     set ylo [expr {$min_cy - $ext}]; set yhi [expr {$max_cy + $ext}]
@@ -27131,6 +28555,23 @@ proc ::VMDHole::write_hydro3d_atoms_sidecar {molid frame out_file {scheme_overri
     if {[catch {atomselect $molid \
             "($seltext) and x > $xlo and x < $xhi and y > $ylo and y < $yhi and z > $zlo and z < $zhi" \
             frame $frame} sel]} { error "atomselect failed: $sel" }
+    if {$fmt eq "pdb" && !$is_kr} {
+        # One C-speed write instead of a Tcl loop over every atom: the residue
+        # value rides in the B-factor column, a 1.0 in occupancy marks the CA.
+        # The molecule's own beta/occupancy are put back afterwards.
+        set sv_beta [$sel get beta]; set sv_occ [$sel get occupancy]
+        set vals [dict create]
+        foreach rn [lsort -unique [$sel get resname]] { dict set vals $rn [residue_property $prop $rn] }
+        set bl {}; foreach rn [$sel get resname] { lappend bl [dict get $vals $rn] }
+        set ol {}; foreach nm [$sel get name] { lappend ol [expr {[string toupper $nm] eq "CA"}] }
+        $sel set beta $bl
+        $sel set occupancy $ol
+        set werr [catch {$sel writepdb $out_file} wmsg]
+        $sel set beta $sv_beta; $sel set occupancy $sv_occ
+        $sel delete
+        if {$werr} { error "writepdb failed: $wmsg" }
+        return [dict get [property_meta $prop] signed]
+    }
     set all_pos [$sel get {x y z}]
     set all_res [$sel get resname]
     set all_name [$sel get name]
@@ -27178,6 +28619,43 @@ proc ::VMDHole::hydro3d_lining_flags {scheme} {
     return "--hydro3d-lining $mode --hydro3d-facing $facing --hydro3d-thresh [lining_dist_thresh_value]"
 }
 
+# Property colouring in the mesher's own process: the same contributors, kernel
+# and ramp as sos_triangle --recolor (verified identical on every triangle), with
+# no process spawn and the mesh read once. Returns 1 when $out_file was written.
+proc ::VMDHole::_csg_recolor {base_plot out_file sph_file data_file signed lo hi atoms_mode} {
+    variable state
+    if {![info exists state(mesher)] || $state(mesher) ne "csg"} { return 0 }
+    if {[tool_path mesh_csg] eq "" || ![file exists $base_plot]} { return 0 }
+    set opts {}
+    if {$atoms_mode} {
+        set mode [expr {$state(hydro_scheme) eq "kr" ? "atom" : "residue"}]
+        set facing [expr {($mode eq "residue" && [info exists state(hydro_facing)] && $state(hydro_facing)) ? 1 : 0}]
+        lappend opts --atoms $data_file --csph $sph_file --lining $mode --facing $facing \
+            --thresh [lining_dist_thresh_value]
+    } else {
+        lappend opts --values $data_file
+    }
+    lappend opts --bandwidth [hydrophob_kde_bandwidth_value] --signed $signed
+    if {$lo ne "" && $hi ne ""} { lappend opts --range $lo $hi }
+    lappend opts {*}[_csg_mesh_opts $sph_file]
+    set n [_csg_server_mesh $base_plot $out_file [join $opts \t] recolor]
+    return [expr {$n > 0 && [surface_has_geometry $out_file]}]
+}
+
+# The centreline's bounding box and largest radius, from the mesher (a Tcl
+# line loop over a Connolly .sph was 100+ ms per frame). "" if unavailable.
+proc ::VMDHole::_csg_sph_extent {sph_file} {
+    variable state
+    if {![info exists state(mesher)] || $state(mesher) ne "csg"} { return "" }
+    if {[tool_path mesh_csg] eq "" || ![file exists $sph_file]} { return "" }
+    set spec -
+    set _mopts [_csg_mesh_opts $sph_file]
+    if {[llength $_mopts]} { append spec \t [join $_mopts \t] }
+    set r [_csg_server_mesh $sph_file - $spec extent]
+    if {[llength $r] != 7} { return "" }
+    return $r
+}
+
 proc ::VMDHole::run_sos_triangle_3d_recolor {base_plot out_file sph_file residue_file signed {lo ""} {hi ""} {atoms_mode 0}} {
     # --hydro3d-values counterpart to run_sos_triangle_values_recolor. The sidecar
     # carries RAW property values; pass the scale's real extremes via --hydro-range
@@ -27187,6 +28665,7 @@ proc ::VMDHole::run_sos_triangle_3d_recolor {base_plot out_file sph_file residue
     # pore-lining itself (--hydro3d-atoms + the lining flags), matching the props
     # path exactly so the surface and panels never diverge.
     variable state
+    if {[_csg_recolor $base_plot $out_file $sph_file $residue_file $signed $lo $hi $atoms_mode]} { return }
     set sph_file [_hydro_sph_for_binary $sph_file]
     set range ""
     if {$lo ne "" && $hi ne ""} { set range "--hydro-range $lo $hi" }
@@ -27195,26 +28674,11 @@ proc ::VMDHole::run_sos_triangle_3d_recolor {base_plot out_file sph_file residue
     } else {
         set fileflag "--hydro3d-values [shell_quote $residue_file]"
     }
-    # Single-frame recolor: let the binary use all cores for the atom-lining +
-    # per-triangle color loops (identical output, ~4x faster on a large CONNOLLY shell).
-    # The BATCH recolor modes never pass this, so their N worker processes stay
-    # 1-thread each and don't oversubscribe. Gated on the feature so an older binary
-    # (which would reject the unknown flag) is left untouched.
-    set rthreads ""
-    if {[sos_triangle_has_feature recolorthreads]} { set rthreads "--recolor-threads [resolve_job_count]" }
-    catch {exec sh -c "[shell_quote $state(sos_triangle_exec)] --recolor [shell_quote $base_plot] \
-        $fileflag \
-        --hydro3d-bandwidth [hydrophob_kde_bandwidth_value] $range $rthreads \
-        --hydro-sph [shell_quote $sph_file] --hydro-signed $signed > [shell_quote $out_file] 2>/dev/null"}
-}
-
-proc ::VMDHole::props_fast_available {} {
-    # Fast heatmap batch path: the binary computes per-sphere residue-mean values in C,
-    # one value per line, across all frames in a single process invocation.
-    # Requires the "props" and "residue" features advertised by --hole-features.
-    variable state
-    if {$state(hydro_fast) eq "off"} { return 0 }
-    return [expr {[sos_triangle_has_feature props] && [sos_triangle_has_feature residue]}]
+    # Single-frame recolor: all cores. The BATCH modes never pass this, so their
+    # N worker processes stay 1-thread each.
+    _sos_run "--recolor [shell_quote $base_plot] $fileflag \
+        --hydro3d-bandwidth [hydrophob_kde_bandwidth_value] $range [_sos_recolor_threads] \
+        --hydro-sph [shell_quote $sph_file] --hydro-signed $signed" "" $out_file
 }
 
 proc ::VMDHole::write_hydro_values_sidecar {molid frame sph_file out_file} {
@@ -27366,21 +28830,12 @@ proc ::VMDHole::run_sos_triangle_values_recolor {base_plot out_file sph_file val
     # (real units); --hydro-range gives the binary the scale's extremes so it
     # colors them into bands identically to a pre-normalized path.
     variable state
+    if {[_csg_recolor $base_plot $out_file $sph_file $values_file $signed $lo $hi 0]} { return }
     set sph_file [_hydro_sph_for_binary $sph_file]
     set range ""
     if {$lo ne "" && $hi ne ""} { set range "--hydro-range $lo $hi" }
-    # Thread the --recolor triangle-color loop (the C nearest-sphere pass, num_threads=
-    # recolor_threads - sos_triangle_fast.c:1766). Gated on the feature so an older
-    # binary is unaffected.
-    set rthreads ""
-    if {[sos_triangle_has_feature recolorthreads]} { set rthreads "--recolor-threads [resolve_job_count]" }
-    set cmd "[shell_quote $state(sos_triangle_exec)] \
-        --recolor [shell_quote $base_plot] \
-        --hydro-sph [shell_quote $sph_file] \
-        --hydro-values [shell_quote $values_file] \
-        --hydro-signed $signed $range $rthreads \
-        > [shell_quote $out_file] 2>/dev/null"
-    catch {exec sh -c $cmd}
+    _sos_run "--recolor [shell_quote $base_plot] --hydro-sph [shell_quote $sph_file] \
+        --hydro-values [shell_quote $values_file] --hydro-signed $signed $range [_sos_recolor_threads]" "" $out_file
 }
 
 proc ::VMDHole::update_hydro_fast_status {d {recheck 0}} {
@@ -27406,12 +28861,12 @@ proc ::VMDHole::update_hydro_fast_status {d {recheck 0}} {
 proc ::VMDHole::update_mole_engine_status {d} {
     # Detected/not-detected indicator for the MOLE binary row - short, same style
     # as the accel checkbuttons on the other three binary rows. The resolved path
-    # (see _mole_engine_path) is in the tooltip (mole_engine_tooltip, shown by
+    # (see tool_path) is in the tooltip (mole_engine_tooltip, shown by
     # _mole_engine_tip_show), not the label, so this row never runs long.
     variable mole_engine_tooltip
-    set p [_mole_engine_path]
+    set p [tool_path mole_engine]
     set mole_engine_tooltip [expr {$p ne "" ? "Will run: $p" \
-        : "No MOLE tunnel engine found. Set the path above, or build the native tools (sh native/build.sh) and place mole_tunnel_engine next to your other HOLE binaries."}]
+        : "Not found. Set the path, or build it with sh native/build.sh and put it next to the HOLE binaries."}]
     # Headless guard - see _have_tk.
     if {![_have_tk]} { return }
     set lbl $d.mole_bb.status
@@ -27950,6 +29405,30 @@ proc ::VMDHole::toggle_pore_lining {} {
     set state(status) "Pore lining: hidden."
 }
 
+proc ::VMDHole::_drop_owned_reps {} {
+    # The lining/facing/tunnel-lining representations live on the USER'S
+    # molecule and are recomputed per frame from the panel. Keep-visualization
+    # covers the pore SURFACE, which is a molecule of its own and costs nothing
+    # per frame; these are per-frame atom selections over the whole structure,
+    # so once the panel is gone nothing should be maintaining them - and a rep
+    # the user deleted must not come back. Removed here; the checkboxes keep
+    # their values, so reopening restores what the user had.
+    variable pore_facing_rep_idx
+    variable tunnel_lining_rep_idx
+    foreach _v {pore_facing_rep_idx tunnel_lining_rep_idx} {
+        if {![info exists [set _v]]} continue
+        set _d [set $_v]
+        if {![catch {dict size $_d}]} {
+            dict for {_mol _idx} $_d {
+                if {[catch {molinfo $_mol get numreps} _nr]} continue
+                if {[string is integer -strict $_idx] && $_idx >= 0 && $_idx < $_nr} {
+                    catch {mol delrep $_idx $_mol}
+                }
+            }
+        }
+        set $_v [dict create]
+    }
+}
 proc ::VMDHole::_show_pore_lining_rep {on {molid ""}} {
     # Show or hide the persistent pore-lining rep WITHOUT touching
     # state(show_pore_lining). The mode switch needs to hide it while leaving
@@ -28003,6 +29482,11 @@ proc ::VMDHole::update_pore_lining_rep {{verbose 0}} {
     variable state
     variable results
     variable pore_facing_rep_idx
+    # Panel-driven upkeep: these reps live on the user's molecule and are
+    # recomputed per frame, so nothing may maintain them once the panel is
+    # closed - and a rep the user deleted must not come back (close_gui drops
+    # them; the checkbox keeps its value for the next open).
+    if {![_panel_is_open]} { return }
     if {![info exists state(show_pore_lining)] || !$state(show_pore_lining)} { return }
     if {![info exists pore_facing_rep_idx]} { set pore_facing_rep_idx [dict create] }
 
@@ -28138,6 +29622,11 @@ proc ::VMDHole::update_tunnel_lining_rep {{verbose 0}} {
     variable state
     variable tunnel_lining
     variable tunnel_lining_rep_idx
+    # Panel-driven upkeep: these reps live on the user's molecule and are
+    # recomputed per frame, so nothing may maintain them once the panel is
+    # closed - and a rep the user deleted must not come back (close_gui drops
+    # them; the checkbox keeps its value for the next open).
+    if {![_panel_is_open]} { return }
     if {![info exists state(show_tunnel_lining)] || !$state(show_tunnel_lining)} { return }
     if {![info exists tunnel_lining_rep_idx]} { set tunnel_lining_rep_idx [dict create] }
     if {[catch {resolve_molid} molid] || $molid < 0} {
@@ -28287,6 +29776,11 @@ proc ::VMDHole::update_pore_facing_rep {{verbose 0}} {
     variable state
     variable results
     variable pore_facing_viz_rep_idx
+    # Panel-driven upkeep: these reps live on the user's molecule and are
+    # recomputed per frame, so nothing may maintain them once the panel is
+    # closed - and a rep the user deleted must not come back (close_gui drops
+    # them; the checkbox keeps its value for the next open).
+    if {![_panel_is_open]} { return }
     if {![info exists state(show_pore_facing)] || !$state(show_pore_facing)} { return }
     if {![info exists pore_facing_viz_rep_idx]} { set pore_facing_viz_rep_idx [dict create] }
 
@@ -29240,10 +30734,12 @@ proc ::VMDHole::surface_has_geometry {plot_file} {
     set found 0
     while {[gets $fh line] >= 0} {
         set t [string trim $line]
-        if {[string match "draw trinorm*"  $t] ||
-            [string match "draw triangle*" $t] ||
-            [string match "draw point*"    $t] ||
-            [string match "draw line*"     $t]} { set found 1; break }
+        switch -- [lindex $t 0] {
+            draw     { set kind [lindex $t 1] }
+            graphics { set kind [lindex $t 2] }
+            default  { continue }
+        }
+        if {$kind in {trinorm triangle point line}} { set found 1; break }
     }
     close $fh
     return $found
@@ -29429,11 +30925,13 @@ proc ::VMDHole::_geom_cache_recipe {} {
     # GEOMETRY but is not part of its filename - dot density, plus a token bumped
     # whenever the surface is built differently from before, so a stale cached
     # mesh (valid-looking but built the old way) is never silently reused.
-    # esc2/flare3 = Connolly axial-trim recipe versions (_trim_conn_escaped_sph,
-    # _conn_trim_escaped_enabled); the dot ceiling is included because it depends
+    # esc2/flare3 = Connolly recipe versions (the axial trim, since removed),
+    # the dot ceiling is included because it depends
     # on which sos_triangle binary is configured.
     variable state
-    return "$state(dot_density)|flare3|c[_sos_tri_dot_ceiling]"
+    set r "$state(dot_density)|flare3|c[_sos_tri_dot_ceiling]|k1"
+    if {[_csg_active]} { append r "|csg2[_csg_voxel_spec]" }
+    return $r
 }
 
 proc ::VMDHole::geom_cache_mark {plot} {
@@ -29456,9 +30954,11 @@ proc ::VMDHole::surface_cached_on_disk {run_dir sph_file mode} {
     switch -- $mode {
         centerline { return 1 }
         dots {
+            if {[_csg_can_mesh]} { return [geom_cache_valid [surface_plot_name $run_dir hole_dots dots] $sph_file] }
             return [geom_cache_valid [file join $run_dir hole_dots.vmd_plot] $sph_file]
         }
         triangulated - wireframe {
+            if {[_csg_active]} { return [geom_cache_valid [surface_plot_name $run_dir "hole_triangulated[_conn_surface_suffix]" [expr {[_csg_draw_form] ? "draw" : "mol"}]] $sph_file] }
             return [geom_cache_valid [file join $run_dir hole_triangulated[_conn_surface_suffix].vmd_plot] $sph_file]
         }
     }
@@ -29502,6 +31002,7 @@ proc ::VMDHole::_set_pore_method {val disp} {
     set state(pore_method) $val
     set state(pore_method_disp) $disp
     if {$had > 0} { clear_results_for_new_settings }
+    _update_search_rows
     # VIEW state reset to plugin defaults, same as clearing the data - a
     # property/coloring/legend choice made under the previous method is stale
     # under the new one. INPUT state (selection, CPOINT/CVECT, radii file,
@@ -29641,7 +31142,7 @@ proc ::VMDHole::_update_method_dependent_controls {} {
     set capsule  [_run_uses_card capsule]
     set est [expr {($connolly || $capsule) ? "disabled" : "normal"}]  ;# ellipse options
     # Capsule projects properties too now (per-slice, off its own stadium centre
-    # and equal-area radius - _capsule_slice_property), so nothing here is
+    # and equal-area radius - the mesher recolour), so nothing here is
     # withheld from it any more.
     set pst "normal"                                                  ;# property options
     # --- ellipse-derived options (Connolly and Capsule) ---
@@ -29665,17 +31166,11 @@ proc ::VMDHole::_update_method_dependent_controls {} {
         set state(surface_color) hole_def
         catch {set state(surface_color_disp) hole_def}
     }
-    # The ellipse RENDER picker (None / Solid surface / Point cloud) draws the fitted
-    # ellipse in 3D, so it is just as meaningless as the fit itself when there is no
-    # usable centerline to fit.
-    # The ellipse render picker goes with the fit itself.
-    if {$_ellok} {
-        catch {pack $w.plotframe.nb.profile.exportbar.ellsl -side left}
-        catch {pack $w.plotframe.nb.profile.exportbar.ellsurf -side left}
-    } else {
-        catch {pack forget $w.plotframe.nb.profile.exportbar.ellsl}
-        catch {pack forget $w.plotframe.nb.profile.exportbar.ellsurf}
-    }
+    # The Render picker has ONE owner (_update_asymmetry_controls_visibility): shown
+    # only while Ellipse fit is selected, anchored before Passability. Packing it
+    # here too showed it under every method, at the end of the row.
+    set state(_ellipse_fit_ok) $_ellok
+    _update_asymmetry_controls_visibility
     set tm $w.plotframe.nb.minr.exportbar.metric.m
     foreach lbl {"Ellipse Min R" "Ellipse Volume" "G (ellipse)" "G (ellipse, corrected)"} {
         _menu_entry_shown $tm $lbl $_ellok
@@ -29705,24 +31200,14 @@ proc ::VMDHole::_update_method_dependent_controls {} {
     _menu_entry_shown $w.plotframe.nb.heatmap.exportbar.cby.m "Property" $_propok
     _menu_entry_shown $w.plotframe.nb.mean.exportbar.sc.m "property" $_propok
     # --- display modes ---
-    # centerline: neither CONNOLLY's dense cloud nor CAPSULE's escaped-record .sph has a
-    #   clean centerline, so it is disabled for both. dots: CAPSULE has no dot cloud
-    #   either, and create_plot_asset's capsule branch renders wireframe/dots/centerline
-    #   identically - so "dots" is just a same-looking duplicate of "wireframe" under
-    #   capsule and is hidden rather than offered.
+    # centerline: CONNOLLY's dense cloud has none. Capsule HAS one - two of them,
+    #   the cap-centre tracks.
     set dm $_runpanel.mc_box.dm.m
-    # Capsule HAS a centreline - two of them, the cap-centre tracks. Only
-    # CONNOLLY's dense cloud genuinely has none.
     _menu_entry_shown $dm "centerline" [expr {!$connolly}]
-    _menu_entry_shown $dm "dots" [expr {!$capsule}]
+    _menu_entry_shown $dm "dots" 1
     if {$connolly && [info exists state(display_mode)] && $state(display_mode) eq "centerline"} {
         set state(display_mode) triangulated
         catch {set state(display_mode_disp) [display_mode_display_label triangulated]}
-        catch {apply_display_change}
-    }
-    if {$capsule && [info exists state(display_mode)] && $state(display_mode) eq "dots"} {
-        set state(display_mode) wireframe
-        catch {set state(display_mode_disp) [display_mode_display_label wireframe]}
         catch {apply_display_change}
     }
     # --- reset any now-disabled ACTIVE selection to a supported default ---
@@ -29952,13 +31437,6 @@ proc ::VMDHole::_is_large_conn_sph {sph_file} {
     return [expr {[_sph_point_count $sph_file] > [_conn_shell_threshold]}]
 }
 
-proc ::VMDHole::_conn_trim_escaped_enabled {} {
-    # User knob, default off. It cuts the mouth flares off with the bulk spill and
-    # can leave a lone escaped sphere floating, which is why it is not the default.
-    variable state
-    return [expr {[info exists state(conn_trim_escaped)] && $state(conn_trim_escaped) ? 1 : 0}]
-}
-
 proc ::VMDHole::_conn_pore_margin {} {
     # How far past the pore wall a CONNOLLY dot may sit and still count as pore.
     variable state
@@ -30015,24 +31493,28 @@ proc ::VMDHole::_draw_opening_marks {cv runs cmin cmax ml mt pw ph swap} {
 }
 
 proc ::VMDHole::_update_conn_controls {} {
-    # The trim and the sideways gate only mean anything for a CONNOLLY cloud, so
-    # they are hidden AND disabled for every other method. Called from the HOLE
-    # gear's own build and from _update_method_dependent_controls, so it is right
-    # whichever happens first. Every op is catch-guarded: the dialog may not exist.
     variable w
-    set d $w.hole_params_settings
-    if {![winfo exists $d]} { return }
+    variable _settings_d
     set on [expr {[_run_uses_card conn] || [_run_uses_card connolly]}]
     set st [expr {$on ? "normal" : "disabled"}]
-    foreach _c {ctrim_c cgate_c} {
-        catch {$d.hp.$_c configure -state $st}
-        if {$on} { catch {grid $d.hp.$_c} } else { catch {grid remove $d.hp.$_c} }
+    set d $w.hole_params_settings
+    if {[winfo exists $d]} {
+        catch {$d.hp.cgate_c configure -state $st}
+        if {$on} { catch {grid $d.hp.cgate_c} } else { catch {grid remove $d.hp.cgate_c} }
     }
-    # "Playback mesh (Connolly)" sets the dot density a CONNOLLY surface is built
-    # at while scrubbing; every other method ignores the value entirely.
-    foreach _c {cd_l cd_e} {
-        catch {$d.pb.$_c configure -state $st}
-        if {$on} { catch {grid $d.pb.$_c} } else { catch {grid remove $d.pb.$_c} }
+    # The Connolly playback-density knob sits with the other sos_triangle rows
+    # in Settings, after the mesher.
+    # The Connolly playback-density entry sits on the mesher row with the other
+    # sos_triangle knobs, and is Connolly-only within it (pack, not grid).
+    if {[info exists _settings_d] && [winfo exists $_settings_d.ms_dd]} {
+        foreach _c {l3 e3} {
+            catch {$_settings_d.ms_dd.$_c configure -state $st}
+            if {$on} {
+                catch {pack $_settings_d.ms_dd.$_c -side left -padx {0 4}}
+            } else {
+                catch {pack forget $_settings_d.ms_dd.$_c}
+            }
+        }
     }
 }
 
@@ -30780,7 +32262,7 @@ proc ::VMDHole::_conn_lobes_tag {} {
     # of the per-region plots, and those went from standalone meshes to slices of
     # one union mesh. Without it a prior run directory keeps serving sealed lobes.
     append sig "u1,"
-    if {$sig eq ""} { return "[_conn_margin_tag]_u1" }
+    if {$sig eq ""} { return "[_conn_margin_tag]_u2" }
     # A short digest, so the name stays a filename with 10+ openings.
     set h 0
     foreach c [split $sig ""] {
@@ -31567,7 +33049,43 @@ proc ::VMDHole::_conn_region_dotden {dotden medr refr} {
     return $dd
 }
 
+# Native triangle-to-region split: write one small label .sph per region
+# (the "lines" this call already has in memory - not the mesh-building rsph,
+# which for "pore" also carries the centreline/escape KEEP points and would
+# wrongly pull triangles toward them), run conn_lobes split once, clean the
+# label files up. Returns -1 (never a partial/wrong split) on anything that
+# stops it short of the engine's own triangle count, so the caller re-runs
+# the pure-Tcl version instead of trusting a half-finished result.
+proc ::VMDHole::_split_conn_mesh_native {all_plot regions out_of} {
+    set exe [tool_path conn_lobes]
+    if {$exe eq "" || ![file exists $all_plot]} { return -1 }
+    set dir [file dirname $all_plot]
+    set labels {}
+    set cmd [list $exe {*}[tool_args conn_lobes] split $all_plot]
+    set any 0
+    foreach r $regions {
+        lassign $r name lines _color
+        if {![llength $lines]} continue
+        set lp [file join $dir "_lobe_label_${name}_[pid].sph"]
+        if {[catch {set lh [open $lp w]}]} { foreach l $labels { catch {file delete -force $l} }; return -1 }
+        foreach l $lines { puts $lh $l }
+        catch {close $lh}
+        lappend labels $lp
+        set out [expr {[dict exists $out_of $name] ? [dict get $out_of $name] : "-"}]
+        if {$out ne "-"} { set any 1 }
+        lappend cmd --region $name $lp $out
+    }
+    if {!$any} { foreach l $labels { catch {file delete -force $l} }; return -1 }
+    set rc [catch {exec {*}$cmd} out]
+    foreach l $labels { catch {file delete -force $l} }
+    if {$rc} { return -1 }
+    if {![string is integer -strict [string trim $out]]} { return -1 }
+    return [string trim $out]
+}
+
 proc ::VMDHole::_split_conn_mesh_by_region {all_plot cls regions out_of} {
+    set _native [_split_conn_mesh_native $all_plot $regions $out_of]
+    if {$_native >= 0} { return $_native }
     # Split ONE whole-cloud mesh into the per-region plot files the rest of the
     # pipeline expects, by asking which region's dots each triangle sits nearest.
     #
@@ -31750,7 +33268,7 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
         set _rdd [_conn_region_dotden $dotden [_conn_median_sprad $lines] $_refr]
         # The density is part of the mesh, so it is part of the filename: without
         # it a rebuild at a new density would reuse the coarse cached plot.
-        # "u1" is the recipe version: these plots are now slices of ONE union mesh,
+        # "u2" is the recipe version: slices of ONE union mesh, clip markers kept,
         # not standalone per-region meshes. Without the marker an existing run dir
         # would serve its old sealed-lobe plot, whose mtime is already newer than
         # the .sph, and the fix would appear not to work on any prior run.
@@ -31762,7 +33280,9 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
         # built, so every check passed and the TRIMMED mesh was served with the
         # trim switched off. Putting the state in the name makes the two
         # variants different files instead of one file with two meanings.
-        set tag "${name}_[_conn_margin_tag]_d${_rdd}_u1[_conn_surface_suffix]"
+        set tag [expr {[_csg_can_mesh]
+            ? "${name}_[_conn_margin_tag]_u2[_conn_surface_suffix][surface_mesh_tag]"
+            : "${name}_[_conn_margin_tag]_d${_rdd}_u2[_conn_surface_suffix]"}]
         set rsph  [file join $run_dir "hole_conn_${tag}.sph"]
         set rsos  [file join $run_dir "hole_conn_${name}.sos"]
         set rplot [file join $run_dir "hole_conn_${tag}.vmd_plot"]
@@ -31782,10 +33302,11 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
         # every region put the whole main pore inside each lateral lobe's mesh -
         # so 21 lobes rendered 21 copies of the pore, which is both wrong and
         # what made switching between the split colorings slow.
+        set _mk [expr {[dict exists $cls marked] ? [dict get $cls marked] : {}}]
         if {$name eq "pore"} {
-            foreach l [dict get $cls keep] { puts $oh $l }
+            foreach l [dict get $cls keep] { _sph_puts $oh $l $_mk }
         }
-        foreach l $lines { puts $oh $l }
+        foreach l $lines { _sph_puts $oh $l $_mk }
         catch {close $oh}
         lappend tobuild [list $name $rsph $rsos $rplot $color $_rdd]
     }
@@ -31801,7 +33322,9 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
     if {[llength $tobuild] > 0} {
         # Same reason as the per-region tag above: this union mesh is built from
         # src_sph, so a trimmed and an untrimmed build must not share a path.
-        set _uni_tag "all_[_conn_margin_tag]_d${dotden}[_conn_surface_suffix]"
+        set _uni_tag [expr {[_csg_can_mesh]
+            ? "all_[_conn_margin_tag][_conn_surface_suffix][surface_mesh_tag]"
+            : "all_[_conn_margin_tag]_d${dotden}[_conn_surface_suffix]"}]
         set _uni_sph  [file join $run_dir "hole_conn_${_uni_tag}.sph"]
         set _uni_sos  [file join $run_dir "hole_conn_${_uni_tag}.sos"]
         set _uni_plot [file join $run_dir "hole_conn_${_uni_tag}.vmd_plot"]
@@ -31814,7 +33337,7 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
             # from cls's keep/pore/lateral lists. That reconstruction was the bug:
             # _conn_classify_sph drops residue -888 (HOLE's escaped/off-axis
             # search spheres - real spheres with real radii, see
-            # _trim_conn_escaped_sph) while collecting keep/pore/lateral, so the
+            # the axial trim, since removed) while collecting keep/pore/lateral, so the
             # rebuilt cloud silently lost them even when the axial trim itself
             # was off and plain CONNOLLY's own input still had them. Measured on
             # a real run: -999 dot count identical (11131 = 11131) but 69 -888
@@ -31843,10 +33366,7 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
                 catch {file copy -force $_mesh_src $_uni_sph}
             }
             if {[file exists $_uni_sph]} {
-                if {![catch {run_sph_process $_uni_sph $_uni_sos 1 $dotden}]} {
-                    catch {run_sos_triangle $_uni_sos $_uni_plot}
-                    catch {file delete $_uni_sos}
-                }
+                catch {surface_mesh $_uni_sph $_uni_plot draw $dotden}
             }
         }
         set _outof [dict create]
@@ -31873,10 +33393,8 @@ proc ::VMDHole::_build_conn_region_meshes {run_dir cls regions dotden {src_sph "
             } else {
                 foreach t $tobuild {
                     lassign $t name rsph rsos rplot color _rdd
-                    if {[catch {run_sph_process $rsph $rsos 1 $_rdd}]} continue
-                    catch {run_sos_triangle $rsos $rplot}
-                    catch {file delete $rsos}
-                    if {[surface_has_geometry $rplot]} { dict set built $name [list $rplot $color] }
+                    if {![surface_mesh $rsph $rplot draw $_rdd]} continue
+                    dict set built $name [list $rplot $color]
                 }
             }
         }
@@ -32018,10 +33536,8 @@ proc ::VMDHole::_build_conn_regions_parallel {tobuild dotden} {
     foreach t $fallback {
         lassign $t name rsph rsos rplot color rdd
         if {![string is integer -strict $rdd] || $rdd < 1} { set rdd $dotden }
-        if {[catch {run_sph_process $rsph $rsos 1 $rdd}]} continue
-        catch {run_sos_triangle $rsos $rplot}
-        catch {file delete $rsos}
-        if {[surface_has_geometry $rplot]} { dict set built $name [list $rplot $color] }
+        if {![surface_mesh $rsph $rplot draw $rdd]} continue
+        dict set built $name [list $rplot $color]
     }
     return $built
 }
@@ -32042,8 +33558,12 @@ proc ::VMDHole::_conn_surface_suffix {} {
     if {![_run_uses_card conn] && ![_run_uses_card connolly]} { return "" }
     set sfx ""
     variable _conn_draft_build
-    if {[info exists _conn_draft_build] && $_conn_draft_build} { append sfx "_draft" }
-    if {[_conn_trim_escaped_enabled]} { append sfx "_trim" }
+    # The marching-cubes mesh is sized by its grid, not by a dot density, so
+    # there is no cheaper draft of it to name apart - and building one anyway
+    # would be a second surface that visibly replaces the first on settle.
+    if {[info exists _conn_draft_build] && $_conn_draft_build && ![_csg_can_mesh]} {
+        append sfx "_draft"
+    }
     if {[_conn_pore_gate_enabled]} { append sfx "_pore[_conn_margin_tag]" }
     return $sfx
 }
@@ -32054,8 +33574,9 @@ proc ::VMDHole::_write_conn_region_sph {cls region out_sph} {
     if {![dict exists $cls $region]} { return 0 }
     if {[catch {set oh [open $out_sph w]}]} { return 0 }
     set n 0
-    foreach line [dict get $cls keep] { puts $oh $line; incr n }
-    foreach line [dict get $cls $region] { puts $oh $line; incr n }
+    set _mk [expr {[dict exists $cls marked] ? [dict get $cls marked] : {}}]
+    foreach line [dict get $cls keep] { _sph_puts $oh $line $_mk; incr n }
+    foreach line [dict get $cls $region] { _sph_puts $oh $line $_mk; incr n }
     catch {close $oh}
     return $n
 }
@@ -32078,6 +33599,8 @@ proc ::VMDHole::_conn_classify_cached {in_sph cvect_s cpoint_s margin {basis_s "
 }
 
 proc ::VMDHole::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_s ""}} {
+    set _native [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin $basis_s]
+    if {[dict size $_native]} { return $_native }
     # Splits a CONNOLLY cloud into pore and lateral. A flood-fill dot is pore if
     # it sits within the traced wall radius + margin of the CENTRELINE - the real
     # curved one, read from this file's own pore spheres, not the straight axis.
@@ -32107,8 +33630,20 @@ proc ::VMDHole::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_s ""}}
     set dots {}
     set keep {}
     set esc_t {}
+    # HOLE's LAST-REC-END follows a clip record (an escape dot past endrad, an
+    # ADDEND sphere): sph_process draws such a sphere only as a cutter, never
+    # as surface. The marker is a separate line, so every writer that re-emits
+    # these records has to put it back - "marked" is the set of lines it belongs
+    # after. Without it the mouth clip spheres come out as smooth balls.
+    set marked [dict create]
+    set _prev ""
     while {[gets $fh line] >= 0} {
+        if {[string range $line 0 11] eq "LAST-REC-END"} {
+            if {$_prev ne ""} { dict set marked $_prev 1 }
+            continue
+        }
         if {![string match {ATOM  *} $line] && ![string match {HETATM*} $line]} { continue }
+        set _prev ""
         set res [string trim [string range $line 22 26]]
         if {$res eq "-888"} { continue }
         set x [string trim [string range $line 30 37]]
@@ -32117,6 +33652,7 @@ proc ::VMDHole::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_s ""}}
         if {![string is double -strict $x] || ![string is double -strict $y] ||
             ![string is double -strict $z]} { continue }
         set t [expr {($x-$ox)*$ux + ($y-$oy)*$uy + ($z-$oz)*$uz}]
+        set _prev $line
         if {$res eq "-999"} {
             lappend dots [list $t $x $y $z $line]
             continue
@@ -32196,7 +33732,13 @@ proc ::VMDHole::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_s ""}}
                                              $dx*$f1x + $dy*$f1y + $dz*$f1z)}] $rr $wall]
     }
     return [dict create pore $pore lateral $lat keep $keep lat_zt $lat_zt \
-        n_pore [llength $pore] n_lat [llength $lat] escaped_ranges $esc_ranges]
+        n_pore [llength $pore] n_lat [llength $lat] escaped_ranges $esc_ranges marked $marked]
+}
+
+# Write one classified .sph record, restoring its LAST-REC-END if it had one.
+proc ::VMDHole::_sph_puts {fh line marked} {
+    puts $fh $line
+    if {[dict exists $marked $line]} { puts $fh "LAST-REC-END" }
 }
 
 proc ::VMDHole::_conn_t_is_escaped {t ranges pad} {
@@ -32351,7 +33893,7 @@ proc ::VMDHole::_conn_lobe_cache_sig {} {
     # basis (_conn_frame_lobe_basis), not just cvect/cpoint above - a v2 cache
     # predates that and would replay azimuths computed on the OLD, non-rotating
     # basis as if they were already correct.
-    set sig "v3|[_conn_margin_tag]|[_conn_trim_escaped_enabled]|$state(cvect)|$state(cpoint)"
+    set sig "v3|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)"
     foreach f $result_frames {
         if {![dict exists $results $f sph_file]} continue
         set s [dict get $results $f sph_file]
@@ -32592,7 +34134,7 @@ proc ::VMDHole::_conn_site_table {} {
         return [dict create status notconn]
     }
     lassign [_conn_lobe_tol] tolz tola
-    set ckey "$plot_data_version|[_conn_margin_tag]|$tolz|$tola|[_conn_trim_escaped_enabled]"
+    set ckey "$plot_data_version|[_conn_margin_tag]|$tolz|$tola|0"
     if {[info exists conn_site_cache] && [dict exists $conn_site_cache $ckey]} {
         return [dict get $conn_site_cache $ckey]
     }
@@ -32849,6 +34391,7 @@ proc ::VMDHole::_conn_lobe_tol {} {
 }
 
 proc ::VMDHole::_conn_frame_lobes {cls} {
+    if {[dict exists $cls lobes]} { return [dict get $cls lobes] }
     # Split one frame's lateral dots into lobes. The cloud is ONE connected
     # component - the lobes join through the lumen they branch from - so
     # connectivity in 3D cannot separate them. On the (axial, azimuth) cylinder
@@ -33063,71 +34606,6 @@ proc ::VMDHole::_conn_centreline_at {cen t} {
         [expr {$z0+($z1-$z0)*$a}] [expr {$r0+($r1-$r0)*$a}]]
 }
 
-proc ::VMDHole::_trim_conn_escaped_sph {in_sph out_sph cvect_s cpoint_s} {
-    # Cuts the CONNOLLY surface cloud back to the channel's own axial extent, so
-    # the surface stops at the pore mouths instead of ballooning into bulk solvent
-    # at both ends. Flags escaped spheres via beta==999.99 (growth escaped to open
-    # bulk) and residue -888 (escaped/off-axis search sphere); -999 (the flood-fill
-    # cloud itself) is kept. _reduce_conn_sph's occupancy/ENDRAD filter misses
-    # these because an escaped dot's own radius is ordinary - it's the PORE radius
-    # at its slice (beta) that's huge, not the dot itself.
-    #
-    # Trims by AXIAL RANGE, not by dropping escaped points individually: escaped
-    # slices can sit inside the channel (a wide cavity), not just at the ends, so
-    # deleting them pointwise would punch a hole through the pore and fragment the
-    # surface. Instead: find the axial span of the non-escaped points, keep every
-    # point inside that span (escaped included, to preserve connectivity), drop
-    # everything beyond it. -888 spheres are dropped outright regardless of span.
-    #
-    # Deterministic and mtime-cached, like _reduce_conn_sph. Returns the number
-    # of points written, or 0 if the span could not be established (caller then
-    # keeps the original cloud untouched).
-    if {[file exists $out_sph] && [file exists $in_sph] && \
-            [file mtime $out_sph] >= [file mtime $in_sph]} {
-        return [_sph_point_count $out_sph]
-    }
-    lassign $cvect_s ux uy uz
-    lassign $cpoint_s ox oy oz
-    foreach v {ux uy uz ox oy oz} {
-        if {![string is double -strict [set $v]]} { return 0 }
-    }
-    set ulen [expr {sqrt($ux*$ux + $uy*$uy + $uz*$uz)}]
-    if {$ulen <= 1e-9} { return 0 }
-    set ux [expr {$ux/$ulen}]; set uy [expr {$uy/$ulen}]; set uz [expr {$uz/$ulen}]
-    # ONE pass: parse each line once, keep it with its axial coordinate, and track
-    # the non-escaped span as this go, rather than re-reading the file once the span
-    # is known - ~510ms -> ~260ms on GABA, paid every trajectory frame.
-    if {[catch {set fh [open $in_sph r]}]} { return 0 }
-    set rows {}
-    set tmin ""; set tmax ""
-    while {[gets $fh line] >= 0} {
-        if {![string match {ATOM  *} $line] && ![string match {HETATM*} $line]} { continue }
-        if {[string trim [string range $line 22 26]] eq "-888"} { continue }
-        set x [string trim [string range $line 30 37]]
-        set y [string trim [string range $line 38 45]]
-        set z [string trim [string range $line 46 53]]
-        if {![string is double -strict $x] || ![string is double -strict $y] ||
-            ![string is double -strict $z]} { continue }
-        set t [expr {($x-$ox)*$ux + ($y-$oy)*$uy + ($z-$oz)*$uz}]
-        lappend rows $t $line
-        set beta [string trim [string range $line 60 65]]
-        if {[string is double -strict $beta] && ($beta > 900.0 || $beta <= 0.005)} { continue }
-        if {$tmin eq "" || $t < $tmin} { set tmin $t }
-        if {$tmax eq "" || $t > $tmax} { set tmax $t }
-    }
-    catch {close $fh}
-    if {$tmin eq "" || $tmax eq "" || $tmax <= $tmin} { return 0 }
-    if {[catch {set oh [open $out_sph w]}]} { return 0 }
-    set w 0
-    foreach {t line} $rows {
-        if {$t < $tmin || $t > $tmax} { continue }
-        puts $oh $line
-        incr w
-    }
-    catch {close $oh}
-    return $w
-}
-
 proc ::VMDHole::_reduce_conn_sph {in_sph out_sph maxr target} {
     # Turn a large CONNOLLY point cloud into a smaller, triangulatable .sph so
     # the normal sph_process -> sos_triangle -> property pipeline can build a
@@ -33141,22 +34619,43 @@ proc ::VMDHole::_reduce_conn_sph {in_sph out_sph maxr target} {
             [file mtime $out_sph] >= [file mtime $in_sph]} {
         return [_sph_point_count $out_sph]
     }
-    set kept {}
+    # Thins the surface DOTS (resid -999) only. Centreline, escape and ADDEND
+    # records are few and structural - the ADDEND spheres are cutters that
+    # carve the mouth funnels - so they all stay, and each kept record keeps
+    # its LAST-REC-END. Dropping the markers (the old line-based stride did)
+    # turned every clip sphere into a drawn one: smooth balls at the ends.
+    set recs {}
     if {[catch {set fh [open $in_sph r]}]} { return 0 }
     while {[gets $fh line] >= 0} {
+        if {[string range $line 0 11] eq "LAST-REC-END"} {
+            if {[llength $recs]} { lset recs end 1 1 }
+            continue
+        }
         if {![string match {ATOM  *} $line] && ![string match {HETATM*} $line]} { continue }
         if {$maxr > 0} {
             set sr [string trim [string range $line 54 59]]
             if {[string is double -strict $sr] && $sr > $maxr} { continue }
         }
-        lappend kept $line
+        set isdot [expr {[string trim [string range $line 22 26]] eq "-999"}]
+        lappend recs [list $line 0 $isdot]
     }
     catch {close $fh}
-    set n [llength $kept]
-    set stride [expr {$n > $target ? int($n / $target) : 1}]
+    set ndots 0
+    foreach r $recs { if {[lindex $r 2]} { incr ndots } }
+    set stride [expr {$ndots > $target ? int($ndots / $target) : 1}]
     set oh [open $out_sph w]
-    set w 0
-    for {set i 0} {$i < $n} {incr i $stride} { puts $oh [lindex $kept $i]; incr w }
+    set w 0; set di 0
+    foreach r $recs {
+        lassign $r line mk isdot
+        if {$isdot} {
+            set take [expr {$di % $stride == 0}]
+            incr di
+            if {!$take} continue
+        }
+        puts $oh $line
+        if {$mk} { puts $oh "LAST-REC-END" }
+        incr w
+    }
     close $oh
     return $w
 }
@@ -33428,7 +34927,7 @@ proc ::VMDHole::update_hole_accel_status {d {verbose 0}} {
     set m [_read_accel_manifest]
     if {![dict get $m present]} {
         $acc configure -text "not accelerated" -foreground "#b00000" -state disabled
-        set accel_tooltip "This HOLE binary has no VMDHole acceleration - it runs correctly, just slower.\nBuild an accelerated one with native/build-vmdhole-optimized.sh and point 'HOLE exe' at it."
+        set accel_tooltip "Stock HOLE: correct, just slower. Build the accelerated one with native/build-vmdhole-optimized.sh."
         return
     }
     set n [llength [dict get $m patches]]
@@ -33508,7 +35007,7 @@ proc ::VMDHole::update_sph_accel_status {d} {
     # Headless guard - see _have_tk.
     if {![_have_tk]} { return }
     if {![winfo exists $acc]} { return }
-    set why "This sph_process has no VMDHole acceleration - it runs correctly and\nproduces identical output, just without the parallel dot cull."
+    set why "Stock sph_process: identical output, no parallel dot cull."
     set ok 0
     if {[info exists state(sph_process_exec)] && $state(sph_process_exec) ne ""} {
         set mp [file join [file dirname $state(sph_process_exec)] vmdhole_accel.manifest]
@@ -33521,7 +35020,7 @@ proc ::VMDHole::update_sph_accel_status {d} {
                  || [string match "sph_process_rebuilt*" $line]} { set ok 1 }
             }
             if {$ok} {
-                set why "Accelerated sph_process (parallel dot cull, sphqpu_par.f).\nOutput is byte-identical to stock; only the speed differs.\nThread count follows the plugin's job-count setting."
+                set why "Accelerated sph_process: parallel dot cull, output identical to stock."
             }
         }
     }
@@ -33550,39 +35049,18 @@ proc ::VMDHole::_capsule_perp {x y z ox oy oz ax ay az} {
     return [expr {sqrt(($dx-$a*$ax)**2 + ($dy-$a*$ay)**2 + ($dz-$a*$az)**2)}]
 }
 
-proc ::VMDHole::_capsule_stadium_r {phi R Lh} {
-    # Polar radius of a stadium (spherocylinder) cross-section, measured from its
-    # centre: half-length Lh along the long axis, cap radius R, phi from the long
-    # axis. A ray exits either through a flat side (radius R/|sin|) or a rounded cap.
-    set cx [expr {cos($phi)}]; set sx [expr {sin($phi)}]
-    if {abs($sx) > 1e-9} {
-        set ts [expr {$R/abs($sx)}]
-        if {abs($ts*$cx) <= $Lh} { return $ts }
-    }
-    set disc [expr {$R*$R - $Lh*$Lh*$sx*$sx}]
-    if {$disc < 0} { set disc 0.0 }
-    return [expr {$Lh*abs($cx) + sqrt($disc)}]
-}
-
-proc ::VMDHole::_capsule_rings {sph_file cvect_s cpoint_s endrad nsect} {
-    # Shared builder for the capsule stadium views. Parse the .sph, drop the escaped
-    # records, and return a per-slice list SORTED along the axis, each entry
-    # {axial band {ring points} {ring normals}} - the stadium cross-section outline
-    # and its outward surface normals. The two cap centres (QC1/QC2) give the stadium
-    # in 3D directly, so there is no coordinate reconstruction. Empty if nothing valid.
+proc ::VMDHole::_capsule_rings {sph_file cvect_s cpoint_s endrad} {
+    # Capsule slices from the .sph, SORTED along the axis: {axial band geometry},
+    # geometry = {x1 y1 z1 x2 y2 z2 R}, the two cap centres (QC1/QC2) and the
+    # capsule radius. Escaped slices leave by the rule the mesher applies
+    # (mesh_csg --axis): a cap centre farther than ENDRAD from the axis, or an
+    # equal-area radius past ENDRAD. Empty if nothing valid.
     set PI 3.141592653589793
     lassign $cvect_s ax ay az
     if {![string is double -strict $ax] || ![string is double -strict $ay] || ![string is double -strict $az]} { return {} }
     set al [expr {sqrt($ax*$ax+$ay*$ay+$az*$az)}]
     if {$al < 1e-9} { return {} }
     set ax [expr {$ax/$al}]; set ay [expr {$ay/$al}]; set az [expr {$az/$al}]
-    # in-plane basis (bhat, what) perpendicular to the axis
-    if {abs($ax) < 0.9} { set ex 1.0; set ey 0.0; set ez 0.0 } else { set ex 0.0; set ey 1.0; set ez 0.0 }
-    set edt [expr {$ex*$ax+$ey*$ay+$ez*$az}]
-    set bx [expr {$ex-$edt*$ax}]; set by [expr {$ey-$edt*$ay}]; set bz [expr {$ez-$edt*$az}]
-    set bn [expr {sqrt($bx*$bx+$by*$by+$bz*$bz)}]; if {$bn < 1e-9} { return {} }
-    set bx [expr {$bx/$bn}]; set by [expr {$by/$bn}]; set bz [expr {$bz/$bn}]
-    set wx [expr {$ay*$bz-$az*$by}]; set wy [expr {$az*$bx-$ax*$bz}]; set wz [expr {$ax*$by-$ay*$bx}]
     lassign $cpoint_s ox oy oz
     if {![string is double -strict $ox] || ![string is double -strict $oy] || ![string is double -strict $oz]} { return {} }
     if {[catch {set fh [open $sph_file r]}]} { return {} }
@@ -33607,50 +35085,17 @@ proc ::VMDHole::_capsule_rings {sph_file cvect_s cpoint_s endrad nsect} {
         set R $cap($rs)
         if {![string is double -strict $R] || $R <= 0} continue
         lassign $qc1($rs) x1 y1 z1; lassign $qc2($rs) x2 y2 z2
-        # Off-axis test: a real cap centre sits within the pore's reach (endrad); a
-        # search sphere that escaped into the bulk is far off-axis and is dropped.
         set p1 [_capsule_perp $x1 $y1 $z1 $ox $oy $oz $ax $ay $az]
         set p2 [_capsule_perp $x2 $y2 $z2 $ox $oy $oz $ax $ay $az]
         if {$endrad > 0 && ($p1 > $endrad || $p2 > $endrad)} continue
         set cx [expr {($x1+$x2)/2.0}]; set cy [expr {($y1+$y2)/2.0}]; set cz [expr {($z1+$z2)/2.0}]
         set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
-        set du [expr {$dx*$bx+$dy*$by+$dz*$bz}]; set dv [expr {$dx*$wx+$dy*$wy+$dz*$wz}]
-        set th [expr {atan2($dv,$du)}]
-        set L  [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]; set Lh [expr {$L/2.0}]
-        # Effective radius (circle of equal cross-sectional area) sets the HOLE color
-        # band. HOLE keeps only slices with eff <= endrad in its profile, so a slice
-        # whose stadium exceeds that (an over-elongated escaped fit) is dropped too.
+        set L  [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]
+        # Equal-area radius (HOLE's reported one) sets the colour band.
         set eff [expr {sqrt(($PI*$R*$R + 2.0*$R*$L)/$PI)}]
         if {$endrad > 0 && $eff > $endrad} continue
         set azc  [expr {($cx-$ox)*$ax + ($cy-$oy)*$ay + ($cz-$oz)*$az}]
         set band [_hole_radius_band $eff]
-        set ct [expr {cos($th)}]; set st [expr {sin($th)}]
-        set rpts {}; set rns {}
-        for {set k 0} {$k < $nsect} {incr k} {
-            set ph [expr {2.0*$PI*$k/$nsect}]
-            set pr [expr {$ph-$th}]
-            set r2 [_capsule_stadium_r $pr $R $Lh]
-            set cph [expr {cos($ph)}]; set sph [expr {sin($ph)}]
-            set gx [expr {$r2*$cph}]; set gy [expr {$r2*$sph}]
-            lappend rpts [list [expr {$cx+$gx*$bx+$gy*$wx}] [expr {$cy+$gx*$by+$gy*$wy}] [expr {$cz+$gx*$bz+$gy*$wz}]]
-            # Outward surface normal, computed geometrically: the direction from the
-            # nearest point on the cap-centre segment to this boundary point (in the
-            # stadium's local frame), then mapped back to 3D. Correct for the flat
-            # sides and the rounded caps alike (and independent of theta vs theta+pi).
-            set pxl [expr {$r2*cos($pr)}]; set pyl [expr {$r2*sin($pr)}]
-            set clx [expr {$pxl < -$Lh ? -$Lh : ($pxl > $Lh ? $Lh : $pxl)}]
-            set nlx [expr {$pxl-$clx}]; set nly $pyl
-            set nl [expr {sqrt($nlx*$nlx+$nly*$nly)}]
-            if {$nl < 1e-9} { set nlx 1.0; set nly 0.0; set nl 1.0 }
-            set nlx [expr {$nlx/$nl}]; set nly [expr {$nly/$nl}]
-            set nb [expr {$nlx*$ct - $nly*$st}]; set nw [expr {$nlx*$st + $nly*$ct}]
-            lappend rns [list [expr {$nb*$bx+$nw*$wx}] [expr {$nb*$by+$nw*$wy}] [expr {$nb*$bz+$nw*$wz}]]
-        }
-        # The two cap centres ride along with the radius. A capsule slice IS the
-        # set of points within R of the QC1-QC2 segment, so this pair plus R is
-        # the slice's exact geometry - the midpoint and equal-area radius are a
-        # circular stand-in for it.
-        #
         # ORIENTED against the previous slice: HOLE writes QC1/QC2 per slice
         # independently, so which end is "QC1" can flip, and two tracks drawn
         # from unoriented pairs cross back and forth.
@@ -33666,92 +35111,9 @@ proc ::VMDHole::_capsule_rings {sph_file cvect_s cpoint_s endrad nsect} {
             }
         }
         set _pq1 [list $x1 $y1 $z1]
-        lappend slices [list $azc $band $rpts $rns [list $cx $cy $cz $eff] \
-            [list $x1 $y1 $z1 $x2 $y2 $z2 $R]]
+        lappend slices [list $azc $band [list $x1 $y1 $z1 $x2 $y2 $z2 $R]]
     }
     return [lsort -real -index 0 $slices]
-}
-
-proc ::VMDHole::_build_capsule_stadiums {sph_file out_plot cvect_s cpoint_s endrad {nsect 40}} {
-    # Draw the capsule stadium cross-sections as SEPARATE per-slice outlines (a clean
-    # wireframe-style view), colored by HOLE's radius bands. See _capsule_rings.
-    set rings [_capsule_rings $sph_file $cvect_s $cpoint_s $endrad $nsect]
-    if {[llength $rings] < 1} { return 0 }
-    if {[catch {set out [open $out_plot w]}]} { return 0 }
-    puts $out "draw delete all"
-    set nd 0
-    foreach ring $rings {
-        lassign $ring azc band rpts rns
-        puts $out "draw color $band"
-        set np [llength $rpts]
-        for {set k 0} {$k < $np} {incr k} {
-            set p [lindex $rpts $k]; set q [lindex $rpts [expr {($k+1)%$np}]]
-            puts $out "draw line {[lindex $p 0] [lindex $p 1] [lindex $p 2]} {[lindex $q 0] [lindex $q 1] [lindex $q 2]}"
-        }
-        incr nd
-    }
-    close $out
-    return $nd
-}
-
-proc ::VMDHole::_capsule_property_active {} {
-    variable state
-    return [expr {[_run_uses_card capsule] && [info exists state(surface_color)] \
-        && $state(surface_color) eq "property"}]
-}
-
-proc ::VMDHole::_capsule_slice_property {rings} {
-    # One VMD color per slice, from compute_sphere_hydro over the slices' own
-    # {cx cy cz eff} tuples. Empty list if the property cannot be resolved, so
-    # the caller falls back to the radius bands.
-    variable state
-    set molid [resolve_molid_or -1]
-    if {$molid eq "" || ![string is integer -strict $molid] || $molid < 0} { return {} }
-    # Sample the QC1-QC2 segment: a capsule is exactly the points within R of
-    # that segment, so these spheres reproduce its surface rather than standing
-    # in for it with an equal-area circle. NSAMP per slice, averaged back to one
-    # value per slice.
-    set NSAMP 3
-    set spheres {}
-    foreach r $rings {
-        set g [lindex $r 5]
-        if {[llength $g] != 7} { return {} }
-        lassign $g gx1 gy1 gz1 gx2 gy2 gz2 gR
-        for {set k 0} {$k < $NSAMP} {incr k} {
-            set t [expr {$NSAMP == 1 ? 0.5 : double($k)/($NSAMP-1)}]
-            lappend spheres [list [expr {$gx1+($gx2-$gx1)*$t}] \
-                                  [expr {$gy1+($gy2-$gy1)*$t}] \
-                                  [expr {$gz1+($gz2-$gz1)*$t}] $gR]
-        }
-    }
-    if {![llength $spheres]} { return {} }
-    set frame [_conn_current_frame]
-    if {[catch {compute_sphere_hydro $molid $frame $spheres} raw]} { return {} }
-    if {[llength $raw] != [llength $spheres]} { return {} }
-    # Back to one value per slice.
-    set vals {}
-    for {set i 0} {$i < [llength $rings]} {incr i} {
-        set sum 0.0; set n 0
-        for {set k 0} {$k < $NSAMP} {incr k} {
-            set v [lindex $raw [expr {$i*$NSAMP + $k}]]
-            if {$v ne "" && [string is double -strict $v]} { set sum [expr {$sum+$v}]; incr n }
-        }
-        lappend vals [expr {$n ? $sum/$n : ""}]
-    }
-    set sch [expr {[info exists state(hydro_scheme)] ? $state(hydro_scheme) : "kd"}]
-    # Same normalise-then-band path the spherical and centreline surfaces take
-    # (norm_to_vmd_color over normalize_raw_value), so a capsule surface and a
-    # spherical one of the same pore read on one color scale.
-    set meta [property_meta $sch]
-    set signed [dict get $meta signed]
-    set lo [dict get $meta lo]
-    set hi [dict get $meta hi]
-    set out {}
-    foreach v $vals {
-        if {$v eq "" || ![string is double -strict $v]} { lappend out ""; continue }
-        lappend out [norm_to_vmd_color [normalize_raw_value $v $lo $hi $signed] $signed]
-    }
-    return $out
 }
 
 proc ::VMDHole::_build_capsule_centerlines {sph_file out_plot cvect_s cpoint_s endrad} {
@@ -33759,7 +35121,7 @@ proc ::VMDHole::_build_capsule_centerlines {sph_file out_plot cvect_s cpoint_s e
     # its centre is a pair of cap centres. One averaged line would draw a round
     # pore that capsule mode exists to say the pore is not. Returns the segment
     # count, or 0.
-    set rings [_capsule_rings $sph_file $cvect_s $cpoint_s $endrad 8]
+    set rings [_capsule_rings $sph_file $cvect_s $cpoint_s $endrad]
     if {[llength $rings] < 2} { return 0 }
     if {[catch {set out [open $out_plot w]}]} { return 0 }
     puts $out "draw delete all"
@@ -33771,8 +35133,8 @@ proc ::VMDHole::_build_capsule_centerlines {sph_file out_plot cvect_s cpoint_s e
     set gapmax [expr {$med > 0 ? 3.0*$med : 3.0}]
     set n 0
     for {set i 0} {$i < [llength $rings]-1} {incr i} {
-        lassign [lindex $rings $i] az0 band0 _rp0 _rn0 _c0 g0
-        lassign [lindex $rings [expr {$i+1}]] az1 band1 _rp1 _rn1 _c1 g1
+        lassign [lindex $rings $i] az0 band0 g0
+        lassign [lindex $rings [expr {$i+1}]] az1 band1 g1
         if {$az1 - $az0 > $gapmax} continue
         if {[llength $g0] != 7 || [llength $g1] != 7} continue
         puts $out "draw color $band0"
@@ -33786,53 +35148,6 @@ proc ::VMDHole::_build_capsule_centerlines {sph_file out_plot cvect_s cpoint_s e
     }
     close $out
     return $n
-}
-
-proc ::VMDHole::_build_capsule_stadium_surface {sph_file out_plot cvect_s cpoint_s endrad {nsect 40}} {
-    # Build a SOLID capsule surface: the per-slice stadium rings (see _capsule_rings)
-    # stitched into a triangulated tube with per-vertex normals, colored by HOLE's
-    # radius bands. Consecutive rings are joined only when axially adjacent, so a
-    # dropped escaped slice leaves a clean gap instead of a bridged spike. Returns the
-    # triangle count, or 0.
-    set rings [_capsule_rings $sph_file $cvect_s $cpoint_s $endrad $nsect]
-    set nr [llength $rings]
-    if {$nr < 2} { return 0 }
-    set steps {}
-    for {set i 1} {$i < $nr} {incr i} {
-        lappend steps [expr {[lindex [lindex $rings $i] 0] - [lindex [lindex $rings [expr {$i-1}]] 0]}]
-    }
-    set ss [lsort -real $steps]; set med [lindex $ss [expr {[llength $ss]/2}]]
-    set gapmax [expr {$med > 0 ? 3.0*$med : 3.0}]
-    # Property coloring: one value per slice, from the slice's own centre and
-    # equal-area radius - the same granularity (and the same engine) the
-    # spherical path uses, where it is one value per HOLE sphere.
-    set pcol {}
-    if {[_capsule_property_active]} { set pcol [_capsule_slice_property $rings] }
-    if {[catch {set out [open $out_plot w]}]} { return 0 }
-    puts $out "draw delete all"
-    set nt 0; set lastband ""
-    for {set i 0} {$i < $nr-1} {incr i} {
-        lassign [lindex $rings $i] az0 band0 rp0 rn0
-        lassign [lindex $rings [expr {$i+1}]] az1 band1 rp1 rn1
-        if {$az1 - $az0 > $gapmax} continue
-        if {[llength $pcol]} {
-            set band0 [lindex $pcol $i]
-            if {$band0 eq ""} { set band0 [lindex [lindex $rings $i] 1] }
-        }
-        if {$band0 ne $lastband} { puts $out "draw color $band0"; set lastband $band0 }
-        set np [llength $rp0]
-        for {set k 0} {$k < $np} {incr k} {
-            set k2 [expr {($k+1)%$np}]
-            set A [lindex $rp0 $k];  set An [lindex $rn0 $k]
-            set B [lindex $rp0 $k2]; set Bn [lindex $rn0 $k2]
-            set C [lindex $rp1 $k];  set Cn [lindex $rn1 $k]
-            set D [lindex $rp1 $k2]; set Dn [lindex $rn1 $k2]
-            _emit_trinorm $out $A $B $D $An $Bn $Dn; incr nt
-            _emit_trinorm $out $A $D $C $An $Dn $Cn; incr nt
-        }
-    }
-    close $out
-    return $nt
 }
 
 proc ::VMDHole::create_plot_asset {run_dir sph_file mode {molid -1} {frame 0} {draft 0}} {
@@ -33903,15 +35218,6 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
         # since all three share this .sph. conn_orig_sph deliberately keeps
         # pointing at the UNtrimmed original: it is only used for the raw
         # point-cloud failure fallback, which should show everything HOLE found.
-        if {[_conn_trim_escaped_enabled]} {
-            set _trim [file join $run_dir "hole_conn_trim.sph"]
-            set _tn [_trim_conn_escaped_sph $sph_file $_trim $state(cvect) $state(cpoint)]
-            if {$_tn > 0 && $_tn < $npts} {
-                catch {vmdcon -info "VMDHole: CONNOLLY - trimmed [expr {$npts - $_tn}] escaped/bulk spheres of $npts; surface built from the $_tn that stayed in the channel."}
-                set sph_file $_trim
-                set npts $_tn
-            }
-        }
         # Sideways spill: on a fenestrated channel the fill runs out through the
         # gaps and fills the space outside the protein. The trim above is axial
         # and cannot touch it. Gated OFF by default - the spill is real geometry
@@ -33935,7 +35241,7 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
             # different cloud, and _reduce_conn_sph reuses on mtime. Sharing one
             # name means switching either knob off serves the cloud built while it
             # was on - the original .sph is older, so the check passes.
-            set _reduced [file join $run_dir "[file rootname [file tail $sph_file]]_render.sph"]
+            set _reduced [file join $run_dir "[file rootname [file tail $sph_file]]_render2.sph"]
             # maxr = 0: do NOT drop the big spheres. Dropping them is what put the
             # round "blobs" on the pore mouths. HOLE's widest spheres out at the
             # vestibules ENVELOP the small ones around them, so sph_process culls
@@ -33959,44 +35265,19 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
         set conn_dotden [expr {$draft ? [_conn_draft_dotden] : [_conn_safe_dotden $npts]}]
         catch {vmdcon -info "VMDHole: CONNOLLY - triangulating $npts accessible-surface points (dot density $conn_dotden)."}
     }
-    # CAPSULE writes a two-centre "stadium" .sph padded with escaped-sphere records.
-    # It can't be triangulated into a clean continuous surface, so instead the per-
-    # slice stadium cross-sections are drawn as SEPARATE outlines (each from its own
-    # two cap centres), colored by HOLE's radius bands. If none can be built (no
-    # valid slices) fall back to no surface + the profile.
-    if {[_run_uses_card capsule]} {
-        if {$mode eq "triangulated"} {
-            # Solid surface: the stadium rings stitched into a triangulated tube.
-            set surf [file join $run_dir "hole_capsule_surface.vmd_plot"]
-            if {[geom_cache_valid $surf $sph_file]} { return [dict create kind vmd_plot path $surf] }
-            set nt [_build_capsule_stadium_surface $sph_file $surf $state(cvect) $state(cpoint) $state(endrad) 40]
-            if {$nt > 0} {
-                geom_cache_mark $surf
-                catch {vmdcon -info "VMDHole: CAPSULE - built stadium surface ($nt triangles, HOLE radius bands)."}
-                return [dict create kind vmd_plot path $surf]
-            }
-        } elseif {$mode eq "centerline"} {
-            # The two cap-centre tracks. A capsule slice is a segment swept by a
-            # sphere, so its centre is a PAIR - one averaged line would draw the
-            # round pore capsule mode exists to contradict.
-            set cl [file join $run_dir "hole_capsule_centerlines.vmd_plot"]
-            if {[geom_cache_valid $cl $sph_file]} { return [dict create kind capsule_lines path $cl] }
-            set nl [_build_capsule_centerlines $sph_file $cl $state(cvect) $state(cpoint) $state(endrad)]
-            if {$nl > 0} {
-                geom_cache_mark $cl
-                catch {vmdcon -info "VMDHole: CAPSULE - drew 2 cap-centre tracks ($nl segments)."}
-                return [dict create kind capsule_lines path $cl]
-            }
-        } else {
-            # wireframe / dots: the per-slice stadium outlines.
-            set stad [file join $run_dir "hole_capsule_stadiums.vmd_plot"]
-            if {[geom_cache_valid $stad $sph_file]} { return [dict create kind capsule_lines path $stad] }
-            set ns [_build_capsule_stadiums $sph_file $stad $state(cvect) $state(cpoint) $state(endrad) 40]
-            if {$ns > 0} {
-                geom_cache_mark $stad
-                catch {vmdcon -info "VMDHole: CAPSULE - drew $ns stadium cross-section outlines (HOLE radius bands)."}
-                return [dict create kind capsule_lines path $stad]
-            }
+    # CAPSULE's surface is a union of capsule slices and goes through surface_mesh
+    # like every other method. Only its centreline is its own: a capsule slice is
+    # a segment swept by a sphere, so its centre is a PAIR - one averaged line
+    # would draw the round pore capsule mode exists to contradict.
+    if {[_run_uses_card capsule] && $mode eq "centerline"} {
+        set cl [file join $run_dir "hole_capsule_centerlines.vmd_plot"]
+        if {[geom_cache_valid $cl $sph_file]} { return [dict create kind capsule_lines path $cl] }
+        lassign [_capsule_run_axis $run_dir] _cl_cpoint _cl_cvect
+        set nl [_build_capsule_centerlines $sph_file $cl $_cl_cvect $_cl_cpoint $state(endrad)]
+        if {$nl > 0} {
+            geom_cache_mark $cl
+            catch {vmdcon -info "VMDHole: CAPSULE - drew 2 cap-centre tracks ($nl segments)."}
+            return [dict create kind capsule_lines path $cl]
         }
         return [dict create kind capsule_skip]
     }
@@ -34072,7 +35353,7 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
                 # Same density/draft identity as the lobes plot above, and for
                 # the same reason: the settle pass must never reuse a coarse
                 # draft-built split.
-                set tt [file join $run_dir "hole_conn_2tone_[_conn_margin_tag]_u1_d${conn_dotden}[_conn_surface_suffix].vmd_plot"]
+                set tt [file join $run_dir "hole_conn_2tone_[_conn_margin_tag]_u2_d${conn_dotden}[_conn_surface_suffix].vmd_plot"]
                 if {[geom_cache_valid $tt $sph_file]} {
                     return [dict create kind vmd_plot path $tt]
                 }
@@ -34082,91 +35363,31 @@ proc ::VMDHole::_create_plot_asset_body {run_dir sph_file mode {molid -1} {frame
                 }
                 catch {vmdcon -warn "VMDHole: CONNOLLY - could not split the cloud into pore and spill; showing the single surface."}
             }
-            set sos  [file join $run_dir "hole_triangulated[_conn_surface_suffix].sos"]
-            set plot [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
+            set _form [expr {[_csg_draw_form] ? "draw" : "mol"}]
+            set plot [surface_plot_name $run_dir "hole_triangulated[_conn_surface_suffix]" $_form]
             if {[geom_cache_valid $plot $sph_file]} {
                 return [dict create kind vmd_plot path $plot]
             }
-            # conn_dotden lowers the density for a reduced CONNOLLY cloud; "" uses
-            # the user's dot_density for normal / small runs.
-            if {[catch {run_sph_process $sph_file $sos 1 $conn_dotden}]} {
-                # sph_process failed (e.g. reduced cloud still too big): for a
-                # large CONNOLLY run, show the points instead of erroring out.
-                if {$conn_orig_sph ne ""} {
-                    catch {file delete $sos}
-                    return [dict create kind sph path $conn_orig_sph maxr $state(endrad)]
-                }
-                error "sph_process produced no surface."
-            }
-            catch {run_sos_triangle $sos $plot}
-            # RETRY LADDER. _sos_tri_dot_ceiling sizes the dot budget from what
-            # the configured binary is believed to hold, but that is inferred, so
-            # an unexpected build (a differently-tuned fork, a stock binary the
-            # feature probe could not reach, some future HOLE) can still come back
-            # empty. Rather than trust the inference, believe the RESULT: while
-            # there is no geometry, rebuild at roughly half the density and try
-            # again. Each retry is cheaper than the one before (cost goes as
-            # density^1.6), so the whole ladder costs less than the first attempt.
-            set _try_dd $conn_dotden
-            if {$_try_dd eq ""} { set _try_dd $state(dot_density) }
-            if {![string is integer -strict $_try_dd] || $_try_dd < 1} { set _try_dd 15 }
-            set _retry 0
-            while {![surface_has_geometry $plot] && $_try_dd > 2 && $_retry < 4} {
-                set _try_dd [expr {$_try_dd / 2}]
-                if {$_try_dd < 2} { set _try_dd 2 }
-                incr _retry
-                catch {vmdcon -info "VMDHole: sos_triangle produced no surface; retrying at dot density $_try_dd."}
-                if {[catch {run_sph_process $sph_file $sos 1 $_try_dd}]} { break }
-                catch {run_sos_triangle $sos $plot}
-            }
-            catch {file delete $sos}
-            # Still nothing: fall back to the point cloud, but say so LOUDLY.
-            # That fallback draws tens of thousands of overlapping spheres, which
-            # reads as a lumpy blobby "surface" rather than an obvious failure,
-            # and it silently stood in for the real surface for ~8 builds while
-            # the actual cause went unnoticed. Never let it degrade quietly.
+            surface_mesh $sph_file $plot $_form $conn_dotden 1 0 [_surface_smooth_with $frame]
             if {$conn_orig_sph ne "" && ![surface_has_geometry $plot]} {
-                catch {vmdcon -warn "VMDHole: CONNOLLY - sos_triangle produced no surface even after the dot budget and [expr {$_retry}] retries; showing the raw point cloud instead. The lumpy result is the point cloud, NOT a triangulated surface."}
+                catch {vmdcon -warn "VMDHole: CONNOLLY - no surface could be built even after the dot budget; showing the raw point cloud instead. The lumpy result is the point cloud, NOT a triangulated surface."}
                 return [dict create kind sph path $conn_orig_sph maxr $state(endrad)]
             }
             if {![surface_has_geometry $plot]} {
-                error "sos_triangle produced no surface after $_retry retries."
+                error "no surface could be built for this frame."
             }
             geom_cache_mark $plot
             return [dict create kind vmd_plot path $plot]
         }
         dots {
-            # sph_process -sos -> sos_triangle dot surface. The enhanced binary can
-            # emit deduplicated points directly (--points); otherwise extract
-            # vertices in Tcl (dots_from_trinorm, which carries per-vertex color).
-            set sos  [file join $run_dir "hole_dots.sos"]
-            set plot [file join $run_dir "hole_dots.vmd_plot"]
-            if {[geom_cache_valid $plot $sph_file]} {
+            set plot [surface_plot_name $run_dir hole_dots dots]
+            if {[geom_cache_valid $plot $sph_file]} { return [dict create kind vmd_plot path $plot] }
+            if {[surface_mesh $sph_file $plot dots $conn_dotden 1 0 [_surface_smooth_with $frame]]} {
+                geom_cache_mark $plot
                 return [dict create kind vmd_plot path $plot]
             }
-            if {[catch {run_sph_process $sph_file $sos 1 $conn_dotden}]} {
-                if {$conn_orig_sph ne ""} {
-                    catch {file delete $sos}
-                    return [dict create kind sph path $conn_orig_sph maxr $state(endrad)]
-                }
-                error "sph_process produced no surface."
-            }
-            if {[dots_fast_available]} {
-                run_sos_triangle_points $sos $plot
-                if {[surface_has_geometry $plot]} {
-                    catch {file delete $sos}
-                    geom_cache_mark $plot
-                    return [dict create kind vmd_plot path $plot]
-                }
-                # fall through to the Tcl path if the fast path produced nothing
-            }
-            set tmp [file join $run_dir "hole_dots_trinorm.tmp"]
-            run_sos_triangle $sos $tmp
-            catch {file delete $sos}
-            dots_from_trinorm $tmp $plot
-            catch {file delete $tmp}
-            geom_cache_mark $plot
-            return [dict create kind vmd_plot path $plot]
+            if {$conn_orig_sph ne ""} { return [dict create kind sph path $conn_orig_sph maxr $state(endrad)] }
+            error "no dots surface could be built."
         }
         default { return {} }
     }
@@ -34186,6 +35407,7 @@ proc ::VMDHole::hydro_method_suffix {} {
     append msuffix "_lt[expr {int([lining_dist_thresh_value]*10)}]"
     append msuffix "_bw[expr {int([hydrophob_kde_bandwidth_value]*10)}]"
     if {[info exists state(hydro_3d_accurate)] && $state(hydro_3d_accurate)} { append msuffix "_3d" }
+    append msuffix [_surface_smooth_tag]
     return $msuffix
 }
 
@@ -34210,6 +35432,11 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # built surface never re-triangulates - it is just a recolor pass. Fall back
     # to a dedicated uncolored base mesh when the triangulated base is absent.
     set tribase [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
+    # The mesher's base, in HOLE's own records, when it can serve this run. It
+    # has no polygon limit: a Connolly run at dot density 15 on a 200k-atom
+    # system failed here with "sos_triangle produced no surface" whenever the
+    # base had to be rebuilt from the raw cloud.
+    set csgbase [_csg_base_mesh $run_dir $sph_file]
     # An uncached property recolor is a synchronous sph_process/sos_triangle build (on
     # an ALREADY-triangulated base - see load_surface_for_frame for the separate, much
     # heavier from-scratch geometry build, gated there). For a NORMAL frame this recolor
@@ -34221,14 +35448,16 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # (tribase, hole_triangulated.vmd_plot from create_plot_asset), so the colored
     # surface has the same geometry as the radius-colored one.
     set plot0 [file join $run_dir hole_hydro_base.vmd_plot]
-    if {[surface_has_geometry $tribase] && [file exists $sph_file] && \
+    if {$csgbase ne ""} {
+        set plot0 $csgbase
+    } elseif {[surface_has_geometry $tribase] && [file exists $sph_file] && \
             [file mtime $tribase] >= [file mtime $sph_file]} {
         set plot0 $tribase
     } elseif {$base_plot ne "" && [surface_has_geometry $base_plot]} {
         # The mesh the caller is ALREADY rendering. Preferring it over a
         # from-scratch rebuild is what keeps property coloring on the same
         # geometry as the radius view: create_plot_asset builds a CONNOLLY base
-        # from a TRIMMED and size-REDUCED cloud (_trim_conn_escaped_sph /
+        # from a size-REDUCED cloud (
         # _reduce_conn_sph), but the rebuild below re-runs sph_process on the
         # RAW .sph - a much denser cloud that overruns sos_triangle's polygon
         # budget and comes back truncated. That is why the surface's ends
@@ -34243,6 +35472,9 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # on the draft flag: only CONNOLLY has a cheaper draft mesh, so no other
     # method's filenames move and no other method's cache is split.
     if {[string match "*_draft*.vmd_plot" $plot0]} { append msuffix "_draft" }
+    # A colour file is per triangle: one built on the other mesher's mesh must
+    # never be served after a switch.
+    if {$csgbase ne ""} { append msuffix "_csg" }
     # A caller coloring a SUB-mesh (a Connolly region) needs its own cache file:
     # same scheme and settings, different geometry, so sharing the run-wide name
     # would let the two overwrite each other's colors.
@@ -34287,10 +35519,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     if {[hydro3d_fast_available] || $_force3d_conn} {
         if {![surface_has_geometry $plot0] || \
                 ([file exists $sph_file] && [file mtime $plot0] < [file mtime $sph_file])} {
-            if {![file exists $sos] || [file size $sos] == 0} {
-                run_sph_process $sph_file $sos 0
-            }
-            run_sos_triangle $sos $plot0
+            surface_mesh $sph_file $plot0 draw "" 0
             catch {file delete $sos}
         }
         # When supported, the surface uses the same all-atoms sidecar + C
@@ -34308,7 +35537,8 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
             set signed3 [dict get [property_meta $state(hydro_scheme)] signed]
             set _v3ferr 0
         } elseif {$_use_cl3} {
-            set _v3ferr [catch {write_hydro3d_atoms_sidecar $molid $frame $vfile3d} signed3]
+            set _v3ferr [catch {write_hydro3d_atoms_sidecar $molid $frame $vfile3d "" \
+                [expr {[_csg_can_mesh] ? "pdb" : "dat"}]} signed3]
         } else {
             set _v3ferr [catch {write_hydro3d_residue_sidecar $molid $frame $vfile3d} signed3]
         }
@@ -34340,13 +35570,10 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # lipophilicity, with pore-facing/side-chain/residue-mean) renders at the
     # same speed as plain KD/WW, with no slow Tcl colorize. C stays
     # property-agnostic: it only sees a scalar per sphere.
-    if {[values_fast_available]} {
+    if {[fast_available values]} {
         if {![surface_has_geometry $plot0] || \
                 ([file exists $sph_file] && [file mtime $plot0] < [file mtime $sph_file])} {
-            if {![file exists $sos] || [file size $sos] == 0} {
-                run_sph_process $sph_file $sos 0
-            }
-            run_sos_triangle $sos $plot0
+            surface_mesh $sph_file $plot0 draw "" 0
             catch {file delete $sos}
         }
         # A large CONNOLLY .sph is a ~185k-point flood-fill where EVERY point has
@@ -34412,13 +35639,10 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     # KD/WW atom-mean; residue-mean / pore-facing need the Tcl colorizer.
     set tcl_only [expr {($state(hydro_avg_mode) eq "residue") || $state(hydro_facing) || \
         ($state(hydro_scheme) ni {kd ww})}]
-    if {!$tcl_only && [recolor_fast_available]} {
+    if {!$tcl_only && [fast_available recolor]} {
         if {![surface_has_geometry $plot0] || \
                 ([file exists $sph_file] && [file mtime $plot0] < [file mtime $sph_file])} {
-            if {![file exists $sos] || [file size $sos] == 0} {
-                run_sph_process $sph_file $sos 0
-            }
-            run_sos_triangle $sos $plot0
+            surface_mesh $sph_file $plot0 draw "" 0
             catch {file delete $sos}
         }
         set sidecar [file join $run_dir hole_hydro_atoms.dat]
@@ -34433,7 +35657,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
     }
     # Fast path: an enhanced sos_triangle colors the surface in compiled code in
     # one pass, fed a channel-local atom sidecar dumped here (atomselect).
-    if {!$tcl_only && [hydro_fast_available]} {
+    if {!$tcl_only && [fast_available hydro]} {
         if {![file exists $sos] || [file size $sos] == 0} {
             run_sph_process $sph_file $sos 0
         }
@@ -34448,9 +35672,7 @@ proc ::VMDHole::build_hydro_trinorm {run_dir sph_file molid frame {draft 0} {bas
         # hydrophobicity never depends on the enhanced binary.
     }
     if {![surface_has_geometry $plot0]} {
-        run_sph_process $sph_file $sos 0
-        run_sos_triangle $sos $plot0
-        catch {file delete $sos}
+        surface_mesh $sph_file $plot0 draw "" 0
     }
     # The Tcl fallback colours by NEAREST CENTRELINE SPHERE, and a region's own
     # .sph has no centreline records - only the pore's does. Given one, that
@@ -34501,14 +35723,6 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
     variable results
     variable result_frames
     if {$state(display_mode) in {none centerline}} { return }
-    # CAPSULE's .sph (paired QC1/QC2 stadium cap-centres + escaped records) was never
-    # meant to go through sph_process/sos_triangle at all - create_plot_asset builds it
-    # via _build_capsule_stadiums/_build_capsule_stadium_surface instead (cheap, pure-Tcl
-    # geometry, no external process), and does so lazily per frame on first view. Running
-    # THIS pipeline for capsule wastes a shell-pool pass attempting a triangulation that
-    # was always going to fail/be discarded (the "it goes on to isosurface" symptom, even
-    # when the selected display mode is wireframe/lines, not isosurface).
-    if {[_run_uses_card capsule]} { return }
     vmdcon -info "VMDHole: pre-building surfaces — mode=$state(display_mode)  frames=[llength $result_frames]"
     set mode $state(display_mode)
     # Pre-build the COLOR-INDEPENDENT radius-colored base mesh (always -color).
@@ -34517,12 +35731,12 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
     set cflag "-colour"
     # Fast dots: the enhanced binary emits the deduplicated point surface in one
     # compiled pass (--points), so no Tcl dots_from_trinorm post-step is needed.
-    set fast_dots [expr {$mode eq "dots" && [dots_fast_available]}]
+    set fast_dots [expr {$mode eq "dots" && [fast_available points]}]
 
     # Batch mode: when sos_triangle supports --batch, split the pipeline into
     # two phases (sph_process in parallel, then sos_triangle in batch files)
     # to eliminate N-1 shell spawn cycles.
-    set use_batch [batch_fast_available]
+    set use_batch [sos_triangle_has_feature batch]
 
     # Collect frames that need surface building.
     # sph_jobs: shell commands for sph_process (Phase A, always parallel)
@@ -34532,17 +35746,22 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
     set sos_pairs {}
     set combined_jobs {}
 
+    set _skipped {}
     foreach frame $result_frames {
         if {![dict exists $results $frame]} continue
         set fdata [dict get $results $frame]
         if {[dict get $fdata asset] ne {}} continue
         set sph_file [dict get $fdata sph_file]
-        if {![file exists $sph_file]} continue
+        if {![file exists $sph_file]} { lappend _skipped $frame; continue }
         # A large CONNOLLY cloud's surface is deferred, not prebuilt in bulk here
         # (prebuilding every frame at once would storm the cores). It is built lazily
         # on the settle pass when the frame is shown; the radius profile the plot
         # shows comes from the parsed TSV, independent of any surface.
-        if {[_is_large_conn_sph $sph_file]} continue
+        # Remembered, because the registration loop below used to mark every
+        # frame with no mesh as FAILED with the polygon-limit message - a
+        # property-coloured Connolly run on a 200k-atom system was dead before
+        # it was ever drawn, whichever mesher was selected.
+        if {[_is_large_conn_sph $sph_file]} { lappend _skipped $frame; continue }
         set run_dir [dict get $fdata run_dir]
 
         switch -- $mode {
@@ -34559,6 +35778,12 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
                 set plot [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
             }
             default continue
+        }
+        if {[_csg_can_mesh] && ($mode eq "dots" || [_csg_active])} {
+            set form [expr {$mode eq "dots" ? "dots" : ([_csg_draw_form] ? "draw" : "mol")}]
+            set plot [surface_plot_name $run_dir [expr {$mode eq "dots" ? "hole_dots" : "hole_triangulated[_conn_surface_suffix]"}] $form]
+            lappend combined_jobs [list $frame [list |sh -c [surface_mesh_cmd $sph_file $plot $form "" 1 0 [_surface_smooth_with $frame]]]]
+            continue
         }
 
         set sph_cmd [_sph_process_cmd $state(dot_density) \
@@ -34684,6 +35909,7 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
     # Now register the assets for each frame
     foreach frame $result_frames {
         if {![dict exists $results $frame]} continue
+        if {$frame in $_skipped} continue
         set fdata [dict get $results $frame]
         if {[dict get $fdata asset] ne {}} continue
         set run_dir [dict get $fdata run_dir]
@@ -34691,7 +35917,8 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
         switch -- $mode {
             dots {
                 set plot [file join $run_dir "hole_dots.vmd_plot"]
-                if {!$fast_dots} {
+                if {[_csg_can_mesh]} { set plot [surface_plot_name $run_dir hole_dots dots] }
+                if {!$fast_dots && ![_csg_can_mesh]} {
                     # Built-in path: extract points from the triangulated temp.
                     set tmp [file join $run_dir "hole_dots_trinorm.tmp"]
                     if {[file exists $tmp]} {
@@ -34708,6 +35935,10 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
             }
             triangulated - wireframe {
                 set plot [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
+                if {[_csg_active]} {
+                    set plot [surface_plot_name $run_dir "hole_triangulated[_conn_surface_suffix]" [expr {[_csg_draw_form] ? "draw" : "mol"}]]
+                    if {![_csg_draw_form]} { _csg_own_plot $plot }
+                }
                 if {[file exists $plot] && [surface_has_geometry $plot]} {
                     geom_cache_mark $plot
                     dict set results $frame asset [dict create kind vmd_plot path $plot]
@@ -34737,6 +35968,9 @@ proc ::VMDHole::prebuild_surfaces_parallel {} {
 }
 
 proc ::VMDHole::prebuild_hydro_variants_parallel {} {
+    # Batching sos_triangle recolours across frames only pays when sos_triangle
+    # is the mesher; the marching-cubes path recolours in-process per frame.
+    if {[_csg_can_mesh]} { return }
     # Bake every frame's hydrophobicity-colored surface up front, in parallel,
     # by recoloring the already-built radius base mesh (compiled --recolor pass,
     # no re-triangulation). Without this, hydro variants are built lazily on first
@@ -34760,13 +35994,13 @@ proc ::VMDHole::prebuild_hydro_variants_parallel {} {
     # color-identical to the lazy display path). An older binary without the
     # "values" capability falls back to the legacy KD/WW atom recolor; lacking even
     # that, skip the prebuild and let surfaces build lazily on first display.
-    set use_values [values_fast_available]
-    if {!$use_values && ![recolor_fast_available]} { return }
+    set use_values [fast_available values]
+    if {!$use_values && ![fast_available recolor]} { return }
     # Batched recolor (round-robin into n_workers processes, like the
     # triangulation phase's sos_triangle --batch already does) instead of one
     # --recolor process per frame - only meaningful with the values path (the
     # binary's --batch-recolor mode is values-only, see sos_triangle_fast.c).
-    set use_batch_recolor [expr {$use_values && [batch_recolor_fast_available]}]
+    set use_batch_recolor [expr {$use_values && [fast_available batchrecolor]}]
     if {[catch {resolve_molid} molid] || $molid < 0} { return }
     # This prebuild only ever produces AXIAL (values/recolor) surfaces - it has
     # no batched equivalent of the true-3D path yet. Bail out when "Accurate 3D
@@ -34831,7 +36065,8 @@ proc ::VMDHole::prebuild_hydro_variants_parallel {} {
         if {![file exists $sph_file]} continue
         set sph_file [_hydro_sph_for_binary $sph_file]
         # The recolor source is the radius base mesh built in the phase above.
-        set base [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
+        set base [_csg_base_mesh $run_dir $sph_file]
+        if {$base eq ""} { set base [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"] }
         if {![surface_has_geometry $base]} continue
         set plot [file join $run_dir "hole_hydro_$scheme${msuffix}.vmd_plot"]
         lappend tri_plots [list $frame $plot]
@@ -34948,6 +36183,9 @@ proc ::VMDHole::prebuild_hydro_variants_parallel {} {
 }
 
 proc ::VMDHole::prebuild_hydro3d_variants_parallel {} {
+    # Batching sos_triangle recolours across frames only pays when sos_triangle
+    # is the mesher; the marching-cubes path recolours in-process per frame.
+    if {[_csg_can_mesh]} { return }
     # True-3D equivalent of prebuild_hydro_variants_parallel, via the
     # --batch-hydro3d-recolor C mode (identical to the per-frame
     # run_sos_triangle_3d_recolor path). Bakes every frame's "Accurate 3D
@@ -34990,7 +36228,8 @@ proc ::VMDHole::prebuild_hydro3d_variants_parallel {} {
         set run_dir  [dict get $fdata run_dir]
         set sph_file [dict get $fdata sph_file]
         if {![file exists $sph_file]} continue
-        set base [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"]
+        set base [_csg_base_mesh $run_dir $sph_file]
+        if {$base eq ""} { set base [file join $run_dir "hole_triangulated[_conn_surface_suffix].vmd_plot"] }
         if {![surface_has_geometry $base]} continue
         set plot [file join $run_dir "hole_hydro_$scheme${msuffix}.vmd_plot"]
         if {[file exists $plot] && [surface_has_geometry $plot] && \
@@ -35632,6 +36871,71 @@ proc ::VMDHole::_kill_running_jobs {running} {
     }
 }
 
+# One shell per pool slot instead of one fork per frame: forking VMD copies the
+# page tables of a process holding the trajectory (20 ms per frame on a 197k-atom
+# system). A worker runs each run.sh as a child and prints a sentinel with its exit
+# status; a dead worker fails its job and is replaced. Not used on Windows.
+namespace eval ::VMDHole {
+    variable _pw_workers {}
+    variable _pw_busy
+    variable _pw_buf
+    array set _pw_busy {}
+    array set _pw_buf {}
+}
+proc ::VMDHole::_pw_usable {} { return [expr {$::tcl_platform(platform) ne "windows"}] }
+proc ::VMDHole::_pw_acquire {njobs} {
+    variable _pw_workers
+    variable _pw_busy
+    foreach ch $_pw_workers { if {![info exists _pw_busy($ch)]} { return $ch } }
+    if {[llength $_pw_workers] >= $njobs} { return "" }
+    if {[catch {open [list "|sh"] r+} ch]} { return "" }
+    fconfigure $ch -blocking 0 -buffering line
+    lappend _pw_workers $ch
+    return $ch
+}
+proc ::VMDHole::_pw_submit {ch frame sh_file} {
+    variable _pw_busy
+    variable _pw_buf
+    set _pw_busy($ch) $frame
+    set _pw_buf($ch) ""
+    puts $ch "sh [shell_quote $sh_file] </dev/null >/dev/null 2>&1; printf '__VMDHOLE_DONE__ %s\\n' \$?"
+    flush $ch
+}
+# "" while the job runs, else its exit status; -1 when the worker itself died.
+proc ::VMDHole::_pw_poll {ch} {
+    variable _pw_workers
+    variable _pw_busy
+    variable _pw_buf
+    catch {append _pw_buf($ch) [read $ch]}
+    if {[regexp {__VMDHOLE_DONE__ (-?\d+)} $_pw_buf($ch) -> rc]} {
+        unset -nocomplain _pw_busy($ch) _pw_buf($ch)
+        return $rc
+    }
+    if {[eof $ch]} {
+        unset -nocomplain _pw_busy($ch) _pw_buf($ch)
+        set _pw_workers [lsearch -all -inline -exact -not $_pw_workers $ch]
+        catch {fconfigure $ch -blocking 1}
+        catch {close $ch}
+        return -1
+    }
+    return ""
+}
+proc ::VMDHole::_pw_shutdown {} {
+    variable _pw_workers
+    variable _pw_busy
+    variable _pw_buf
+    foreach ch $_pw_workers {
+        catch {puts $ch exit; flush $ch}
+        catch {fconfigure $ch -blocking 1}
+        catch {close $ch}
+    }
+    set _pw_workers {}
+    array unset _pw_busy
+    array unset _pw_buf
+    array set _pw_busy {}
+    array set _pw_buf {}
+}
+
 proc ::VMDHole::run_shell_pool {jobs njobs label {unit "frame(s)"}} {
     # Run independent shell jobs concurrently, up to njobs at a time, polling
     # via non-blocking pipes so the GUI stays responsive and shows live
@@ -35816,6 +37120,13 @@ proc ::VMDHole::run_signature {molid seltext} {
     }
     set exestamp {}
     catch { set exestamp "[file size $state(hole_exec)]:[file mtime $state(hole_exec)]" }
+    set _se [expr {[info exists state(search_engine)] ? $state(search_engine) : "mc"}]
+    set _ce [expr {[info exists state(conn_engine)] ? $state(conn_engine) : "hole"}]
+    set nmstamp {}
+    if {$_se eq "nm" || $_ce eq "fast"} {
+        set _nmp [tool_path nm_search]
+        catch { set nmstamp "[file size $_nmp]:[file mtime $_nmp]" }
+    }
     set parts [list \
         sel   $seltext \
         cpoint [string trim $state(cpoint)] \
@@ -35837,6 +37148,9 @@ proc ::VMDHole::run_signature {molid seltext} {
         rfstamp $rfstamp \
         coords  $coords \
         exe     $exestamp \
+        search  $_se \
+        conneng $_ce \
+        nmexe   $nmstamp \
         plugin 1.0]
     return [join $parts "|"]
 }
@@ -36143,6 +37457,20 @@ proc ::VMDHole::run_analysis {} {
             # The pure-Tcl engine reads a PDB, so it never takes the packed path
             # however the binary is built.
             set _fast_coord [expr {$_fb_script eq "" && [_hole_fast_coord_available]}]
+            set _nm_mode [_nm_mode_for_run [expr {$_fb_script ne ""}]]
+            set _nm_exe ""
+            if {$_nm_mode ne ""} {
+                set _nm_exe [tool_path nm_search]
+                if {$_nm_exe eq ""} {
+                    _note "nm_search engine not found - running HOLE's own search/Connolly instead (Settings > Engines)." warn
+                    set _nm_mode ""
+                }
+            }
+            # the engine reads the packed record itself, so those routes do not
+            # depend on HOLE's patch; mcconn still runs HOLE on the coordinates
+            if {$_nm_mode in {nm nmconn}} {
+                set _fast_coord [expr {!([info exists state(keep_input_pdb)] && $state(keep_input_pdb))}]
+            }
 
             set sel {}
             if {[catch {set sel [atomselect $molid $seltext]} _selerr]} {
@@ -36266,6 +37594,18 @@ proc ::VMDHole::run_analysis {} {
                         # frame so the axis tracks the structure (static x,y,z stays).
                         lassign [frame_axis $molid $frame] cp_f cv_f _fa_M1 _fa_M2
                         write_control_file [file join $tmp_dir hole.inp] $_coord_name hole_out.sph $cp_f $cv_f
+                        set _nm_cmd ""
+                        if {$_nm_mode ne ""} {
+                            set _nm_cmd [_nm_run_lines $_nm_mode $_nm_exe [file join $tmp_dir hole.inp] $_coord_name $njobs]
+                            if {$_nm_cmd eq ""} {
+                                if {![info exists _nm_warned]} {
+                                    set _nm_warned 1
+                                    _note "This control file has cards the nm_search engine cannot take - running HOLE instead." warn
+                                }
+                            } elseif {$_nm_mode eq "mcconn"} {
+                                write_control_file [file join $tmp_dir hole_sph.inp] $_coord_name hole_out.sph $cp_f $cv_f 1
+                            }
+                        }
                         # Roll-checked co-rotating azimuth zero-point for the Connolly
                         # lobe pipeline, ONLY when this frame's CVECT came from a live
                         # Stabilize fit (M1/M2 non-empty) and a reference basis exists
@@ -36291,7 +37631,9 @@ proc ::VMDHole::run_analysis {} {
                         set fh [open $sh_file w]
                         puts $fh "#!/bin/sh"
                         puts $fh "cd [shell_quote $tmp_dir] || exit 1"
-                        if {$_fb_script eq "" && ![_run_uses_card capsule]} {
+                        if {$_nm_cmd ne ""} {
+                            foreach _l $_nm_cmd { puts $fh $_l }
+                        } elseif {$_fb_script eq "" && ![_run_uses_card capsule]} {
                             puts $fh "$omp_prefix[shell_quote $state(hole_exec)] < hole.inp > hole_out.txt 2>/dev/null"
                             # Capture the ENGINE's status on the very next line:
                             # the script continues with cp/awk/printf/rm, and the
@@ -36369,7 +37711,7 @@ proc ::VMDHole::run_analysis {} {
                         # folded into the awk: the warning sits immediately after
                         # the last data row, which is where both awk branches
                         # exit. `|| true` because grep exits 1 on no match.
-                        puts $fh "grep -o 'MAY BE INCOMPLETE IN \[-+\]VE DIRECTION' hole_out.txt 2>/dev/null | sort -u | tr '\\n' ' ' > [shell_quote [file join $run_dir vmdhole_incomplete.dat]] 2>/dev/null || true"
+                        puts $fh "grep -oh 'MAY BE INCOMPLETE IN \[-+\]VE DIRECTION' hole_out.txt hole_sph_out.txt 2>/dev/null | sort -u | tr '\\n' ' ' > [shell_quote [file join $run_dir vmdhole_incomplete.dat]] 2>/dev/null || true"
                         puts $fh "cp hole_out.sph [shell_quote [file join $run_dir hole_out.sph]] 2>/dev/null"
                         # Parse the profile to hole_profile.tsv HERE, in this job's
                         # tmpfs, so the multi-GB hole_out.txt never has to be copied
@@ -36398,10 +37740,14 @@ proc ::VMDHole::run_analysis {} {
                           # coordinate so the two coord-0 rows keep their order.
                           puts $fh {printf 'coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad\n' > hole_profile.tsv}
                           puts $fh {awk '!intab{if($0 ~ /cenxyz\.cvec.*eff\.rad/){intab=1}next} $0 ~ /ve records/{off+=last;last=0;next} {if(NF>=8 && $1 ~ /^[-+0-9.eE]+$/ && $2 ~ /^[-+0-9.eE]+$/ && $7 ~ /^[-+0-9.eE]+$/ && $8 ~ /^[-+0-9.eE]+$/){last=$8+0;cr="";if($5 ~ /^[-+0-9.eE]+$/)cr=$5;printf "%s\t%s\t%s\t%.5f\t\t\t\t%s\n",$1,$2,$7,last+off,cr;n++}else if(n>0){exit}}' hole_out.txt | sort -s -n -k1,1 >> hole_profile.tsv}
-                          } elseif {$_fb_script eq ""} {
+                          } elseif {$_fb_script eq "" && $_nm_cmd eq ""} {
                           puts $fh {awk 'BEGIN{print "coord\tradius\tcen_line_d\tsum_s_over_area\trequiv\tconn_s_over_area\trequiv_estim\tcap_rad"} !intab{if($0 ~ /cenxyz\.cvec.*radius/){intab=1;if($0 ~ /Requiv/)isconn=1}next} {if(NF>=4 && $1 ~ /^[-+0-9.eE]+$/ && $2 ~ /^[-+0-9.eE]+$/ && $3 ~ /^[-+0-9.eE]+$/ && $4 ~ /^[-+0-9.eE]+$/){rq="";cs="";re="";if(isconn){rq=substr($0,49,12);gsub(/^ +| +$/,"",rq);cs=substr($0,73,12);gsub(/^ +| +$/,"",cs);re=substr($0,61,12);gsub(/^ +| +$/,"",re)};print $1"\t"$2"\t"$3"\t"$4"\t"rq"\t"cs"\t"re"\t";n++}else if(n>0){exit}}' hole_out.txt > hole_profile.tsv}
                           }
                         puts $fh "cp hole_profile.tsv [shell_quote [file join $run_dir hole_profile.tsv]] 2>/dev/null"
+                        if {$_nm_cmd ne ""} {
+                            puts $fh "cp nm_search.log [shell_quote [file join $run_dir nm_search.log]] 2>/dev/null"
+                            puts $fh "test -f hole_sph_out.txt && cp hole_sph_out.txt [shell_quote [file join $run_dir hole_sph_out.txt]] 2>/dev/null"
+                        }
                         # Stamp this frame's run_dir with the current run signature - read
                         # back by _hole_run_sig to key the Trends disk cache.
                         puts $fh "printf '%s' [shell_quote $_run_sig] > [shell_quote [file join $run_dir vmdhole_signature.dat]] 2>/dev/null"
@@ -36433,17 +37779,27 @@ proc ::VMDHole::run_analysis {} {
                         puts $fh "exit \$_vh_rc"
                         close $fh
 
-                        if {[catch {open [list "|sh" $sh_file] r} ch]} {
+                        if {[_pw_usable] && [set _pw_ch [_pw_acquire $njobs]] ne ""} {
+                            _pw_submit $_pw_ch $frame $sh_file
+                            lappend running [list $frame $_pw_ch 1]
+                        } elseif {[catch {open [list "|sh" $sh_file] r} ch]} {
                             incr done; incr hole_failures
                         } else {
                             fconfigure $ch -blocking 0
-                            lappend running [list $frame $ch]
+                            lappend running [list $frame $ch 0]
                         }
                     }
                     # Poll running HOLE jobs for completion.
                     set still {}
                     foreach rj $running {
-                        lassign $rj frame ch
+                        lassign $rj frame ch _pw
+                        if {$_pw} {
+                            set _rc [_pw_poll $ch]
+                            if {$_rc eq ""} { lappend still $rj; continue }
+                            if {$_rc != 0} { incr hole_failures }
+                            incr done
+                            continue
+                        }
                         catch {read $ch}
                         if {[eof $ch]} {
                             # Child has exited; switch to blocking so close()
@@ -36471,6 +37827,8 @@ proc ::VMDHole::run_analysis {} {
                 }
             } _stream_err]} {
                 # Reap any still-running jobs so this don't leak channels/temps.
+                _kill_running_jobs $running
+                _pw_shutdown
                 foreach rj $running { catch {close [lindex $rj 1]} }
                 catch {$sel delete}
                 # Failure path: also release the stabilization atomselect handles and
@@ -36484,6 +37842,7 @@ proc ::VMDHole::run_analysis {} {
                 }
                 error $_stream_err
             }
+            _pw_shutdown
             catch {$sel delete}
             # run.sh removes its own tmpfs dir after HOLE exits - but ONLY on a
             # normal exit. Abort kills the process tree, so those frames never
@@ -36827,28 +38186,16 @@ proc ::VMDHole::refresh_results_list {} {
     # the data is untouched - call _redisplay_results_list instead. Bumping on
     # those paths wiped both modes' caches AND the Over Time "click Compute"
     # gate on every mode switch.
-    variable binned_cache
     variable plot_data_version
     incr plot_data_version
-    set conn_site_cache [dict create]
-    set _conn_cls_memo [dict create]
-    set _conn_unroll_memo [dict create]
-    set binned_cache [dict create]
+    cache_clear results
     # A new HOLE run invalidates the Over-Time property heatmap: clear the
     # approval gate so the user must click Compute again (prevents auto-recompute
     # against stale sidecar files from the previous run).
     variable _hm_computed_scheme
     variable _hm_stale_reason
-    variable hm_render_cache
-    variable hm_prop_cache
-    variable _2dmap_memo
     set _hm_computed_scheme ""
     set _hm_stale_reason ""
-    set hm_render_cache {}
-    set hm_prop_cache [dict create]
-    # The unrolled map's build memo is keyed on the .sph mtime, but a new run
-    # can reuse a run_dir; drop it wholesale rather than rely on that.
-    array unset _2dmap_memo
     _redisplay_results_list
 }
 
@@ -38633,7 +39980,8 @@ proc ::VMDHole::_update_asymmetry_controls_visibility {} {
     if {![_have_tk]} { return }
     if {![winfo exists $eb.ellsl]} { return }
     variable state
-    if {[info exists state(show_asymmetry)] && $state(show_asymmetry)} {
+    set _ok [expr {![info exists state(_ellipse_fit_ok)] || $state(_ellipse_fit_ok)}]
+    if {$_ok && [info exists state(show_asymmetry)] && $state(show_asymmetry)} {
         # Render sits right after the Ellipse-fit dropdown and BEFORE Passability
         # (Passability is always the last button on the row).
         catch {pack $eb.ellsl   -side left -padx {6 0} -before $eb.passb}
@@ -39923,7 +41271,7 @@ proc ::VMDHole::_ion_flow_scan {molid frame_ref {with_water 0}} {
     set _wnw 0; set _wbytes 0; set _wfail 0
     array unset _wset_written
     set _wnofast [expr {[info exists _ion_flow_no_fast] && $_ion_flow_no_fast}]
-    if {$_wsel_txt ne "" && !$_wnofast && [ionflow_fast_available]} {
+    if {$_wsel_txt ne "" && !$_wnofast && [fast_available ionflowproject]} {
         # Two ways to hand the water to the binary. The cheap one dumps EVERY
         # water coordinate as a binary block per frame and lets C do the
         # cylinder/window filter: writing one atomselect's coordinates costs
@@ -41133,7 +42481,7 @@ proc ::VMDHole::_run_ion_flow {} {
     }
     set molid [resolve_molid_or -1]
     if {$molid < 0} { set state(status) "Load a molecule first."; return }
-    if {[traj_numframes] < 2} { set state(status) "Ion Flow needs a trajectory (>= 2 frames)."; return }
+    if {[traj_numframes] < 2} { set state(status) "Ion & Water needs a trajectory (>= 2 frames)."; return }
     # The reference frame is whichever mode's results define the axis - HOLE's
     # selected result frame, or the displayed tunnel frame. Reading HOLE's here
     # unconditionally is what left tunnel mode stuck on "Run HOLE first".
@@ -41145,7 +42493,7 @@ proc ::VMDHole::_run_ion_flow {} {
             return
         }
         if {![info exists state(tunnel_selected_id)] || $state(tunnel_selected_id) eq ""} {
-            set state(status) "Select a tunnel first - Ion Flow measures one pathway at a time."
+            set state(status) "Select a tunnel first - Ion & Water measures one pathway at a time."
             return
         }
     } else {
@@ -41164,7 +42512,7 @@ proc ::VMDHole::_run_ion_flow {} {
         # Keep a SPECIFIC refusal the scan already reported (e.g. the tunnel
         # curvature gate) - the generic message would hide the actual reason.
         if {$state(status) eq $_scan_msg} {
-            set state(status) "Ion Flow: no ions (or water) detected, or no valid pore for frame $frame."
+            set state(status) "Ion & Water: no ions or water detected, or no valid pore for frame $frame."
         }
         draw_ion_flow_tab
         return
@@ -41198,7 +42546,12 @@ proc ::VMDHole::_on_ion_flow_show_changed {} {
     # Passage "Show" picker (water): pure redraw, the cache already holds
     # every entered trace with its crossing counts.
     variable state
-    set state(ion_flow_passage_show_disp) [expr {$state(ion_flow_passage_show) eq "entered" ? "All entered" : "Crossings"}]
+    set state(ion_flow_passage_show_disp) [switch -- $state(ion_flow_passage_show) {
+        entered { expr {"All entered"} }
+        up      { expr {"Passage up"} }
+        down    { expr {"Passage down"} }
+        default { expr {"All crossing"} }
+    }]
     draw_ion_flow_tab
 }
 
@@ -41262,6 +42615,20 @@ proc ::VMDHole::_nice_axis_top {vmax} {
     }
     set step [expr {10.0*$mag}]
     return [list [expr {int(ceil(double($vmax)/$step)*$step)}] [expr {int($step)}]]
+}
+
+proc ::VMDHole::_nice_axis_range {vmin vmax} {
+    # Axis bottom, top and step for a count series: zero-based unless the data
+    # never comes near zero (a water count between 500 and 1100 would read flat).
+    lassign [_nice_axis_top $vmax] top step
+    if {$vmin <= 0 || $vmin < 0.35*$vmax} { return [list 0 $top $step] }
+    # not zero-based: size the step by the span, not the magnitude
+    lassign [_nice_axis_top [expr {$vmax-$vmin}]] _ step
+    set bot [expr {int(floor(double($vmin)/$step)*$step)}]
+    set top [expr {int(ceil(double($vmax)/$step)*$step)}]
+    if {$top <= $vmax} { set top [expr {$top+$step}] }
+    if {$bot >= $top} { set bot [expr {$top-$step}] }
+    return [list $bot $top $step]
 }
 
 proc ::VMDHole::_ion_trace_dir {tr} {
@@ -41560,7 +42927,7 @@ proc ::VMDHole::_draw_ion_flow_occupancy {} {
         set _wallkey [format "\u2014 pore wall r(z)      -\u00b7- +%.1f \u00c5 shell" $_shell]
     }
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
-        [list "Ion occupancy + flow \u2014 $_splabel  ([dict get $d nions] [_ion_flow_noun $d],\
+        [list "Occupancy + flow \u2014 $_splabel  ([dict get $d nions] [_ion_flow_noun $d],\
               [dict get $d nused] frames)" {Helvetica 10 bold} black] \
         [list "arrows = mean displacement   \u00b7   net flux through the lumen: up $up  down\
               $down  net $net[_ion_flow_rcut_note $d]" {Helvetica 8} "#333333"] \
@@ -41808,14 +43175,28 @@ proc ::VMDHole::_draw_ion_passage_view {} {
     }
     set n_entered [llength $traces]
     set n_cross [llength $cross]
-    set _only_cross_segs 0
-    if {$_water && $_show eq "crossings"} { set plain {}; set _only_cross_segs 1 }
+    # What the picker keeps. Only water offers it - the ions are few enough to
+    # always draw in full - so every other species shows everything.
+    set _seg_mode all
+    if {$_water} {
+        switch -- $_show {
+            crossings { set _seg_mode cross }
+            up        { set _seg_mode up }
+            down      { set _seg_mode down }
+        }
+    }
+    if {$_seg_mode ne "all"} { set plain {} }
     set drawn [concat $plain $cross]
     set _nu [expr {[dict exists $d n_cross_up] ? [dict get $d n_cross_up] : 0}]
     set _nd [expr {[dict exists $d n_cross_down] ? [dict get $d n_cross_down] : 0}]
 
     # --- header, measured before the plot is sized ---
-    set _shown [expr {$_only_cross_segs ? "crossings only, " : ""}]
+    set _shown [switch -- $_seg_mode {
+        cross   { expr {"crossings only, "} }
+        up      { expr {"upward crossings only, "} }
+        down    { expr {"downward crossings only, "} }
+        default { expr {""} }
+    }]
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
         [list "Passage — $_sp_sel (${_shown}$n_cross crossed: $_nu ↑ $_nd ↓;\
               $n_entered/[dict get $d nions] entered)[_ion_flow_rpass_note $d]" {Helvetica 10 bold} black]]]
@@ -41849,26 +43230,14 @@ proc ::VMDHole::_draw_ion_passage_view {} {
         } else {
             set col [_ion_species_color $sp]
         }
-        set frames [dict get $tr frame]; set zs [dict get $tr z]
+        # Split first, then classify: a single-frame visit (2 coords) must still
+        # become a dot, or a frame with a real ion in the pore drew nothing.
+        set segs {}
         set seg {}; set seg_up 0; set seg_dn 0
         set prevf {}; set prevz {}
-        foreach f $frames z $zs {
+        foreach f [dict get $tr frame] z [dict get $tr z] {
             if {$prevf ne "" && (($f - $prevf) > $gap_bridge || abs($z - $prevz) > $zflip)} {
-                # Flush the segment ending at the gap via the shared helper -
-                # a single isolated sample (seg has exactly one point, 2
-                # coords) needs its own dot here too, not only at the trailing
-                # segment: dropping it drew nothing for a frame where a real
-                # ion sat in the pore, while the legend (update_ion_passage_
-                # indicator, counted independently of this draw loop) still
-                # reported it present - "no ion in the plot but there is a
-                # sodium there". Measured on a real 100-frame run: 440 such
-                # isolated samples across 259 traces.
-                if {$seg_up || $seg_dn} {
-                    lappend _cross_segs [list $seg [_ion_dir_color [expr {$seg_up > $seg_dn ? "up" : \
-                        ($seg_dn > $seg_up ? "down" : "both")}]]]
-                } elseif {!$_only_cross_segs} {
-                    _ion_passage_flush_seg $cv $seg $col
-                }
+                lappend segs [list $seg $seg_up $seg_dn]
                 set seg {}; set seg_up 0; set seg_dn 0
             } elseif {$prevf ne ""} {
                 if {$prevz <= $zc && $z > $zc} { incr seg_up } \
@@ -41877,11 +43246,17 @@ proc ::VMDHole::_draw_ion_passage_view {} {
             lappend seg [_ipv_x $f $nf $ml $pw] [_ipv_y $z $zmin $zspan $mt $ph]
             set prevf $f; set prevz $z
         }
-        if {$seg_up || $seg_dn} {
-            lappend _cross_segs [list $seg [_ion_dir_color [expr {$seg_up > $seg_dn ? "up" : \
-                ($seg_dn > $seg_up ? "down" : "both")}]]]
-        } elseif {!$_only_cross_segs} {
-            _ion_passage_flush_seg $cv $seg $col
+        lappend segs [list $seg $seg_up $seg_dn]
+        foreach _sg $segs {
+            lassign $_sg _pts _su _sd
+            if {!$_water} { _ion_passage_flush_seg $cv $_pts $col; continue }
+            if {!$_su && !$_sd} {
+                if {$_seg_mode eq "all"} { _ion_passage_flush_seg $cv $_pts $col }
+                continue
+            }
+            if {($_seg_mode eq "up" && !$_su) || ($_seg_mode eq "down" && !$_sd)} { continue }
+            lappend _cross_segs [list $_pts [_ion_dir_color \
+                [expr {$_su > $_sd ? "up" : ($_sd > $_su ? "down" : "both")}]]]
         }
     }
     # Crossings last: with tens of thousands of water lines on the plot,
@@ -41929,7 +43304,7 @@ proc ::VMDHole::_draw_ion_passage_view {} {
         set sp [dict get $tr species]
         foreach f [dict get $tr frame] { dict incr ion_passage_counts "$f,$sp" }
     }
-    set ion_passage_dir_legend [list up $_nu down $_nd]
+    set ion_passage_dir_legend [expr {$_water ? [list up $_nu down $_nd] : {}}]
     set _cf ""
     catch {set _cf [molinfo [resolve_molid] get frame]}
     if {[string is integer -strict $_cf]} { update_ion_passage_indicator $_cf }
@@ -41967,11 +43342,16 @@ proc ::VMDHole::_draw_ion_count_view {} {
     } else {
         lappend series [list $_sp_sel $counts [expr {$_sp_sel eq "All" ? "#333333" : [_ion_species_color $_sp_sel]}]]
     }
-    set cmax 0
+    set cmax 0; set cmin ""
     foreach _s $series {
-        foreach c [lindex $_s 1] { if {$c > $cmax} { set cmax $c } }
+        foreach c [lindex $_s 1] {
+            if {$c > $cmax} { set cmax $c }
+            if {$cmin eq "" || $c < $cmin} { set cmin $c }
+        }
     }
-    lassign [_nice_axis_top $cmax] ytop ystep
+    if {$cmin eq ""} { set cmin 0 }
+    lassign [_nice_axis_range $cmin $cmax] ybot ytop ystep
+    set yspan [expr {$ytop-$ybot}]; if {$yspan <= 0} { set yspan 1 }
     set _noun [_ion_flow_noun $d]
     set _shell [_ion_flow_shell_value]
     # Mean is per series; with one series it also gets a line on the plot.
@@ -41988,7 +43368,7 @@ proc ::VMDHole::_draw_ion_count_view {} {
         set _sub [join $_bits "   ·   "]
     }
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
-        [list "[string totitle $_noun] in the pore per frame — $_sp_sel (max $cmax; inside = within\
+        [list "[string totitle $_noun] in the pore per frame — $_sp_sel ($cmin–$cmax; inside = within\
               [format %.1f $_shell] Å of the wall)" {Helvetica 10 bold} black] \
         [list $_sub {Helvetica 8} "#333333"]]]
     set mt [expr {$_hy+6}]
@@ -42005,7 +43385,7 @@ proc ::VMDHole::_draw_ion_count_view {} {
         set pts {}
         set f 0
         foreach c $_lst {
-            lappend pts [_ipv_x $f $nf $ml $pw] [expr {$mt + $ph - double($c)/$ytop*$ph}]
+            lappend pts [_ipv_x $f $nf $ml $pw] [expr {$mt + $ph - double($c-$ybot)/$yspan*$ph}]
             incr f
         }
         if {[llength $pts] >= 4} {
@@ -42018,9 +43398,9 @@ proc ::VMDHole::_draw_ion_count_view {} {
     }
     if {[llength $series] == 1} {
         set _mn [lindex $_means 0]
-        set ymean [expr {$mt + $ph - $_mn/$ytop*$ph}]
+        set ymean [expr {$mt + $ph - ($_mn-$ybot)/$yspan*$ph}]
         $cv create line $ml $ymean [expr {$ml+$pw}] $ymean -fill "#0066cc" -dash {5 3}
-        $cv create text [expr {$ml+$pw-2}] [expr {$ymean-2}] -text "mean [format %.1f $_mn]" \
+        $cv create text [expr {$ml+$pw-10}] [expr {$ymean-2}] -text "mean [format %.1f $_mn]" \
             -anchor se -font {Helvetica 7} -fill "#0066cc"
     } else {
         set lx [expr {$ml+6}]
@@ -42037,8 +43417,8 @@ proc ::VMDHole::_draw_ion_count_view {} {
         $cv create line $x [expr {$mt+$ph}] $x [expr {$mt+$ph+4}] -fill "#666666"
         $cv create text $x [expr {$mt+$ph+6}] -text $ff -anchor n -font {Helvetica 7}
     }
-    for {set v 0} {$v <= $ytop} {incr v $ystep} {
-        set y [expr {$mt + $ph - double($v)/$ytop*$ph}]
+    for {set v $ybot} {$v <= $ytop} {incr v $ystep} {
+        set y [expr {$mt + $ph - double($v-$ybot)/$yspan*$ph}]
         $cv create line [expr {$ml-4}] $y $ml $y -fill "#666666"
         $cv create text [expr {$ml-6}] $y -text $v -anchor e -font {Helvetica 7}
     }
@@ -42088,7 +43468,11 @@ proc ::VMDHole::update_ion_passage_indicator {frame} {
         set ly [expr {[dict exists $ion_passage_geo legend_y] ? [dict get $ion_passage_geo legend_y] : 30}]
         set lx [expr {$ml+4}]
         # Direction key first (totals over the trajectory), then the per-species
-        # "(n)" = traces drawn at THIS frame, which is what follows the playhead.
+        # "(n shown)" = traces DRAWN at this frame: molecules that pass the
+        # passage gate (r_pass, the tight passage shell) and the segment filter.
+        # The Count view's number for the same frame is a different measurement -
+        # occupancy-shell membership, a wider band - so the two legitimately
+        # differ; each states its own cutoff in its header.
         variable ion_passage_dir_legend
         if {[info exists ion_passage_dir_legend]} {
             foreach {dir n} $ion_passage_dir_legend {
@@ -42101,7 +43485,7 @@ proc ::VMDHole::update_ion_passage_indicator {frame} {
         foreach sp $ion_passage_species {
             set n [expr {[info exists ion_passage_counts] && [dict exists $ion_passage_counts "$frame,$sp"] \
                         ? [dict get $ion_passage_counts "$frame,$sp"] : 0}]
-            set lbl "$sp ($n)"
+            set lbl "$sp ($n shown)"
             set _sw [_ion_species_color $sp]
             if {[info exists ion_passage_faint] && $ion_passage_faint} {
                 set _sw [expr {[llength $ion_passage_species] > 1 ? [_ion_species_color_light $sp] : [_ion_dir_color ""]}]
@@ -42311,6 +43695,21 @@ proc ::VMDHole::_permeation_auto_bounds {molid frame} {
     if {$lo > $hi} { return {} }
     return [list [format %.1f $lo] [format %.1f $hi]]
 }
+proc ::VMDHole::_permeation_fill_bounds {d} {
+    # The deferred half of the dialog's auto-fill - see show_permeation_dialog.
+    variable state
+    if {![winfo exists $d]} { return }
+    if {$state(perm_zlo) ne "" && $state(perm_zhi) ne ""} { return }
+    set _pmid [resolve_molid_or -1]
+    set b [expr {$_pmid < 0 ? "" : [_permeation_auto_bounds $_pmid $state(selected_result_frame)]}]
+    if {$b ne ""} {
+        set state(perm_zlo) [lindex $b 0]
+        set state(perm_zhi) [lindex $b 1]
+        set state(status) "Permeation: bulk planes set to the pore's own extent."
+    } else {
+        set state(status) "Permeation: could not measure the pore extent - type the two bulk planes."
+    }
+}
 proc ::VMDHole::show_permeation_dialog {} {
     # Measured ion permeation across the trajectory: counts, rate, net direction, and
     # (with an applied voltage + a frame timestep) a model-free conductance. The
@@ -42334,12 +43733,11 @@ proc ::VMDHole::show_permeation_dialog {} {
     # (it also silently drifted from the pore if the protein rotated/translated during
     # the run). Normalizes any older persisted x/y/z value from before this change.
     if {$state(perm_axis) ni {pore}} { set state(perm_axis) pore }
-    # auto-fill bulk-plane bounds from the pore extent if empty
-    if {$state(perm_zlo) eq "" || $state(perm_zhi) eq ""} {
-        set _pmid [resolve_molid_or -1]
-        set b [expr {$_pmid < 0 ? "" : [_permeation_auto_bounds $_pmid $state(selected_result_frame)]}]
-        if {$b ne ""} { set state(perm_zlo) [lindex $b 0]; set state(perm_zhi) [lindex $b 1] }
-    }
+    # Bulk-plane bounds are auto-filled AFTER the window is on screen. They come
+    # from _permeation_auto_bounds, which builds the counter's per-frame axis
+    # chain over the WHOLE trajectory (_perm_pore_axes, one _asym_gather per
+    # analysed frame) - seconds on a long run, and paid before the first pixel
+    # if it runs here. The chain is cached, so the later Compute reuses it.
     # Short, plain-language explainer. This is the ONLY explainer in the dialog - a per-control
     # duplicate hint at the bottom of $d.body was dropped (it repeated this almost
     # word-for-word). Wrapped so the dialog stays narrow.
@@ -42391,6 +43789,10 @@ Optional - only needed for rates and conductance."
     # placement, which is exactly the "opens under the pointer" behaviour being
     # fixed here. Centring it also deiconifies after the withdraw above.
     _center_toplevel $d
+    if {$state(perm_zlo) eq "" || $state(perm_zhi) eq ""} {
+        set state(status) "Permeation: measuring the pore's extent along its axis..."
+        after idle [list ::VMDHole::_permeation_fill_bounds $d]
+    }
 }
 
 proc ::VMDHole::_run_permeation {} {
@@ -45123,11 +46525,11 @@ proc ::VMDHole::_update_surface_vis_buttons {} {
     set _tun [expr {[analysis_mode] eq "tunnel"}]
     if {$_tun} {
         catch {pack forget $w.bottom.statusrow.vistoggle.pore}
-        catch {pack $w.bottom.statusrow.vistoggle.tunnel -side left -padx {0 3} \
+        catch {pack $w.bottom.statusrow.vistoggle.tunnel -side left \
             -before $w.bottom.statusrow.vistoggle.mean}
     } else {
         catch {pack forget $w.bottom.statusrow.vistoggle.tunnel}
-        catch {pack $w.bottom.statusrow.vistoggle.pore -side left -padx {0 3} \
+        catch {pack $w.bottom.statusrow.vistoggle.pore -side left \
             -before $w.bottom.statusrow.vistoggle.mean}
     }
     set _tm -1
@@ -45547,8 +46949,44 @@ proc ::VMDHole::_plot_cache_forget {plot_file} {
     # un-clipped mesh from cache).
     variable plot_cache
     variable plot_cache_order
+    variable plot_stride_cache
     catch {unset plot_cache($plot_file)}
+    catch {array unset plot_stride_cache "[_glob_escape $plot_file]|*"}
     catch {set plot_cache_order [lsearch -all -inline -not -exact $plot_cache_order $plot_file]}
+}
+
+proc ::VMDHole::_glob_escape {s} {
+    # Quote the glob metacharacters so a path containing one of them cannot
+    # match - or fail to match - the wrong cache keys.
+    return [string map {* \\* ? \\? [ \\[ ] \\] \\ \\\\} $s]
+}
+
+proc ::VMDHole::_plot_entries_strided {plot_file stride} {
+    # The plot's entries with only every Nth primitive kept, colour and material
+    # records preserved in order because they set state for what follows.
+    # Cached: a draft render otherwise walks the WHOLE entry list to draw a
+    # quarter of it, and that walk - not the drawing - is most of its cost.
+    # Keyed by path+stride and dropped with the parse it came from.
+    variable plot_stride_cache
+    set entries [plot_cache_entries $plot_file]
+    if {$stride <= 1} { return $entries }
+    set mtime 0
+    catch {set mtime [file mtime $plot_file]}
+    set key "$plot_file|$stride"
+    if {[info exists plot_stride_cache($key)]} {
+        lassign $plot_stride_cache($key) cached_mtime kept
+        if {$cached_mtime == $mtime} { return $kept }
+    }
+    set kept {}
+    set i 0
+    foreach e $entries {
+        if {[lindex $e 0] eq "p"} {
+            if {[incr i] % $stride != 0} { continue }
+        }
+        lappend kept $e
+    }
+    set plot_stride_cache($key) [list $mtime $kept]
+    return $kept
 }
 
 proc ::VMDHole::plot_cache_entries {plot_file} {
@@ -45581,6 +47019,7 @@ proc ::VMDHole::plot_cache_entries {plot_file} {
         }
         # Stale (file changed): remove the old entry before re-parsing.
         catch {unset plot_cache($plot_file)}
+        catch {array unset plot_stride_cache "[_glob_escape $plot_file]|*"}
         set plot_cache_order [lsearch -all -inline -not -exact $plot_cache_order $plot_file]
     }
     # Parse the file.
@@ -45589,8 +47028,14 @@ proc ::VMDHole::plot_cache_entries {plot_file} {
     while {[gets $fh line] >= 0} {
         set t [string trim $line]
         if {$t eq "" || [string match "#*" $t]} { continue }
-        if {[lindex $t 0] ne "draw"} { continue }
-        set rest [lrange $t 1 end]
+        # "draw ..." (sos_triangle) or "graphics <mol> ..." (mesh_csg, which
+        # addresses one molecule so the plugin can source the file instead of
+        # parsing it - see _csg_fast_render).
+        switch -- [lindex $t 0] {
+            draw     { set rest [lrange $t 1 end] }
+            graphics { set rest [lrange $t 2 end] }
+            default  { continue }
+        }
         # "draw delete all" is redundant — the caller already calls
         # graphics $mol delete all before invoking render_vmd_plot_to_mol.
         # Keeping it would reset the material state set just before drawing.
@@ -45612,13 +47057,14 @@ proc ::VMDHole::plot_cache_entries {plot_file} {
         set evict [lindex $plot_cache_order 0]
         set plot_cache_order [lrange $plot_cache_order 1 end]
         catch {unset plot_cache($evict)}
+        catch {array unset plot_stride_cache "[_glob_escape $evict]|*"}
     }
     set plot_cache($plot_file) [list $mtime $entries]
     lappend plot_cache_order $plot_file
     return $entries
 }
 
-proc ::VMDHole::_dispatch_plot_entries {mol entries wire safe} {
+proc ::VMDHole::_dispatch_plot_entries {mol entries wire safe {flat 0}} {
     # Draw already-PARSED plot entries directly via the graphics command. This is
     # the security-critical replacement for eval'ing a script string built from
     # the plot file: a malicious/garbled token such as {[set ::x 1]} is passed to
@@ -45632,6 +47078,12 @@ proc ::VMDHole::_dispatch_plot_entries {mol entries wire safe} {
             if {$safe} { catch {graphics $mol color $col} } else { graphics $mol color $col }
         } elseif {$kind eq "m"} {
             if {$safe} { catch {graphics $mol material $col} } else { graphics $mol material $col }
+        } elseif {$flat && !$wire && [lindex $payload 0] eq "trinorm"} {
+            # Same corners, no per-vertex normals: VMD shades the facet itself.
+            # Geometry untouched, 29% cheaper to issue (132 vs 94 ms on 63k
+            # triangles); used only while the frame is moving.
+            set _c [lrange $payload 1 3]
+            if {$safe} { catch {graphics $mol triangle {*}$_c} } else { graphics $mol triangle {*}$_c }
         } elseif {$wire && [lindex $payload 0] in {trinorm triangle}} {
             lassign [lrange $payload 1 3] v1 v2 v3
             # Every interior edge is shared by two triangles, so drawing all
@@ -45665,7 +47117,7 @@ proc ::VMDHole::_eval_plot_chunk {mol chunk _mat} {
     # Tcl. Fast path runs with no per-primitive catch; on any failure it retries
     # each primitive in its own catch so one bad token only costs this chunk, not
     # the whole surface (matching the previous behaviour, minus the eval).
-    lassign $chunk _ chunk_entries chunk_wire
+    lassign $chunk _ chunk_entries chunk_wire chunk_flat
     # `graphics <mol> material <name>` only SELECTS which material a
     # subsequent primitive uses - it has no visible effect at all unless
     # `graphics <mol> materials on` has also been called for this mol.
@@ -45679,11 +47131,11 @@ proc ::VMDHole::_eval_plot_chunk {mol chunk _mat} {
     # has already had it set.
     catch {graphics $mol materials on}
     catch {graphics $mol material $_mat}
-    if {![catch {_dispatch_plot_entries $mol $chunk_entries $chunk_wire 0}]} { return }
-    _dispatch_plot_entries $mol $chunk_entries $chunk_wire 1
+    if {![catch {_dispatch_plot_entries $mol $chunk_entries $chunk_wire 0 $chunk_flat}]} { return }
+    _dispatch_plot_entries $mol $chunk_entries $chunk_wire 1 $chunk_flat
 }
 
-proc ::VMDHole::render_vmd_plot_to_mol {plot_file mol {stride 1} {force_color ""} {color_mode ""} {material_mode ""} {no_wire 0} {wire_override ""}} {
+proc ::VMDHole::render_vmd_plot_to_mol {plot_file mol {stride 1} {force_color ""} {color_mode ""} {material_mode ""} {no_wire 0} {wire_override ""} {flat 0}} {
     # Replay a sos_triangle / dots vmd_plot file as graphics on the dedicated surface
     # mol. The files use "draw" (targets the top molecule); rewrite each entry to
     # "graphics <mol> ..." so the surface draws on its own track without changing top.
@@ -45726,10 +47178,18 @@ proc ::VMDHole::render_vmd_plot_to_mol {plot_file mol {stride 1} {force_color ""
     # edges span chunk boundaries.
     variable _wire_seen
     array unset _wire_seen
-    set entries [plot_cache_entries $plot_file]
     if {$stride < 1} { set stride 1 }
     set _mat [expr {$material_mode ne "" ? $material_mode : $state(surface_material)}]
     if {$_mat eq ""} { set _mat Opaque }
+    # Before the parse: the fast path neither parses nor caches entries.
+    if {$stride == 1 && !$wire && !$flat && \
+            [_csg_fast_render $plot_file $mol [expr {$override ? $_ov_color : ""}] $_mat]} {
+        return
+    }
+    # Strided drafts read a pre-filtered entry list, so the loop below walks
+    # only what it draws.
+    set entries [_plot_entries_strided $plot_file $stride]
+    set stride 1
     set chunk_size 4000
     set chunk_entries {}
     set i 0
@@ -45749,11 +47209,11 @@ proc ::VMDHole::render_vmd_plot_to_mol {plot_file mol {stride 1} {force_color ""
             set _cur_mat $payload
             lappend chunk_entries [list m "" $payload]
         } else {
-            if {$stride > 1 && [incr i] % $stride != 0} { continue }
-            lappend chunk_entries [list p $payload ""]
+            # Passed through untouched: a two-element entry already lassigns col to "".
+            lappend chunk_entries $e
             incr n
             if {$n >= $chunk_size} {
-                _eval_plot_chunk $mol [list "" $chunk_entries $wire] $_chunk_mat
+                _eval_plot_chunk $mol [list "" $chunk_entries $wire $flat] $_chunk_mat
                 set _chunk_mat $_cur_mat
                 set chunk_entries {}; set n 0
                 update idletasks
@@ -45761,7 +47221,7 @@ proc ::VMDHole::render_vmd_plot_to_mol {plot_file mol {stride 1} {force_color ""
         }
     }
     if {$chunk_entries ne {}} {
-        _eval_plot_chunk $mol [list "" $chunk_entries $wire] $_chunk_mat
+        _eval_plot_chunk $mol [list "" $chunk_entries $wire $flat] $_chunk_mat
     }
 }
 
@@ -45820,6 +47280,7 @@ proc ::VMDHole::render_sph_points_to_mol {sph_file mol color {radius 0.4} {max_r
 }
 
 proc ::VMDHole::clear_surface {} {
+    set ::VMDHole::_drawn_key {}
     # Clears only the *active* molecule's surface track; other molecules' tracks
     # (in surface_mols) are left intact so switching does not erase them.
     variable current_surface_mol
@@ -45852,6 +47313,19 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
     variable current_surface_mol
     if {![dict exists $results $frame]} { error "No HOLE result for frame $frame." }
     set asset [dict get [dict get $results $frame] asset]
+    # A remembered surface built for another smoothing window is stale: VMD's
+    # own window (Follow) changes with no call into this plugin, so the cached
+    # path's _s<N> tag is compared with the window wanted now.
+    if {$asset ne {} && [dict exists $asset path]} {
+        set _want [_surface_smooth_tag]
+        set _tail [file tail [dict get $asset path]]
+        set _has [regexp {_s[0-9]+[_.]} $_tail]
+        if {($_want eq "" && $_has) || ($_want ne "" \
+                && [string first "${_want}_" $_tail] < 0 && [string first "${_want}." $_tail] < 0)} {
+            set asset {}
+            catch {dict set results $frame asset {}}
+        }
+    }
     # A build that already failed (e.g. sos_triangle polygon overflow) is cached
     # as a "failed" marker so this don't re-run the expensive sph_process /
     # sos_triangle on every scrub or playback pass. Redraw clears these markers.
@@ -45928,14 +47402,14 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
     # way CAPSULE does, instead of leaving the last mesh on screen.
     if {[dict exists $asset kind] && [dict get $asset kind] eq "lobes_none"} {
         if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-            catch {graphics $current_surface_mol delete all}
+            catch {graphics $current_surface_mol delete all}; set ::VMDHole::_drawn_key {}
         }
         catch {remove_hydro_scalebar}
         return
     }
     if {[dict exists $asset kind] && [dict get $asset kind] eq "capsule_skip"} {
         if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-            catch {graphics $current_surface_mol delete all}
+            catch {graphics $current_surface_mol delete all}; set ::VMDHole::_drawn_key {}
             catch {mol rename $current_surface_mol "HOLE surface (CAPSULE: no 3D surface)"}
         }
         catch {remove_hydro_scalebar}
@@ -45971,9 +47445,11 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
     # the chosen look is shown live. It is set before drawing so the new
     # primitives pick it up, and wrapped in catch so an unknown material can
     # never break the surface on older VMD builds.
-    if {$draft} {
+    if {$draft && ![_csg_active]} {
         # draft_stride is user-editable (Settings); fall back to 4 if it is not
         # a sensible positive integer so playback can never error on bad input.
+        # The marching-cubes draft is a coarser mesh instead, drawn in full and
+        # with its own normals: flat-shaded 1 A voxels read as a different shape.
         set stride $state(draft_stride)
         if {![string is integer -strict $stride] || $stride < 1} { set stride 4 }
     } else {
@@ -46019,16 +47495,37 @@ proc ::VMDHole::load_surface_for_frame {frame {draft 0}} {
     }
     # Clear the previous frame's graphics, then render the current frame so that
     # seeking/playing the trajectory animates the pore.
+    # Nothing has changed since this mol was last drawn: don't tear the same
+    # surface down and build it again. Redrawing IS the cost of a revisited
+    # frame - the mesh is already on disk and every primitive still has to be
+    # handed to VMD one at a time - and the settle pass after a scrub asks for
+    # exactly the surface the draft pass just drew.
+    variable _drawn_key
+    set _dk [list $mol $asset_kind $render_path $stride $material \
+        [expr {$property_uncached ? "gray" : ""}] $state(surface_color) \
+        $state(display_mode) $state(show_centerline) \
+        [expr {$draft && ![_csg_active]}] \
+        [expr {[catch {file mtime $render_path} _mt] ? 0 : $_mt}]]
+    if {[info exists _drawn_key] && $_drawn_key ne {} && $_dk eq $_drawn_key} {
+        variable _last_rendered_frame
+        set _last_rendered_frame $frame
+        catch {mol rename $mol "HOLE surface (frame $frame)"}
+        if {$old_top >= 0 && ![catch {molinfo $old_top get name}]} { mol top $old_top }
+        return
+    }
+    set _drawn_key {}
     catch {graphics $mol delete all}
     catch {graphics $mol material $material}
     switch -- $asset_kind {
         sph     { render_sph_points_to_mol $render_path $mol green 0.4 \
                       [expr {[dict exists $asset maxr] ? [dict get $asset maxr] : 0}] }
         vmd_plot { render_vmd_plot_to_mol  $render_path $mol $stride \
-                       [expr {$property_uncached ? "gray" : ""}] }
+                       [expr {$property_uncached ? "gray" : ""}] "" "" 0 "" \
+                       [expr {$draft && ![_csg_active]}] }
         capsule_lines { render_vmd_plot_to_mol $render_path $mol $stride }
         default { error "Unsupported asset type for frame $frame." }
     }
+    set _drawn_key $_dk
     catch {mol rename $mol "HOLE surface (frame $frame)"}
     # The frame now on screen - apply_display_change's repaint target when no
     # result row is selected.
@@ -46428,7 +47925,7 @@ proc ::VMDHole::blank_surface_for_frame {frame} {
     # animates - only the pore surface is hidden).
     variable current_surface_mol
     if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-        catch {graphics $current_surface_mol delete all}
+        catch {graphics $current_surface_mol delete all}; set ::VMDHole::_drawn_key {}
         catch {mol rename $current_surface_mol "HOLE surface (frame $frame: no data)"}
     }
     remove_hydro_scalebar
@@ -50488,9 +51985,7 @@ proc ::VMDHole::build_and_show_tunnel_mean_surface {} {
     # own pool path) - not run_sph_process's own default (state(dot_density),
     # HOLE mode's unrelated setting) and not the 15 -> 6 emergency-fallback
     # constant its rarely-hit serial branch uses.
-    run_sph_process $sph $sos 1 [_num_or tunnel_dot_density 15 1]
-    run_sos_triangle $sos $plot
-    if {![surface_has_geometry $plot]} { error "averaged tube produced no surface." }
+    if {![surface_mesh $sph $plot draw [_num_or tunnel_dot_density 15 1] 1 1]} { error "averaged tube produced no surface." }
     # "Render smoothly" is a MESH control and the averaged tube is a mesh - a union
     # of spheres along the path, with the same sphere-intersection ridges the
     # HOLE-mode mean surface smooths away. The box was live in tunnel mode and
@@ -51385,9 +52880,7 @@ proc ::VMDHole::_mean_vol_mesh {mean_dir tag centers} {
     if {[llength $centers] < 4} { return {} }
     if {![surface_has_geometry $raw]} {
         write_stock_sph_file $centers $sph
-        if {[catch {run_sph_process $sph $sos 1 5} _e]} { return {} }
-        if {[catch {run_sos_triangle $sos $raw} _e]} { catch {file delete $sos}; return {} }
-        catch {file delete $sos}
+        if {![surface_mesh $sph $raw draw 5 1 1]} { return {} }
     }
     if {![surface_has_geometry $raw]} { return {} }
     set it [_mean_vol_smooth_iters]
@@ -51943,9 +53436,7 @@ proc ::VMDHole::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
         # square. A direct revolved-tube mesh is watertight but cannot carry HOLE's baked radius
         # colors (hole_def renders solid red) and loses the sphere-union texture, so this
         # union-of-spheres mesh is used instead.
-        run_sph_process $mean_sph $mean_sos 1 30
-        run_sos_triangle $mean_sos $mean_plot_raw
-        catch {file delete $mean_sos}
+        surface_mesh $mean_sph $mean_plot_raw draw 30 1 1
         if {![surface_has_geometry $mean_plot_raw]} {
             error "sos_triangle produced no surface for the mean profile (try lowering Dot density)."
         }
@@ -52045,7 +53536,7 @@ proc ::VMDHole::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
             # RECOLOR the RAW (never-smoothed) geometry - see mean_plot_raw's comment: the
             # color must come from the true vertex positions, never a smoothed mesh, so
             # Smooth stays a pure geometry pass that can't reassign color bands.
-            if {[values_fast_available]} {
+            if {[fast_available values]} {
                 set mean_vals [file join $mean_dir "mean_profile_${mean_tag_us}_values.dat"]
                 if {![catch {
                     set vfh [open $mean_vals w]
@@ -52996,43 +54487,11 @@ proc ::VMDHole::_amise_bandwidths_parallel {frame_qco} {
     return $result
 }
 
-proc ::VMDHole::_hydro_project_path {} {
-    # Beside sos_triangle, the way every other helper binary here is located.
-    variable state
-    variable _hydro_project_exe
-    if {[info exists _hydro_project_exe]} { return $_hydro_project_exe }
-    set _hydro_project_exe ""
-    foreach _d [list [file dirname $state(sos_triangle_exec)] \
-                     [file dirname $state(hole_exec)]] {
-        if {$_d eq "" || $_d eq "."} { continue }
-        # _find_exe: hydro_project has no init_executables backfill, so this
-        # walk is its ONLY discovery beside PATH - a bare name here left the
-        # whole Accurate-3D feature silently undiscoverable on Windows, where
-        # native/build.sh always produces hydro_project.exe.
-        set _c [_find_exe [file join $_d hydro_project]]
-        if {$_c ne ""} { set _hydro_project_exe $_c; break }
-    }
-    if {$_hydro_project_exe eq ""} {
-        if {![catch {auto_execok hydro_project} _a] && $_a ne ""} {
-            set _hydro_project_exe [lindex $_a 0]
-        }
-    }
-    # A name that answers --hole-features is not proof the binary is correct, but
-    # it does rule out an unrelated executable of the same name.
-    if {$_hydro_project_exe ne ""} {
-        if {[catch {exec $_hydro_project_exe --hole-features} _f] \
-                || ![string match "*hydroproject*" $_f]} {
-            set _hydro_project_exe ""
-        }
-    }
-    return $_hydro_project_exe
-}
-
 proc ::VMDHole::_hydro_qco_c {wres wpos mx my mz ux uy uz cmin cmax env dcap} {
     # Residue-COG reduction + axial projection + envelope test for one frame -
     # ~58% of the hydration analysis, and a pure function of its arguments.
     # Returns "" on any failure so the caller drops to the Tcl loop unchanged.
-    set exe [_hydro_project_path]
+    set exe [tool_path hydro_project]
     if {$exe eq ""} { return "" }
     if {[llength $wpos] == 0 || [llength $wres] != [llength $wpos]} { return "" }
     set base [file join [_scratch_base] "hydroq_[pid]_[clock milliseconds]"]
@@ -57699,7 +59158,7 @@ proc ::VMDHole::prime_hydro_fastpath_cache {frames scheme} {
     variable state
     variable plot_data_version
     variable fastpath_sphere_cache
-    if {![props_fast_available]} { return 0 }
+    if {![fast_available props residue]} { return 0 }
     # KR is not served by this C shell-average path: it uses the per-atom
     # Nadaraya-Watson smoother (compute_sphere_hydro / the true-3D pipeline),
     # which the C shell-average does NOT reproduce, so
@@ -58414,7 +59873,7 @@ proc ::VMDHole::heatmap_property_bundle {ncols nbins} {
     # facing residues' atoms (CHAP-style per-residue flag) — so ALL schemes AND
     # the facing filter use the fast path.  Falls back to the Tcl path only when
     # the binary lacks the "props"/"residue" features.
-    if {[props_fast_available]} {
+    if {[fast_available props residue]} {
         set _fast_data [heatmap_prop_bundle_fast $ncols $nbins $_hmsch]
         # ABORT: the fast path above kills its running jobs, so whatever it
         # returns is a TRUNCATION, not a result. Two things must not happen:

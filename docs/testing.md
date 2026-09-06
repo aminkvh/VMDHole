@@ -21,7 +21,7 @@ follows two house rules:
 | Tier | Where | Question it answers | Needs | Run it with |
 |---|---|---|---|---|
 | Unit regression | `tests/unit/` | one defect each, in isolation | `sh`, a C compiler, `tclsh`; Tk + an X display for the GUI smoke test | `sh tests/unit/run_unit_tests.sh` |
-| Main suite | `vmdhole/tests/` | the plugin, end to end — 20 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdhole/tests/run_tests.sh` |
+| Main suite | `vmdhole/tests/` | the plugin, end to end — 23 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdhole/tests/run_tests.sh` |
 | Pure-Tcl engine | `vmdhole/hole_tcl/tests/` | the Tcl HOLE engine vs a reference binary | a reference `hole` build | `vmdhole/hole_tcl/tests/run_all.sh` (`profile_vs_reference.sh <pdb>` is the by-hand comparison harness) |
 | Native verifications | `native/` | byte-identity of the accelerated binaries vs stock HOLE | stock `hole2` tree (source and/or binaries) | `native/verify.sh`, `native/connolly_patches/test_hcapen_cache.sh` |
 
@@ -86,13 +86,16 @@ group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 | `test_release_integrity` | the packaged ZIP is built fresh and self-consistent |
 | `test_tcl_pitfalls` | repo lint (`tcl_lint.py`) plus Tcl-pitfall checks |
 | `test_tunnel_separation` | pore and tunnel modes share no storage or output roots |
-| `test_tunnel_clustering` | cross-frame cluster identity; display clustering leaves it untouched |
+| `test_tunnel_clustering` | cross-frame cluster identity; display clustering leaves it untouched; the worst-case guard and the kernel served by the resident mesher agree with the Tcl reference |
 | `test_tunnel_import` | tunnel Save/Import round-trips byte-identically; combined HOLE+tunnel folders load |
 | `test_mole_tcl_port` | the pure-Tcl MOLE engine reproduces the C engine slot for slot |
 | `test_hcapen_cache` | HCAPEN's cutoff cache vs stock (auto-discovers `native/stock_build/hole2/src`, or pass a tree as `$1`) |
 | `test_inline_current` | the inlined HOLE engine matches its `vmdhole/hole_tcl/` source |
 | `test_adapter_schema` | the export adapter schema |
 | `test_gui_reachable` | every Tunnel control reachable ON SCREEN in a real GUI, dialogs open/close/reopen, the lining window follows the selection, plus a second pass on a HET-carrying structure |
+| `test_nm_engine` | Nelder-Mead search and the ported Connolly pass through the run path, against Monte Carlo and HOLE `conn` |
+| `test_conn_lobes_engine` | the native Connolly lateral-opening classifier/clusterer/triangle-splitter against the pure-Tcl path it replaces |
+| `test_mesh_csg_engine` | the marching-cubes spherical mesher: gating, file naming, persistent server, vertex accuracy against the exact sphere union, the source-vs-parse draw paths, and the `sos_triangle` fallback |
 
 ## Native verifications (`native/`)
 

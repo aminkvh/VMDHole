@@ -35,8 +35,11 @@ Without `HOLE_INSTALL_DIR`, point VMDHole at `build/` via
 | `sos_triangle_fast.c` | the optimised, drop-in `sos_triangle` source |
 | `voronoi/` | exact-arithmetic Delaunay/Voronoi predicates shared by `sos_triangle_fast` and the MOLE engine, with their unit tests |
 | `xalloc.h` | checked-allocation helper shared by the C above |
+| `hole_io.h` | the one reader for HOLE `.sph` files and PDB ATOM records, shared by every tool here; resolves the `LAST-REC-END` cutter marker so no parser has to know about it |
 | `mole/` | the MOLE 2 tunnel-search port and its per-unit test tools |
 | `hydration/` | the hydration accelerator (`hydro_project.c`) with its reference implementation and tests |
+| `nm/` | Nelder-Mead pore search + fast Connolly surface (`nm_search`), marching-cubes spherical mesher (`mesh_csg`); see `nm/README.md` |
+| `conn_lobes.c` | classifies and clusters Connolly lateral openings, and splits the surface mesh by region - replaces the same computation in pure Tcl |
 | `connolly_patches/` | the optional HOLE-side Fortran patches (`apply_patches.py` + the patched units) |
 | `build.sh` | builds the three self-contained C tools — what CI runs on a fresh checkout, no HOLE tree needed |
 | `build-vmdhole-optimized.sh` | the full install script: patches and rebuilds HOLE + `sph_process` from a HOLE source tree and builds the C tools |

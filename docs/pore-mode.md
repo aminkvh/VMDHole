@@ -46,6 +46,13 @@ or accept coordinates, VMD selections, and labelled atoms. HOLE searches in
 planes normal to the resulting vector. A poor direction can produce a valid
 calculation through the wrong cavity, so always inspect the centreline.
 
+The **⌖** button beside either field opens an on-screen stick: drag the pad or
+click the arrows to move `CPOINT`, or tilt `CVECT`, relative to the current
+view, so up, down, left and right always match the screen whatever the model's
+rotation. The step entry sets the distance per click and the drag sensitivity.
+The same dialog holds the per-frame modes described below, and the cue is shown
+while it is open.
+
 For a trajectory, `CPOINT` may be static, carried by a local rigid-body fit
 (**Stabilize**), or re-centred on nearby atoms (**Track**). A two-point `CVECT`
 can use independent endpoint fits or re-evaluate its two selections exactly in
@@ -63,15 +70,55 @@ models are available:
 
 - **Connolly** estimates the solvent-accessible cross-section and reports an
   equivalent radius. It requires the surface-processing stages and is sensitive
-  to dot density. Optional axial trimming and a lateral-spill filter restrict
-  escaped surface regions. Its lateral-opening tools are described below.
+  to dot density. The **Margin** setting decides which dots count as the pore
+  and which as lateral spill. Its lateral-opening tools are described below.
 - **Capsule** fits an anisotropic stadium-like probe and reports its effective
   radius. Use it when a circular radius hides a strongly elongated opening.
+  Its 3D surface is the union of the capsule slices, built by the same mesher
+  as the spherical surface, or by HOLE's own capsule pass in `sph_process`
+  (and its Tcl port) under the sos mesher; slices whose cap centres escaped
+  past ENDRAD are dropped first, the rule HOLE's own profile applies.
+  Centerline draws the two cap-centre tracks.
 
 Keep the method fixed when comparing structures. Method names and equivalent
 radii are not interchangeable.
 
+**Surface smoothing.** Settings can average the surface over neighbouring
+analysed frames, either following VMD's own trajectory-smoothing window of the
+shown representations or with a fixed half-width. It is a local average of the
+surfaces themselves, not of the atom coordinates and not of the centreline: a
+feature most frames share stays where it is, a flicker averages down, and
+curvature and lateral openings survive. The marching mesher averages the
+frames' distance fields on one grid and marches the mean; sos_triangle moves
+every dot of the frame to the mean of itself and its nearest same-facing dot
+in each window frame, then triangulates as usual (the pure-Tcl fallback does
+the same, byte for byte). Windows clamp at the trajectory ends, as VMD's do.
+The profile, the Mean Profile and every other number stay per frame.
+
+The **Search** picker in HOLE Parameters chooses how each plane's sphere is
+found: **Monte Carlo (HOLE)**, HOLE's seeded simulated annealing, whose
+steps, step size and kT fields appear only for it, or **Nelder-Mead**, a
+deterministic downhill-simplex search in the `nm_search` engine that agrees
+with HOLE to within HOLE's seed-to-seed spread. Without the engine the run
+falls back to HOLE. Under Connolly, Nelder-Mead also builds the surface with
+a port of HOLE's Connolly pass; for a Monte Carlo search, Settings chooses
+between HOLE's `conn` and that port.
+
+`conn_lobes` (Settings > Engines) classifies dots and colors lateral
+openings; without it the same classification and coloring run in pure Tcl,
+correct but a few seconds slower each time a new frame's coloring is built.
+
 ### Inspect Connolly lateral openings
+
+The isosurface and wireframe are meshed by `mesh_csg` (marching cubes on the
+exact sphere union, Settings → Engines → Surface mesher). For a spherical run
+the grid is 1.4 Å in the wide regions and 0.7 Å around the narrow pore; a
+Connolly run uses 1.4 Å uniformly, since its whole surface is at probe scale.
+Either way the same mesh is used while playing and once playback stops, so the
+surface never changes shape as it settles: about 51 ms per newly visited frame
+for a spherical run on a 200k-atom system and 63 ms for a Connolly one, with
+the **grid** entry trading detail against that cost. Property colouring
+recolours the same mesh.
 
 After a Connolly run, draw an isosurface or wireframe and choose one of these
 **Color** modes:
@@ -184,43 +231,35 @@ model. **CHAP mode** uses CHAP-compatible settings and tracked per-frame
 geometry. Cite CHAP from the
 [reference list](references.md#hydration-and-pore-wall-annotations).
 
-### Ion Flow
+### Ion & Water
 
 <p align="center"><img src="images/ion_passage.png" alt="Ion passage plot: per-ion axial traces through the pore over the trajectory" width="720"></p>
 
-Requires ions or water and at least two trajectory frames. **Occupancy %** maps
-where ions are observed in the pore coordinate system. Its header also reports
-the net flux through the lumen: crossings of the constriction that happen
-within the narrow lumen radius, which is a stricter test than the Passage view
-below uses.
+Requires ions or water and at least two trajectory frames. **Occupancy + flow**
+maps where the chosen species is observed in the pore coordinate system; its
+header reports the net flux through the lumen, counted from constriction
+crossings inside the lumen radius.
 
 **Passage** draws the path of every molecule that entered the pore against
-frame number. A stretch of line that crosses the constriction plane is drawn in
-its direction's colour (red up, blue down, purple for crossed-and-returned) and
-drawn last, on top of everything else; the rest of that molecule's visits stay
-in the quiet base colour. A molecule counts as crossing when consecutive drawn
-samples fall on opposite sides of the constriction, so what is coloured is
-exactly what you can see cross the line. With more than a few hundred lines on
-the plot the non-crossing ones are faded so the crossings stay legible.
+frame number, in the species colour, faded when there are more than a few
+hundred paths. For water, stretches that cross the constriction are drawn last
+in their direction's colour (red up, blue down, purple for crossed and
+returned).
 
-**Count vs frame** plots how many molecules are inside the pore at each frame.
-With every ion type selected it draws one curve per type rather than a single
-pooled line.
+**Count vs frame** plots how many molecules are inside the pore at each frame,
+one curve per ion type when all types are selected. The y axis starts at zero
+unless the counts stay well above it.
+
+The **Species** menu lists every ion type detected plus **Water**. **All** is
+the ion types only. **Water** counts one oxygen per molecule from the
+Hydration tab's water selection against the same per-frame pore geometry; it
+is scanned the first time it is picked (about 2.5 s for 100 frames of a
+200k-atom system with the fast `sos_triangle`) and cached after that. For
+water the Passage view has a **Show** picker: **All crossing** (default),
+**Passage up**, **Passage down**, or **All entered**, which also draws the
+molecules that never crossed.
 
 None of these views is a full permeation count.
-
-The **Species** menu lists every ion type detected in the loaded system plus
-**Water**. **All** combines the ion types only; water is never part of it.
-Picking **Water** counts one oxygen per molecule from the Hydration tab's water
-selection (default `water and oxygen`, so any water model VMD recognises works)
-against the same per-frame pore geometry the ions use. On the Passage view a
-**Show** picker appears for water: **Crossings** (default) draws only the
-stretches of line that cross the constriction, **All entered** draws every molecule that
-entered the pore, with the crossings still coloured on top. Water is scanned the
-first time it is picked; with the fast `sos_triangle` this takes a few seconds
-(about 2.5 s for 100 frames of a 200k-atom system), and roughly six times that
-with the pure-Tcl fallback. After that, switching species is instant.
-
 Select **Permeation** to count complete bulk-to-bulk crossings along the
 per-frame pore axis. Supply bulk planes, the saved-frame interval, and an
 applied voltage only if they are physically defined. VMDHole warns

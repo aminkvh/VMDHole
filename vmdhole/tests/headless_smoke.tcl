@@ -1778,9 +1778,9 @@ chk "the plot draws the map ONLY in unroll mode" \
 set _sv_hpc $::VMDHole::hm_prop_cache
 set _sv_ar [expr {[info exists ::VMDHole::state(abort_requested)] ? $::VMDHole::state(abort_requested) : 0}]
 set ::VMDHole::hm_prop_cache [dict create]
-rename ::VMDHole::props_fast_available ::VMDHole::_real_pfa
+rename ::VMDHole::fast_available ::VMDHole::_real_pfa
 rename ::VMDHole::heatmap_prop_bundle_fast ::VMDHole::_real_hpbf
-proc ::VMDHole::props_fast_available {} { return 1 }
+proc ::VMDHole::fast_available {args} { if {$args eq "props residue"} { return 1 }; ::VMDHole::_real_pfa {*}$args }
 # A PARTIAL result: some frames survived the kill. This is exactly the shape
 # that used to be cached as if it were complete.
 proc ::VMDHole::heatmap_prop_bundle_fast {a b c} { return [dict create nframes 3 partial yes] }
@@ -1798,8 +1798,8 @@ chk "...and says it was aborted" [expr {[dict exists $_r2 aborted] && [dict get 
 chk "...and caches NOTHING, so it cannot outlive the abort" \
     [dict size $::VMDHole::hm_prop_cache] 0
 set ::VMDHole::state(abort_requested) $_sv_ar
-rename ::VMDHole::props_fast_available {}
-rename ::VMDHole::_real_pfa ::VMDHole::props_fast_available
+rename ::VMDHole::fast_available {}
+rename ::VMDHole::_real_pfa ::VMDHole::fast_available
 rename ::VMDHole::heatmap_prop_bundle_fast {}
 rename ::VMDHole::_real_hpbf ::VMDHole::heatmap_prop_bundle_fast
 set ::VMDHole::hm_prop_cache $_sv_hpc
@@ -2141,14 +2141,6 @@ proc _spb_targets {needle} {
 chk "A2 Mean Profile is a sync target" [_spb_targets {mean_hydro_scheme}] 1
 chk "A1 Over Time is NOT a sync target" [_spb_targets {hm_prop_scheme}] 0
 
-# --- The Connolly trim is a knob, and off by default -------------------------
-set _sv_ct [expr {[info exists ::VMDHole::state(conn_trim_escaped)] ? $::VMDHole::state(conn_trim_escaped) : 0}]
-set ::VMDHole::state(conn_trim_escaped) 0
-chk "the Connolly span trim is off by default" [::VMDHole::_conn_trim_escaped_enabled] 0
-set ::VMDHole::state(conn_trim_escaped) 1
-chk "...and the knob turns it on" [::VMDHole::_conn_trim_escaped_enabled] 1
-set ::VMDHole::state(conn_trim_escaped) $_sv_ct
-
 # --- Pore vs sideways spill --------------------------------------------------
 # A straight pore of radius 3 along z, with dots at r=2 (inside) and r=15 (spill).
 set _cd [file join $here _conn_gate_test]
@@ -2198,21 +2190,16 @@ set ::VMDHole::state(conn_pore_gate) $_sv_g
 set ::VMDHole::state(conn_pore_margin) $_sv_m
 catch {file delete -force $_cd}
 
-# --- The Connolly knobs must not leak into other methods ---------------------
+# --- The Connolly gate must not leak into other methods ---------------------
 set _sv_pm2 $::VMDHole::state(pore_method)
-set _sv_tr2 $::VMDHole::state(conn_trim_escaped)
 set _sv_g2  $::VMDHole::state(conn_pore_gate)
 set ::VMDHole::state(pore_method) connolly
-set ::VMDHole::state(conn_trim_escaped) 1
-set ::VMDHole::state(conn_pore_gate) 0
-chk "the trim tags the mesh too, not just the gate" [::VMDHole::_conn_surface_suffix] "_trim"
 set ::VMDHole::state(conn_pore_gate) 1
 set ::VMDHole::state(conn_pore_margin) 2.0
-chk "trim and gate together tag both" [::VMDHole::_conn_surface_suffix] "_trim_porem20"
+chk "the gate tags the mesh" [::VMDHole::_conn_surface_suffix] "_porem20"
 set ::VMDHole::state(pore_method) spherical
-chk "neither reaches another method" [::VMDHole::_conn_surface_suffix] ""
+chk "it does not reach another method" [::VMDHole::_conn_surface_suffix] ""
 set ::VMDHole::state(pore_method) $_sv_pm2
-set ::VMDHole::state(conn_trim_escaped) $_sv_tr2
 set ::VMDHole::state(conn_pore_gate) $_sv_g2
 
 # A reduced cloud is named after the cloud it reduces, so the trim/gate variants
@@ -2310,8 +2297,30 @@ chk "2+ regions dispatch through the parallel builder" \
 set _bcp [info body ::VMDHole::_build_conn_regions_parallel]
 chk "the parallel builder resolves a blank dotden the same way run_sph_process does" \
     [expr {[string first {$dotden ne "" ? $dotden : $state(dot_density)} $_bcp] >= 0}] 1
-chk "a region that overshoots the ceiling falls back to the real run_sph_process" \
-    [expr {[string first "run_sph_process \$rsph \$rsos 1 \$rdd" $_bcp] >= 0}] 1
+chk "a region that overshoots the ceiling falls back through the one surface pipeline" \
+    [expr {[string first "surface_mesh \$rsph \$rplot draw \$rdd" $_bcp] >= 0
+           && [string first "_legacy_sos \$sph \$sos \$color \$dd" \
+                   [info body ::VMDHole::surface_mesh]] >= 0
+           && [string first "run_sph_process \$sph \$sos \$color \$dd" \
+                   [info body ::VMDHole::_legacy_sos]] >= 0}] 1
+# --- Surface smoothing: one entry, both meshers, window from VMD --------------
+chk "surface_smooth is persisted with the other mesher settings" [expr {[string first "surface_smooth" [info body ::VMDHole::save_config]] >= 0}] 1
+set _sv_ss $::VMDHole::state(surface_smooth)
+set ::VMDHole::state(surface_smooth) off
+chk "smoothing off: no window" [::VMDHole::_surface_smooth_window] 0
+chk "...no tag in plot names" [::VMDHole::_surface_smooth_tag] ""
+set ::VMDHole::state(surface_smooth) 2
+chk "a fixed half-width is the window" [::VMDHole::_surface_smooth_window] 2
+chk "...and tags the plot name" [::VMDHole::_surface_smooth_tag] "_s2"
+chk "surface_plot_name applies the tag to pore surfaces only" [expr {[string first {$union ? "" : [_surface_smooth_tag]} [info body ::VMDHole::surface_plot_name]] >= 0}] 1
+foreach _p {surface_mesh surface_mesh_cmd} {
+    chk "$_p takes the window" [expr {[lsearch [info args ::VMDHole::$_p] with] >= 0}] 1
+}
+chk "the marching mesher gets --with" [expr {[string first {lappend _mopts --with} [info body ::VMDHole::surface_mesh]] >= 0}] 1
+chk "the legacy pair smooths its dot cloud" [expr {[string first {_sos_smooth_cmd} [info body ::VMDHole::_legacy_sos]] >= 0}] 1
+chk "...and the pool command too" [expr {[string first {_sos_smooth_cmd} [info body ::VMDHole::surface_mesh_cmd]] >= 0}] 1
+chk "the Tcl fallback answers --sos-smooth" [expr {[string first {--sos-smooth} [info body ::VMDHole::_hole_tcl_driver]] >= 0}] 1
+set ::VMDHole::state(surface_smooth) $_sv_ss
 # The fallback must retry at the region's OWN density, not the shared one -
 # retrying a big-sphere lobe at the pore's density rebuilds it coarse, which is
 # the bug the per-region density exists to fix.
@@ -2354,8 +2363,11 @@ set ::VMDHole::state(pore_method) $_sv_pmX
 set ::VMDHole::results $_sv_resX
 set ::VMDHole::result_frames $_sv_rfX
 set _crn [info body ::VMDHole::clear_results_for_new_settings]
+chk "clear_results_for_new_settings clears through the cache registry" [expr {[string first {cache_clear run} $_crn] >= 0}] 1
+foreach _c {conn_site_cache _conn_cls_memo _conn_unroll_memo} { set ::VMDHole::$_c [dict create k 1] }
+::VMDHole::cache_clear run
 foreach _c {conn_site_cache _conn_cls_memo _conn_unroll_memo} {
-    chk "the clear drops $_c too" [expr {[string first $_c $_crn] >= 0}] 1
+    chk "the clear drops $_c too" [dict size [set ::VMDHole::$_c]] 0
 }
 
 # --- The unrolled map never points at a layer that is gone -------------------
@@ -2484,16 +2496,24 @@ chk "a nonsense draft density falls back" [::VMDHole::_conn_draft_dotden] 6
 set ::VMDHole::state(conn_draft_dotden) $_sv_cdd
 set ::VMDHole::state(dot_density) $_sv_dd
 
-# A draft mesh must never be served as the full one.
+# A draft mesh must never be served as the full one (sos_triangle path: the
+# marching-cubes mesher draws one mesh for both and tags nothing).
 set _sv_pm7 $::VMDHole::state(pore_method)
+set _sv_ms7 $::VMDHole::state(mesher)
 set ::VMDHole::state(pore_method) connolly
+set ::VMDHole::state(mesher) sos
 set ::VMDHole::_conn_draft_build 0
 set _sfx_full [::VMDHole::_conn_surface_suffix]
 set ::VMDHole::_conn_draft_build 1
 set _sfx_draft [::VMDHole::_conn_surface_suffix]
-set ::VMDHole::_conn_draft_build 0
 chk "the draft mesh gets its own filename" [expr {$_sfx_draft ne $_sfx_full}] 1
 chk "...and the full one is untagged" $_sfx_full ""
+set ::VMDHole::state(mesher) csg
+if {[::VMDHole::_csg_can_mesh]} {
+    chk "...and the mesher builds one mesh, draft or not" [::VMDHole::_conn_surface_suffix] $_sfx_full
+}
+set ::VMDHole::_conn_draft_build 0
+set ::VMDHole::state(mesher) $_sv_ms7
 set ::VMDHole::state(pore_method) $_sv_pm7
 chk "create_plot_asset takes a draft flag" \
     [expr {[lsearch -exact [info args ::VMDHole::create_plot_asset] draft] >= 0}] 1
@@ -4382,12 +4402,28 @@ chk "the Tcl colouring fallback uses the shared lining cloud too" \
 # the inlined Tcl engine, so no call site can miss the fallback.
 chk "run_sph_process routes through the fallback builder" \
     [expr {[string first {_sph_process_cmd} [info body ::VMDHole::run_sph_process]] >= 0}] 1
+# --- Every cache is registered -------------------------------------------------
+# cache_clear is the one place a cache is dropped; a cache variable the
+# registry does not know cannot be cleared by any tag and rots.
+set _src [read [set _fh [open [file join $here .. vmdhole.tcl] r]]]; close $_fh
+set _declared {}
+foreach {_m _n} [regexp -all -inline {variable (_?[a-z_0-9]*cache[a-z_0-9]*|_[a-z_0-9]*_memo)\M} $_src] {
+    if {$_n ne "_caches" && $_n ni $_declared} { lappend _declared $_n }
+}
+set _reg [dict keys $::VMDHole::_caches]
+set _unreg {}; foreach _n $_declared { if {$_n ni $_reg} { lappend _unreg $_n } }
+set _ghost {}; foreach _n $_reg { if {![regexp "variable $_n\\M" $_src]} { lappend _ghost $_n } }
+chk "every cache variable in the plugin is in the cache registry ($_unreg)" [llength $_unreg] 0
+chk "every registered cache exists in the plugin ($_ghost)" [llength $_ghost] 0
+chk "cache_clear refuses an unknown name" [catch {::VMDHole::cache_clear no_such_cache}] 1
+set ::VMDHole::plot_cache_order {a b}; ::VMDHole::cache_clear plot
+chk "cache_clear plot empties the plot trio" [llength $::VMDHole::plot_cache_order] 0
+
 chk "run_sos_triangle routes through the fallback builder" \
     [expr {[string first {_sos_triangle_cmd} [info body ::VMDHole::run_sos_triangle]] >= 0}] 1
 # ...and the newest features use those entry points rather than their own exec.
-chk "the mean occupancy volume goes through them" \
-    [expr {[string first {run_sph_process} [info body ::VMDHole::_mean_vol_mesh]] >= 0 \
-        && [string first {run_sos_triangle} [info body ::VMDHole::_mean_vol_mesh]] >= 0}] 1
+chk "the mean occupancy volume goes through the one surface pipeline" \
+    [expr {[string first {surface_mesh $sph $raw draw} [info body ::VMDHole::_mean_vol_mesh]] >= 0}] 1
 chk "regions are lined against one shared whole-cloud reference" \
     [expr {[string first {hole_conn_lining_} $_brm2] >= 0}] 1
 chk "...built from keep + pore + lateral, not one region" \
@@ -4581,9 +4617,18 @@ chk "region spheres are half-diagonal, so neighbours overlap" \
     [expr {[lindex [lindex [::VMDHole::_mean_vol_region_centers $_dens 2.0 0.90] 0] 3] > 1.0}] 1
 # It reuses the ordinary surface pipeline, which is what gives it Display /
 # Colour / Material / Property for free.
-chk "the volume goes through the same sph_process + sos_triangle path" \
-    [expr {[string first {run_sph_process} [info body ::VMDHole::_mean_vol_mesh]] >= 0 \
-        && [string first {run_sos_triangle} [info body ::VMDHole::_mean_vol_mesh]] >= 0}] 1
+chk "the volume goes through the same surface pipeline as the pore" \
+    [expr {[string first {surface_mesh $sph $raw draw} [info body ::VMDHole::_mean_vol_mesh]] >= 0}] 1
+# ...and NOTHING else runs the legacy pair: every mesh is built by surface_mesh.
+set _direct 0
+foreach _p [info procs ::VMDHole::*] {
+    if {$_p in {::VMDHole::surface_mesh ::VMDHole::_legacy_sos ::VMDHole::run_sph_process ::VMDHole::run_sos_triangle
+                ::VMDHole::run_sos_triangle_points ::VMDHole::build_hydro_trinorm}} continue
+    set _b [info body $_p]
+    regsub -all {(?m)^\s*#.*$} $_b {} _b
+    if {[regexp {run_sos_triangle(_points)? |run_sph_process } $_b]} { incr _direct; note "  direct tool run in $_p" }
+}
+chk "no proc but the surface pipeline runs sph_process or sos_triangle for a mesh" $_direct 0
 # A voxel union is ridged by construction - measured 32.9 deg between the
 # normals of triangles sharing a vertex, against 8.1 after 8 smoothing passes.
 # hole_def on the volume must band by the PORE radius. The volume's .sph
@@ -4787,16 +4832,24 @@ chk "...and are their own columns, with the gear still last" \
 chk "...and reach the CSV too" \
     [expr {[string first {_axial_A,} [info body ::VMDHole::_conn_export_csv]] >= 0 \
         && [string first {_azimuth_deg} [info body ::VMDHole::_conn_export_csv]] >= 0}] 1
-# Capsule projects properties off its own stadium slices. It must use the SAME
-# normalise->band path as the other probes, or two surfaces of one pore read on
-# two different color scales.
-chk "capsule slices carry the {cx cy cz eff} tuple the property engine takes" \
-    [expr {[string first {list $cx $cy $cz $eff} [info body ::VMDHole::_capsule_rings]] >= 0}] 1
-chk "...and the capsule surface consults the property coloring" \
-    [expr {[string first {_capsule_property_active} \
-        [info body ::VMDHole::_build_capsule_stadium_surface]] >= 0}] 1
-chk "...through the shared norm_to_vmd_color path, not a private mapper" \
-    [expr {[string first {norm_to_vmd_color} [info body ::VMDHole::_capsule_slice_property]] >= 0}] 1
+# Capsule's 3D surface goes through the shared pipeline: the mesher reads the
+# QC1/QC2 pairs as capsules and drops escaped slices by the axis rule. The
+# private Tcl tube that stood in for it is gone.
+chk "no private capsule tube remains" \
+    [expr {[llength [info procs ::VMDHole::_build_capsule_stadium*]] == 0 \
+        && [llength [info procs ::VMDHole::_capsule_slice_property]] == 0}] 1
+chk "the mesher serves capsule runs" \
+    [expr {[string first {capsule} [info body ::VMDHole::_csg_can_mesh]] >= 0}] 1
+foreach _p {surface_mesh surface_mesh_cmd _csg_recolor _csg_sph_extent} {
+    chk "$_p hands the mesher the run's axis" \
+        [expr {[string first {_csg_mesh_opts} [info body ::VMDHole::$_p]] >= 0}] 1
+}
+set _sv_pm $::VMDHole::state(pore_method)
+array set ::VMDHole::state {pore_method capsule cpoint {1 2 3} cvect {0 0 2} endrad 8}
+chk "...as --axis CPOINT CVECT ENDRAD" [::VMDHole::_csg_mesh_opts] {--axis 1 2 3 0 0 2 8}
+set ::VMDHole::state(pore_method) circular
+chk "...and nothing for a spherical run" [::VMDHole::_csg_mesh_opts] {}
+set ::VMDHole::state(pore_method) $_sv_pm
 # Capsule's HOLE radius is sqrt((pi R^2 + 2 R L)/pi) - an equal-area equivalent,
 # like Connolly's Requiv. Labelling it plain "R" implied an inscribed radius.
 chk "capsule's profile radius is labelled equal-area, like Connolly's" \
@@ -4811,11 +4864,6 @@ chk "capsule slices carry the QC pair and its radius" \
 # unoriented pairs make two tracks cross back and forth.
 chk "...oriented against the previous slice so the tracks cannot cross" \
     [expr {[string first {if {$_d2 < $_d1}} [info body ::VMDHole::_capsule_rings]] >= 0}] 1
-# The capsule IS the points within R of that segment, so sampling it is exact
-# where the equal-area circle was a stand-in.
-chk "capsule lining samples the QC segment, not an equal-area circle" \
-    [expr {[string first {gx1+($gx2-$gx1)*$t} \
-        [info body ::VMDHole::_capsule_slice_property]] >= 0}] 1
 chk "capsule draws TWO centreline tracks" \
     [expr {[llength [info procs ::VMDHole::_build_capsule_centerlines]] == 1 \
         && [string first {_build_capsule_centerlines} \
@@ -6052,7 +6100,7 @@ chk "...but each region still gets its own plot file" \
 # A run directory from before this change holds sealed-lobe plots whose mtime is
 # already newer than the .sph, so the reuse check would serve them forever.
 chk "...and the cache tag carries the recipe version" \
-    [expr {[string first {_d${_rdd}_u1} $_rm] >= 0}] 1
+    [regexp {_d\$\{_rdd\}_u[0-9]+} $_rm] 1
 chk "...with a fallback if the union mesh or the split fails" \
     [expr {[string first {falling back to a mesh per region} $_rm] >= 0}] 1
 # A triangle inherits its region from the nearest CLASSIFIED DOT, so it is never

@@ -224,3 +224,8 @@ native/benchmarks/
 vmdhole/ion_flow_analysis.py
 # deliberately untracked test structure - see test_mole_tcl_port.sh
 vmdhole/tests/fixtures/9HNR.pdb
+
+# built binaries in the ported nm/ tools directory (sources are tracked)
+native/nm/nm_search
+native/nm/mesh_csg
+native/conn_lobes
