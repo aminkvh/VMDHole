@@ -1,13 +1,13 @@
 # generated_by: reproduce.sh stage=sos-sweep
-# utc: 2026-09-03T05:16:53Z
-# git: 07790cc+dirty
+# utc: 2026-09-06T23:39:52Z
+# git: 061f7d7+dirty
 # host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
 # nproc: 16  OMP_NUM_THREADS: unset
 # repeats: 3
-# loadavg_at_start: 0.48 0.97 1.80  allow_noisy: 0
-# top_cpu_at_start: ps(100%) claude(4.9%) gnome-system-mo(3.0%) 
+# loadavg_at_start: 2.75 2.66 3.12  allow_noisy: 1
+# load_at_start: 2.75 2.66 3.12
 # bin: sph_process sha256:eea2d679f7292d53 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sph_process
-# bin: sos_triangle_fast sha256:bcb7393b639fb107 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
+# bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
 # bin: sos_triangle.c sha256:7a31826487b31cf3 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/upstream/sos_triangle.c
 # Upstream is built from its OWN source with ONLY MAX_COORD raised to the
 #   fork's ceiling, so both binaries are asked for the same surface and this
@@ -19,10 +19,10 @@
 #   'yes' with a non-zero triangle count, else the ratio is timing one or
 #   both builds doing nothing - asserted below, not left to the reader.
 dotden,triangles,upstream_ms,fast_ms,speedup,identical
-10,2810,99.2,29.8,3.3,yes
-15,6390,458.4,48.2,9.5,yes
-20,11280,1354.2,79.9,16.9,yes
-25,17354,3066.9,110.8,27.7,yes
-30,24570,6055.4,150.6,40.2,yes
-35,33388,11215.8,202.0,55.5,yes
-40,43707,18890.2,262.2,72.0,yes
+10,2810,105.5,30.9,3.4,yes
+15,6390,464.2,50.5,9.2,yes
+20,11280,1399.1,79.0,17.7,yes
+25,17354,3216.1,114.3,28.1,yes
+30,24570,6400.7,159.9,40.0,yes
+35,33388,11644.1,208.3,55.9,yes
+40,43707,19775.4,270.1,73.2,yes

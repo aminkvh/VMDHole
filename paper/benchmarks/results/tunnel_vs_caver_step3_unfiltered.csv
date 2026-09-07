@@ -1,25 +1,25 @@
 # generated_by: bench_tunnel_vs_caver.sh (compare_tunnel_clustering_vs_caver.py)
-# utc: 2026-09-03T05:25:22Z
-# git: 07790cc
+# utc: 2026-09-06T23:43:11Z
+# git: 061f7d7
 # host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
-# loadavg_at_start: 0.43 0.78 1.39 2/2859 3120063
+# loadavg_at_start: 4.30 3.32 3.29 3/3161 667583
 # engine: /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast --tunnel-cluster
-# bin: sos_triangle_fast sha256:bcb7393b639fb107 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
+# bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
 # metric: Adjusted Rand Index between CAVER's own cluster labels and tunnel_cluster_c's output, at each of our own thresholds (VMDHole's distance metric - symmetric mean nearest-point - is not the same definition as CAVER's, so thresholds are not directly comparable 1:1; swept instead of hand-picked).
 # note: time_s at this pool size (83-145 pathways) is process-startup-dominated jitter, not a scaling signal - see tunnel_clustering_scaling.csv for that.
 # ground truth: same guided_example trajectory, CAVER's own tutorial step 3 (clustering_threshold 2.0, BEFORE the tutorial's own 'step 4: adjusting clustering'), RAW/unfiltered -> 10 clusters / 145 tunnels, same-cluster same-frame duplicates present (the harder case). Coordinates + CAVER's own per-tunnel cluster label read verbatim from CAVER's analysis/tunnel_profiles.csv.
 threshold,time_s,our_clusters,ARI_vs_CAVER
-1.0,0.010834,23,0.710871
-1.5,0.010329,11,0.892719
-2.0,0.017494,7,0.468799
-2.5,0.010337,6,0.417192
-3.0,0.012527,4,0.339153
-3.5,0.011029,4,0.339153
-4.0,0.010641,4,0.339153
-5.0,0.010446,2,0.007262
-6.0,0.011170,2,0.007262
-8.0,0.017283,1,0.000000
-10.0,0.010580,1,0.000000
-12.0,0.012274,1,0.000000
-15.0,0.009851,1,0.000000
-20.0,0.013823,1,0.000000
+1.0,0.018356,23,0.710871
+1.5,0.022834,11,0.892719
+2.0,0.034146,7,0.468799
+2.5,0.021596,6,0.417192
+3.0,0.021466,4,0.339153
+3.5,0.022890,4,0.339153
+4.0,0.018882,4,0.339153
+5.0,0.019839,2,0.007262
+6.0,0.017825,2,0.007262
+8.0,0.018888,1,0.000000
+10.0,0.019926,1,0.000000
+12.0,0.021233,1,0.000000
+15.0,0.018413,1,0.000000
+20.0,0.017881,1,0.000000
