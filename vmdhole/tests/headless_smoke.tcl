@@ -5067,26 +5067,20 @@ if {[::VMDHole::sos_triangle_has_feature ionflowpath]} {
 } else {
     chk "kernel path mode (skipped: binary has no ionflowpath)" 1 1
 }
-# The CVECT stick is an arcball: the knob's POSITION on the pad, not its
-# motion history, is the whole story - drag it back to the same spot and
-# CVECT is back to the same vector. Basis = screen axes aligned with world
-# axes (right=x, up=y, toward=z) so the expected numbers are exact.
-set _basis {1 0 0  0 1 0  0 0 1}
-lassign [::VMDHole::_axis_stick_knob_from_cvect {0 0 1} $_basis] _nx _ny
-chk "knob at rest (centre) is CVECT pointing at the viewer" \
-    [expr {abs($_nx) < 1e-9 && abs($_ny) < 1e-9}] 1
-set _v [::VMDHole::_axis_stick_cvect_from_knob 1.0 0.0 $_basis]
-chk "knob pushed fully right is CVECT flat in the screen plane, to the right" \
-    [expr {[lindex $_v 0] > 0.999 && abs([lindex $_v 1]) < 1e-6 && abs([lindex $_v 2]) < 1e-6}] 1
-set _v [::VMDHole::_axis_stick_cvect_from_knob 0.0 1.0 $_basis]
-chk "knob pushed fully up is CVECT flat in the screen plane, upward" \
-    [expr {[lindex $_v 1] > 0.999 && abs([lindex $_v 0]) < 1e-6 && abs([lindex $_v 2]) < 1e-6}] 1
-set _v [::VMDHole::_axis_stick_cvect_from_knob 0.3 -0.4 $_basis]
-lassign [::VMDHole::_axis_stick_knob_from_cvect $_v $_basis] _nx _ny
-chk "knob position round-trips through CVECT and back (no drift)" \
-    [expr {abs($_nx-0.3) < 1e-9 && abs($_ny+0.4) < 1e-9}] 1
-chk "every knob position gives a unit CVECT" \
-    [expr {abs(([lindex $_v 0]**2+[lindex $_v 1]**2+[lindex $_v 2]**2)-1) < 1e-9}] 1
+# The CVECT stick places the two-point DEFINITION's endpoints, one at a
+# time - it does not move CVECT itself. state(axis_stick_vec_pt) chooses
+# which endpoint; CVECT is recomputed from the pair after every move, the
+# same as pressing Compute.
+chk "_axis_stick_key targets vec_p1 by default under CVECT" \
+    [::VMDHole::_axis_stick_key cvect] "vec_p1"
+set ::VMDHole::state(axis_stick_vec_pt) p2
+chk "...and vec_p2 once Point 2 is selected" [::VMDHole::_axis_stick_key cvect] "vec_p2"
+set ::VMDHole::state(axis_stick_vec_pt) p1
+chk "_axis_stick_getvar/_axis_stick_setvar read/write vec_p1, not a state entry" \
+    [expr {![info exists ::VMDHole::state(vec_p1)]}] 1
+::VMDHole::_axis_stick_setvar vec_p1 "1.0000 2.0000 3.0000"
+chk "...confirmed: setvar wrote the namespace variable" $::VMDHole::vec_p1 "1.0000 2.0000 3.0000"
+chk "...and getvar reads the same variable back" [::VMDHole::_axis_stick_getvar vec_p1] "1.0000 2.0000 3.0000"
 
 # _axis_stick_nudge resolves the view basis through a live molecule - give it
 # one of its own rather than trust whatever the suite left state(molid) at.
@@ -5094,19 +5088,17 @@ set _svmid $::VMDHole::state(molid)
 set _stkmol [mol new]
 set ::VMDHole::state(molid) $_stkmol
 molinfo $_stkmol set rotate_matrix {{{1 0 0 0} {0 1 0 0} {0 0 1 0} {0 0 0 1}}}
-# 0.6/0/0.8, not 1/0/0: a click AT the rim clamps ("right" from the rim is a
-# no-op, so "right" then "left" would not be inverses there - an interior
-# point is what makes this a fair round-trip check.
-set ::VMDHole::state(cvect) "0.6 0.0 0.8"
-set ::VMDHole::state(cvect_def_p1) "x"; set ::VMDHole::state(cvect_def_p2) "y"
+set ::VMDHole::vec_p1 "1 2 3"; set ::VMDHole::vec_p2 "10 2 3"
+set ::VMDHole::state(axis_stick_vec_pt) p1
+set ::VMDHole::state(axis_stick_step_cpoint) 1.0
 ::VMDHole::_axis_stick_nudge cvect right
-::VMDHole::_axis_stick_nudge cvect left
-lassign $::VMDHole::state(cvect) _rx _ry _rz
-# state stores 4 decimals, so two nudges round-trip to that resolution, not bit-for-bit
-chk "stick nudge right then left returns to (near) the same CVECT" \
-    [expr {abs($_rx-0.6) < 1e-3 && abs($_ry) < 1e-3 && abs($_rz-0.8) < 1e-3}] 1
-chk "stick nudge drops the two-point CVECT definition" \
-    [expr {$::VMDHole::state(cvect_def_p1) eq "" && $::VMDHole::state(cvect_def_p2) eq ""}] 1
+chk "moving Point 1 leaves Point 2 untouched" $::VMDHole::vec_p2 "10 2 3"
+chk "Point 1 moved one step (Å) right on screen" $::VMDHole::vec_p1 "2.0000 2.0000 3.0000"
+chk "CVECT recomputed live from the moved pair" $::VMDHole::state(cvect) "1.0000 0.0000 0.0000"
+set ::VMDHole::state(axis_stick_vec_pt) p2
+::VMDHole::_axis_stick_nudge cvect up
+chk "moving Point 2 leaves Point 1 untouched" $::VMDHole::vec_p1 "2.0000 2.0000 3.0000"
+chk "Point 2 moved one step (Å) up on screen" $::VMDHole::vec_p2 "10.0000 3.0000 3.0000"
 mol delete $_stkmol
 set ::VMDHole::state(molid) $_svmid
 set ::VMDHole::state(cvect) "0 0 1"

@@ -520,7 +520,7 @@ namespace eval ::VMDHole:: {
         axis_stick_mode cpoint
         surface_smooth follow
         axis_stick_step_cpoint 1.0
-        axis_stick_step_cvect_deg 1.0
+        axis_stick_vec_pt p1
         cvect_def_p1 {}
         cvect_def_p2 {}
         dynamic_axis 0
@@ -20203,7 +20203,7 @@ proc ::VMDHole::build_run_panel {parent} {
         grid $parent.cv_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
     grid $parent.cv_e   -row $row -column 1 -sticky ew -padx 8 -pady 2
     grid $parent.cv_box -row $row -column 2 -sticky ew -padx 8 -pady 2
-    add_tooltip $parent.cv_box.stk "Set CVECT: tilt it with an on-screen stick relative to the current view, or define it from two points."
+    add_tooltip $parent.cv_box.stk "Set CVECT from two points: pick Point 1 or Point 2, then place it with an on-screen stick or step buttons, relative to the current view."
     incr row
 
     # (Align traj… button now lives on the Selection row, near the selection it fits.)
@@ -23799,111 +23799,78 @@ proc ::VMDHole::_view_right_up {molid} {
 
 # The three things the stick can move, and the cue that belongs to each.
 proc ::VMDHole::_axis_stick_key {mode} {
-    return [expr {$mode eq "tunnel_start" ? "tunnel_start" : ($mode eq "cvect" ? "cvect" : "cpoint")}]
+    # Which literal point the stick currently moves. CVECT has no single
+    # point of its own - it moves whichever of the two-point definition's
+    # ends is selected (state(axis_stick_vec_pt): p1 or p2), and CVECT is
+    # then recomputed from the pair, exactly as typing over the two fields
+    # and pressing Compute would do.
+    variable state
+    if {$mode eq "tunnel_start"} { return "tunnel_start" }
+    if {$mode eq "cvect"} {
+        return [expr {[info exists state(axis_stick_vec_pt)] && $state(axis_stick_vec_pt) eq "p2" \
+            ? "vec_p2" : "vec_p1"}]
+    }
+    return "cpoint"
 }
 proc ::VMDHole::_axis_stick_cue_key {mode} {
     return [expr {$mode eq "tunnel_start" ? "show_tunnel_start_marker" : "show_cpoint_marker"}]
 }
-proc ::VMDHole::_axis_stick_is_dir {mode} { return [expr {$mode eq "cvect"}] }
+
+proc ::VMDHole::_axis_stick_getvar {key} {
+    # vec_p1/vec_p2 are plain namespace variables, not state array entries -
+    # this and _axis_stick_setvar are the one place that difference is hidden.
+    variable state
+    variable vec_p1
+    variable vec_p2
+    switch -- $key {
+        vec_p1 { return $vec_p1 }
+        vec_p2 { return $vec_p2 }
+        default { return [expr {[info exists state($key)] ? $state($key) : ""}] }
+    }
+}
+proc ::VMDHole::_axis_stick_setvar {key val} {
+    variable state
+    variable vec_p1
+    variable vec_p2
+    switch -- $key {
+        vec_p1 { set vec_p1 $val }
+        vec_p2 { set vec_p2 $val }
+        default { set state($key) $val }
+    }
+}
 
 proc ::VMDHole::_axis_stick_current {mode} {
-    # The point/direction as three literal numbers, resolving CPOINT's other
-    # normal form (a VMD atom selection) once, since the stick moves it by
-    # arithmetic from here on - exactly what typing over the selection by hand
-    # would do. Blank CVECT defaults to the Z axis, matching "Set to Z".
-    variable state
-    if {![_axis_stick_is_dir $mode]} {
-        set key [_axis_stick_key $mode]
-        set molid ""; catch {set molid [resolve_molid]}
-        if {$molid eq ""} { return {} }
-        set frame 0; catch {set frame [molinfo $molid get frame]}
-        set pt {}
-        if {[catch {set pt [_resolve_point_input $state($key) $molid $frame]}] || [llength $pt] != 3} {
-            return {}
-        }
-        return $pt
+    # The target point as three literal numbers, resolving its other normal
+    # form (a VMD atom selection) once, since the stick moves it by
+    # arithmetic from here on - exactly what typing over it by hand would do.
+    set key [_axis_stick_key $mode]
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return {} }
+    set frame 0; catch {set frame [molinfo $molid get frame]}
+    set pt {}
+    if {[catch {set pt [_resolve_point_input [_axis_stick_getvar $key] $molid $frame]}] || [llength $pt] != 3} {
+        return {}
     }
-    set u [_normalize_dir $state(cvect)]
-    if {$u eq {}} { set u {0.0 0.0 1.0} }
-    return $u
+    return $pt
 }
 
 proc ::VMDHole::_axis_stick_apply {mode dx dy dz} {
-    # Add a screen-relative displacement (dx dy dz, already in world units) to
-    # CPOINT, or tilt CVECT by it and renormalize. Redraws the CPOINT/CVECT cue
-    # immediately, which is the point of a control meant to be watched live.
-    variable state
+    # Add a screen-relative displacement (dx dy dz, in world units) to the
+    # target point. For CVECT's endpoints this also recomputes CVECT from the
+    # pair, live, the same as pressing Compute; the CPOINT marker's arrow is
+    # what shows the result, since CVECT itself is no longer moved directly.
     set cur [_axis_stick_current $mode]
     if {$cur eq {}} { return }
     lassign $cur cx cy cz
     set key [_axis_stick_key $mode]
-    if {[_axis_stick_is_dir $mode]} { return }
-    set state($key) [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
-    catch {_sync_point_marker [_axis_stick_key $mode] [_axis_stick_cue_key $mode]}
-}
-
-proc ::VMDHole::_axis_stick_view_basis {molid} {
-    lassign [_view_right_up $molid] rx ry rz ux uy uz
-    lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
-    return [list $rx $ry $rz $ux $uy $uz $tx $ty $tz]
-}
-
-proc ::VMDHole::_axis_stick_knob_from_cvect {v basis} {
-    # The pad position {nx nyup}, each in [-1,1], whose ABSOLUTE location
-    # always means the same direction relative to the current view: centre
-    # (0,0) = pointing at the viewer, the rim = lying flat in the screen
-    # plane toward that edge. This is what makes the knob's position, not
-    # its motion history, the whole story - drag it back to where it was and
-    # CVECT is back to what it was, which an incremental rotation cannot do.
-    lassign $v vx vy vz
-    lassign $basis rx ry rz ux uy uz tx ty tz
-    set tow [expr {$vx*$tx+$vy*$ty+$vz*$tz}]
-    if {$tow > 1.0} { set tow 1.0 }; if {$tow < -1.0} { set tow -1.0 }
-    set theta [expr {acos($tow)}]
-    set sn [expr {sin($theta)}]
-    set dist [expr {$theta/(3.14159265358979/2.0)}]
-    if {$dist > 1.0} { set dist 1.0 }
-    if {$sn < 1e-9} { return [list 0.0 0.0] }
-    set nxr [expr {$vx*$rx+$vy*$ry+$vz*$rz}]
-    set nyu [expr {$vx*$ux+$vy*$uy+$vz*$uz}]
-    return [list [expr {$nxr/$sn*$dist}] [expr {$nyu/$sn*$dist}]]
-}
-
-proc ::VMDHole::_axis_stick_cvect_from_knob {nx nyup basis} {
-    # The inverse of _axis_stick_knob_from_cvect: the pad position -> a unit
-    # CVECT, relative to the SAME view basis. Distance from centre is the
-    # angle away from "pointing at the viewer" (rim = 90 degrees, flat in
-    # the screen plane); direction from centre is which way it tilts.
-    lassign $basis rx ry rz ux uy uz tx ty tz
-    set dist [expr {sqrt($nx*$nx+$nyup*$nyup)}]
-    if {$dist > 1.0} { set nx [expr {$nx/$dist}]; set nyup [expr {$nyup/$dist}]; set dist 1.0 }
-    set theta [expr {$dist*3.14159265358979/2.0}]
-    set c [expr {cos($theta)}]; set sn [expr {sin($theta)}]
-    if {$dist < 1e-9} { set ex 0.0; set ey 0.0 } else { set ex [expr {$nx/$dist}]; set ey [expr {$nyup/$dist}] }
-    return [_normalize_dir [list [expr {$tx*$c+($rx*$ex+$ux*$ey)*$sn}] \
-                                 [expr {$ty*$c+($ry*$ex+$uy*$ey)*$sn}] \
-                                 [expr {$tz*$c+($rz*$ex+$uz*$ey)*$sn}]]]
-}
-
-proc ::VMDHole::_axis_stick_redraw_knob {d} {
-    # Puts the knob where the CURRENT CVECT actually is (arcball modes) or
-    # back at rest (translate modes) - called after anything besides a live
-    # drag changes what the pad should show: a mode switch, an arrow click,
-    # Guess/Use Z/Compute, or CVECT typed by hand.
-    variable state
-    if {![winfo exists $d.pad.canv]} { return }
-    if {![_axis_stick_is_dir $state(axis_stick_mode)]} {
-        catch {$d.pad.canv coords knob 62 62 78 78}
-        return
+    _axis_stick_setvar $key [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
+    if {$key in {vec_p1 vec_p2}} {
+        variable w
+        catch {compute_vector $w.axisstick.vec}
+        catch {_sync_point_marker cpoint show_cpoint_marker}
+    } else {
+        catch {_sync_point_marker $key [_axis_stick_cue_key $mode]}
     }
-    set molid ""; catch {set molid [resolve_molid]}
-    if {$molid eq ""} { return }
-    set cur [_axis_stick_current cvect]
-    if {$cur eq {}} { return }
-    lassign [_axis_stick_knob_from_cvect $cur [_axis_stick_view_basis $molid]] nx nyup
-    set cx 70; set cy 70; set r 52
-    set kx [expr {$nx*$r}]; set ky [expr {-$nyup*$r}]
-    catch {$d.pad.canv coords knob [expr {$cx+$kx-8}] [expr {$cy+$ky-8}] [expr {$cx+$kx+8}] [expr {$cy+$ky+8}]}
 }
 
 proc ::VMDHole::_axis_stick_nudge {mode dir} {
@@ -23912,31 +23879,8 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
     set molid ""; catch {set molid [resolve_molid]}
     if {$molid eq ""} { return }
     lassign [_view_right_up $molid] rx ry rz ux uy uz
-    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
+    set step $state(axis_stick_step_cpoint)
     if {![string is double -strict $step]} { set step 1.0 }
-    if {[_axis_stick_is_dir $mode]} {
-        # Move the arcball knob by one step (in pad-radius units: a full step
-        # of 90 deg reaches the rim) and set CVECT from the new position -
-        # same absolute mapping the drag uses, so clicking and dragging never
-        # fight each other.
-        set basis [_axis_stick_view_basis $molid]
-        set cur [_axis_stick_current cvect]
-        if {$cur eq {}} { return }
-        lassign [_axis_stick_knob_from_cvect $cur $basis] nx nyup
-        set delta [expr {$step/90.0}]
-        switch -- $dir {
-            right { set nx [expr {$nx+$delta}] }
-            left  { set nx [expr {$nx-$delta}] }
-            up    { set nyup [expr {$nyup+$delta}] }
-            down  { set nyup [expr {$nyup-$delta}] }
-        }
-        set nv [_axis_stick_cvect_from_knob $nx $nyup $basis]
-        if {$nv eq {}} { return }
-        _clear_cvect_def
-        set state(cvect) [format_triplet $nv]
-        catch {_sync_point_marker cpoint show_cpoint_marker}
-        return
-    }
     switch -- $dir {
         right { _axis_stick_apply $mode [expr {$rx*$step}] [expr {$ry*$step}] [expr {$rz*$step}] }
         left  { _axis_stick_apply $mode [expr {-$rx*$step}] [expr {-$ry*$step}] [expr {-$rz*$step}] }
@@ -23948,7 +23892,6 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
 proc ::VMDHole::_axis_stick_drag_start {d x y} {
     variable _axis_stick_last
     set _axis_stick_last [list $x $y]
-    _axis_stick_drag_motion $d $x $y
 }
 
 proc ::VMDHole::_axis_stick_drag_motion {d x y} {
@@ -23968,23 +23911,10 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
     set kd [expr {sqrt($kx*$kx+$ky*$ky)}]
     if {$kd > $r} { set kx [expr {$kx*$r/$kd}]; set ky [expr {$ky*$r/$kd}] }
     catch {$d.pad.canv coords knob [expr {$cx+$kx-8}] [expr {$cy+$ky-8}] [expr {$cx+$kx+8}] [expr {$cy+$ky+8}]}
+    if {$dxpix == 0 && $dypix == 0} { return }
     set mode $state(axis_stick_mode)
     set molid ""; catch {set molid [resolve_molid]}
     if {$molid eq ""} { return }
-    if {[_axis_stick_is_dir $mode]} {
-        # Absolute: the knob's position on the pad IS the direction, relative
-        # to the current view - not a delta, so there is nothing to compound
-        # and no history to lose track of.
-        set nv [_axis_stick_cvect_from_knob [expr {$kx/double($r)}] [expr {-$ky/double($r)}] \
-                    [_axis_stick_view_basis $molid]]
-        if {$nv ne {}} {
-            _clear_cvect_def
-            set state(cvect) [format_triplet $nv]
-            catch {_sync_point_marker cpoint show_cpoint_marker}
-        }
-        return
-    }
-    if {$dxpix == 0 && $dypix == 0} { return }
     lassign [_view_right_up $molid] rx ry rz ux uy uz
     set step $state(axis_stick_step_cpoint)
     if {![string is double -strict $step]} { set step 1.0 }
@@ -23998,19 +23928,15 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
 
 proc ::VMDHole::_axis_stick_drag_end {d} {
     variable _axis_stick_last
-    variable state
     catch {unset _axis_stick_last}
-    if {[_axis_stick_is_dir $state(axis_stick_mode)]} { return }
     catch {$d.pad.canv coords knob 62 62 78 78}
 }
 
 proc ::VMDHole::_axis_stick_sync_mode {d} {
     variable state
     set m $state(axis_stick_mode)
-    set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT (direction): tilt with the stick, or define it from two points" tunnel_start "Tunnel start point"} $m]
+    set lbl [dict get {cpoint "CPOINT (start point)" cvect "CVECT: place its two points" tunnel_start "Tunnel start point"} $m]
     catch {$d.hdr configure -text "Moving: $lbl"}
-    catch {$d.sv.step_l configure -text [expr {[_axis_stick_is_dir $m] ? "Step (\u00b0)" : "Step (\u00c5)"}]}
-    catch {$d.sv.step_e configure -textvariable ::VMDHole::state(axis_stick_step_[expr {[_axis_stick_is_dir $m] ? "cvect_deg" : "cpoint"}])}
     catch {
         # only this mode's targets: a pore run has no tunnel start, a tunnel run no CPOINT/CVECT
         if {[analysis_mode] eq "tunnel"} { grid remove $d.m_cp $d.m_cv; grid $d.m_ts } \
@@ -24021,11 +23947,11 @@ proc ::VMDHole::_axis_stick_sync_mode {d} {
     # point neither - so the choice sits with the point it governs.
     catch {
         if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
-        if {$m eq "cvect"}  { grid $d.vec; grid $d.cvq; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } else { grid remove $d.vec; grid remove $d.cvq; grid $d.pc }
+        if {$m eq "cvect"}  { grid $d.vec; grid $d.pt2; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } \
+        else { grid remove $d.vec; grid remove $d.pt2; grid $d.pc }
         if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
     }
     _axis_stick_sync_val_label $d
-    _axis_stick_redraw_knob $d
 }
 
 proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
@@ -24091,13 +24017,18 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     add_tooltip $d.pf.cp.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
     add_tooltip $d.pf.cp.tk "Moves CPOINT by the translation of a frozen patch of atoms - drift-free, rotation-blind."
 
-    frame $d.cvq
-    button $d.cvq.guess -text "Guess" -command [list ::VMDHole::_cvect_guess $d.vec]
-    button $d.cvq.z     -text "Use Z" -command [list ::VMDHole::_cvect_set_z $d.vec]
-    pack $d.cvq.guess $d.cvq.z -side left -padx 4
-    grid $d.cvq -row 2 -column 0 -columnspan 3 -pady {2 0}
-    add_tooltip $d.cvq.guess "Guess CVECT from the pore-lining atoms near CPOINT."
-    add_tooltip $d.cvq.z "Set CVECT to the Z axis."
+    # The stick moves ONE of the two endpoints CVECT is computed from - which
+    # one is this selector, not a mode of its own; switching it only changes
+    # what the next click or drag targets, exactly like choosing CPOINT vs
+    # the tunnel start point does at the row above.
+    frame $d.pt2
+    label       $d.pt2.l  -text "Move:"
+    radiobutton $d.pt2.p1 -text "Point 1" -variable ::VMDHole::state(axis_stick_vec_pt) -value p1 \
+        -command [list ::VMDHole::_axis_stick_sync_mode $d]
+    radiobutton $d.pt2.p2 -text "Point 2" -variable ::VMDHole::state(axis_stick_vec_pt) -value p2 \
+        -command [list ::VMDHole::_axis_stick_sync_mode $d]
+    pack $d.pt2.l $d.pt2.p1 $d.pt2.p2 -side left -padx {0 6}
+    grid $d.pt2 -row 2 -column 0 -columnspan 3 -pady {2 0}
 
     frame $d.pad
     grid $d.pad -row 3 -column 0 -columnspan 3 -pady {10 4}
@@ -24115,28 +24046,31 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     grid $d.pad.canv  -row 1 -column 1
     grid $d.pad.right -row 1 -column 2
     grid $d.pad.down  -row 2 -column 1
-    add_tooltip $d.pad.canv "For a point: drag moves it in the direction you drag, relative to the CURRENT view. For CVECT: the knob's POSITION is the direction - centre points at you, the rim lies flat in the screen plane that way. Drag back to the same spot for the same direction, every time."
+    add_tooltip $d.pad.canv "Drag moves the target point in the direction you drag, relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation. For CVECT, pick Point 1 or Point 2 above first; CVECT is recomputed from the pair as you move either one."
     bind $d.pad.canv <ButtonPress-1> [list ::VMDHole::_axis_stick_drag_start $d %x %y]
     bind $d.pad.canv <B1-Motion>     [list ::VMDHole::_axis_stick_drag_motion $d %x %y]
     bind $d.pad.canv <ButtonRelease-1> [list ::VMDHole::_axis_stick_drag_end $d]
 
     frame $d.sv
     label   $d.sv.step_l -text "Step"
-    spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right
+    spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right \
+        -textvariable ::VMDHole::state(axis_stick_step_cpoint)
     label   $d.sv.val_l -text "Value"
-    label   $d.sv.val_v -textvariable ::VMDHole::state(cpoint) -width 20 -anchor w -relief sunken
+    label   $d.sv.val_v -width 20 -anchor w -relief sunken
     pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
     pack $d.sv.val_l -side left -padx {10 4}
     pack $d.sv.val_v -side left
     grid $d.sv -row 4 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 10}
-    add_tooltip $d.sv.step_e "Per click: \u00c5 for a point, or degrees toward the rim for CVECT."
+    add_tooltip $d.sv.step_e "Distance moved per arrow click, in \u00c5. Also the drag sensitivity."
 
     wm protocol $d WM_DELETE_WINDOW [list ::VMDHole::_axis_stick_close $d]
     grid columnconfigure $d 2 -weight 1
     _axis_stick_sync_val_label $d
     trace add variable ::VMDHole::state(axis_stick_mode) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
     trace add variable ::VMDHole::state(cpoint) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
-    trace add variable ::VMDHole::state(cvect) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    trace add variable ::VMDHole::state(tunnel_start) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    trace add variable ::VMDHole::vec_p1 write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
+    trace add variable ::VMDHole::vec_p2 write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
     bind $d <Destroy> [list ::VMDHole::_axis_stick_dialog_closed $d]
     set state([_axis_stick_cue_key $state(axis_stick_mode)]) 1
     _axis_stick_sync_mode $d
@@ -24156,20 +24090,25 @@ proc ::VMDHole::_axis_stick_close {d} {
 proc ::VMDHole::_axis_stick_nudge_cur {d dir} {
     variable state
     _axis_stick_nudge $state(axis_stick_mode) $dir
-    _axis_stick_redraw_knob $d
 }
 
 proc ::VMDHole::_axis_stick_sync_val_label {d} {
+    # A plain -text, not -textvariable: the target for CVECT is vec_p1 or
+    # vec_p2, plain namespace variables rather than a state array entry, so
+    # what the label shows has to be re-read on every change instead of
+    # bound once.
     variable state
     if {![winfo exists $d.sv.val_v]} { return }
-    catch {$d.sv.val_v configure -textvariable ::VMDHole::state([_axis_stick_key $state(axis_stick_mode)])}
+    catch {$d.sv.val_v configure -text [_axis_stick_getvar [_axis_stick_key $state(axis_stick_mode)]]}
 }
-proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d; _axis_stick_redraw_knob $d }
+proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d }
 
 proc ::VMDHole::_axis_stick_dialog_closed {d args} {
     catch {trace remove variable ::VMDHole::state(axis_stick_mode) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
     catch {trace remove variable ::VMDHole::state(cpoint) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
-    catch {trace remove variable ::VMDHole::state(cvect) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+    catch {trace remove variable ::VMDHole::state(tunnel_start) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+    catch {trace remove variable ::VMDHole::vec_p1 write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
+    catch {trace remove variable ::VMDHole::vec_p2 write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}
 }
 
 proc ::VMDHole::resolve_molid {} {
