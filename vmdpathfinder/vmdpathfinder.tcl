@@ -6791,32 +6791,32 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     # share the value but skip the live-view switch.
     bind $parent.molid_e <Return>   ::VMDPathFinder::on_molid_changed
     bind $parent.molid_e <FocusOut> ::VMDPathFinder::on_molid_changed
-    grid $parent.molid_l -row $row -column 0 -sticky w  -padx 8 -pady 1
-    grid $parent.molid_e -row $row -column 1 -sticky ew -padx 8 -pady 1
-    grid $parent.molid_b -row $row -column 2 -sticky ew -padx 8 -pady 1
+    grid $parent.molid_l -row $row -column 0 -sticky w  -padx 8 -pady 2
+    grid $parent.molid_e -row $row -column 1 -sticky ew -padx 8 -pady 2
+    grid $parent.molid_b -row $row -column 2 -sticky ew -padx 8 -pady 2
     incr row
 
     label $parent.frame_l -text "Frames"
     entry $parent.frame_e -textvariable ::VMDPathFinder::state(frame_spec) -width 14
     frame $parent.frame_hint
-    button $parent.frame_hint.all -text "All" -width 4 \
+    button $parent.frame_hint.all -text "All" \
         -command {set ::VMDPathFinder::state(frame_spec) all}
-    button $parent.frame_hint.now -text "Now" -width 4 \
+    button $parent.frame_hint.now -text "Now" \
         -command {set ::VMDPathFinder::state(frame_spec) now}
-    pack $parent.frame_hint.all -side left
-    pack $parent.frame_hint.now -side left -padx {4 0}
-    grid $parent.frame_l    -row $row -column 0 -sticky w  -padx 8 -pady 1
-    grid $parent.frame_e    -row $row -column 1 -sticky ew -padx 8 -pady 1
-    grid $parent.frame_hint -row $row -column 2 -sticky w  -padx 8 -pady 1
+    pack $parent.frame_hint.all -side left -fill x -expand 1
+    pack $parent.frame_hint.now -side left -padx {4 0} -fill x -expand 1
+    grid $parent.frame_l    -row $row -column 0 -sticky w  -padx 8 -pady 2
+    grid $parent.frame_e    -row $row -column 1 -sticky ew -padx 8 -pady 2
+    grid $parent.frame_hint -row $row -column 2 -sticky ew -padx 8 -pady 2
     add_tooltip $parent.frame_e "Which frames to search: now, all, or a range like 0:10 or 0:2:20."
     incr row
 
     label  $parent.sel_l   -text "Selection"
     entry  $parent.sel_e   -textvariable ::VMDPathFinder::state(selection) -width 22
     button $parent.align_b -text "Align traj" -command ::VMDPathFinder::show_align_dialog
-    grid $parent.sel_l   -row $row -column 0 -sticky w  -padx 8 -pady 1
-    grid $parent.sel_e   -row $row -column 1 -sticky ew -padx 8 -pady 1
-    grid $parent.align_b -row $row -column 2 -sticky ew -padx 8 -pady 1
+    grid $parent.sel_l   -row $row -column 0 -sticky w  -padx 8 -pady 2
+    grid $parent.sel_e   -row $row -column 1 -sticky ew -padx 8 -pady 2
+    grid $parent.align_b -row $row -column 2 -sticky ew -padx 8 -pady 2
     add_tooltip $parent.sel_e "Atoms the search treats as the structure. Shared with the HOLE tab."
     add_tooltip $parent.align_b "Align every kept frame onto a reference frame before searching. Shared with the\
         HOLE tab. The Auto-align checkbox below is separate - it aligns right before each run."
@@ -6839,9 +6839,9 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     pack $parent.sp_box.cor -side left -padx {4 0} -fill x -expand 1
     add_tooltip $parent.sp_box.stk "Move the start point with an on-screen stick or step buttons,\
         relative to the current view."
-    grid $parent.sp_l -row $row -column 0 -sticky w  -padx 8 -pady 1
-    grid $parent.sp_e -row $row -column 1 -sticky ew -padx 8 -pady 1
-    grid $parent.sp_box -row $row -column 2 -sticky ew -padx 8 -pady 1
+    grid $parent.sp_l -row $row -column 0 -sticky w  -padx 8 -pady 2
+    grid $parent.sp_e -row $row -column 1 -sticky ew -padx 8 -pady 2
+    grid $parent.sp_box -row $row -column 2 -sticky ew -padx 8 -pady 2
     add_tooltip $parent.sp_e "x y z of a point inside the buried cavity the tunnels lead out of."
     incr row
 
@@ -6852,7 +6852,7 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     checkbutton $parent.auto_c -text "Auto-detect origins (scan whole structure)" \
         -variable ::VMDPathFinder::state(tunnel_auto_origin) \
         -command ::VMDPathFinder::_sync_tunnel_start_row
-    grid $parent.auto_c -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 1
+    grid $parent.auto_c -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 2
     add_tooltip $parent.auto_c "Search every cavity in the structure; no start point needed."
     incr row
     ::VMDPathFinder::_sync_tunnel_start_row
@@ -6899,8 +6899,8 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     } {
         label $parent.mp.$_k\_l -text $_lab
         entry $parent.mp.$_k\_e -textvariable ::VMDPathFinder::state($_k) -width 7
-        grid $parent.mp.$_k\_l -row $_mp_row -column $_mp_col -sticky w -padx {0 4} -pady 1
-        grid $parent.mp.$_k\_e -row $_mp_row -column [expr {$_mp_col+1}] -sticky w -padx {0 14} -pady 1
+        grid $parent.mp.$_k\_l -row $_mp_row -column $_mp_col -sticky w -padx {0 4} -pady 2
+        grid $parent.mp.$_k\_e -row $_mp_row -column [expr {$_mp_col+1}] -sticky w -padx {0 14} -pady 2
         add_tooltip $parent.mp.$_k\_e $_tip
         if {$_mp_col == 0} { set _mp_col 2 } else { set _mp_col 0; incr _mp_row }
     }
@@ -6912,7 +6912,7 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
         -variable ::VMDPathFinder::state(tunnel_cluster_on) \
         -command ::VMDPathFinder::_tunnel_cluster_toggle_changed
     grid $parent.mp.xclus_within -row $_mp_row -column $_mp_col -columnspan 2 \
-        -sticky w -padx {0 4} -pady 1
+        -sticky w -padx {0 4} -pady 2
     add_tooltip $parent.mp.xclus_within "Group near-duplicate routes in the LANDED frame into one representative row/3D object. Off, every route is listed separately. Display-only - MOLE is never re-run."
     grid $parent.mp -row $row -column 0 -columnspan 3 -sticky w -padx 8
     incr row
@@ -21820,20 +21820,26 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
 
 proc ::VMDPathFinder::_about_fill_citations {t version author} {
     $t insert end "Citations\n" h1
-    $t insert end "Cite the three core entries for every VMDPathFinder analysis. Then add only the sections for methods or quantities you report.\n\n"
+    $t insert end "The plugin and VMD are the only citations every analysis needs. Add HOLE for\n"
+    $t insert end "Pore mode (every engine and mesher in it implements HOLE's method), and any\n"
+    $t insert end "other section below for a method or quantity you report.\n\n"
 
-    $t insert end "Cite for every analysis\n" h2
+    $t insert end "Required, every analysis\n" h2
     $t insert end "1.  " num
     $t insert end "$author. VMDPathFinder (version $version) \[computer software\].\n" mono
     $t insert end "   https://github.com/aminkvh/VMDPathFinder\n" mono
     $t insert end "2.  " num
     $t insert end "VMD    Humphrey, W., Dalke, A. & Schulten, K. (1996). VMD: Visual Molecular\n" mono
-    $t insert end "          Dynamics. J. Mol. Graph. 14, 33-38. doi:10.1016/0263-7855(96)00018-5\n" mono
-    $t insert end "3.  " num
+    $t insert end "          Dynamics. J. Mol. Graph. 14, 33-38. doi:10.1016/0263-7855(96)00018-5\n\n" mono
+
+    $t insert end "Pore mode (any search engine, any mesher)\n" h2
+    $t insert end "1.  " num
     $t insert end "HOLE   Smart, O.S., Neduvelil, J.G., Wang, X., Wallace, B.A. & Sansom, M.S.P.\n" mono
     $t insert end "          (1996). HOLE: a program for the analysis of the pore dimensions of\n" mono
     $t insert end "          ion channel structural models. J. Mol. Graph. 14, 354-360.\n" mono
-    $t insert end "          doi:10.1016/S0263-7855(97)00009-X\n\n" mono
+    $t insert end "          doi:10.1016/S0263-7855(97)00009-X\n" mono
+    $t insert end "   The Nelder-Mead search and the marching-cubes mesher are this plugin's own\n" note
+    $t insert end "   reimplementations of HOLE's method; the citation is the same either way.\n\n" note
 
     $t insert end "Pore geometry, conductance, and passability\n" h2
     $t insert end "Cite the entry matching each reported quantity.\n" note
@@ -42190,6 +42196,18 @@ proc ::VMDPathFinder::_ion_flow_passage_shell {} {
         ? [string trim $state(ion_flow_passage_shell)] : 0.5}]
     if {![string is double -strict $v] || $v < 0} { set v 0.5 }
     if {[_run_uses_card conn] || [_run_uses_card connolly]} { return 0.0 }
+    if {[analysis_mode] eq "tunnel" && $v < 1.5} {
+        # 0.5 is tuned for HOLE's own dense per-slice search (every SAMPLE, 0.25
+        # A by default), where the nearest recorded sphere to any near-wall
+        # point is rarely far off. MOLE's centreline is sampled far more
+        # coarsely, so the same inscribed-radius deficit occupancy's shell
+        # compensates for leaves a bigger gap here too - tight enough to still
+        # catch a real outside-the-tunnel detour, loose enough that real
+        # near-wall water and ions are not silently excluded from Passage while
+        # still showing up in Occupancy. A user's own larger value is kept;
+        # only the pore-tuned default (or something smaller) is raised.
+        set v 1.5
+    }
     return $v
 }
 
@@ -42436,7 +42454,7 @@ proc ::VMDPathFinder::show_ion_flow_settings {} {
         grid $d.pe -row $row -column 1 -sticky w -padx {0 10} -pady {8 3}; incr row
         bind $d.pe <Return>   {catch {::VMDPathFinder::_ion_flow_refilter}}
         bind $d.pe <FocusOut> {catch {::VMDPathFinder::_ion_flow_refilter}}
-        add_tooltip $d.pe "How far beyond the pore wall still counts as INSIDE for a passage trace (Å). Default 0.5, tighter than the occupancy shell: a wide margin lets an ion travel up the outside of the pore and read as a crossing it never made. Ignored under Connolly, whose radius already reaches the solvent surface."
+        add_tooltip $d.pe "How far beyond the pore wall still counts as INSIDE for a passage trace (Å). Default 0.5, tighter than the occupancy shell: a wide margin lets an ion travel up the outside of the pore and read as a crossing it never made. Ignored under Connolly, whose radius already reaches the solvent surface; floored at 1.5 in Tunnel mode, whose centreline is sampled too coarsely for 0.5 to be reachable."
     } else {
         label $d.rl -text "Shell (Å)" -anchor w
         entry $d.re -width 8 -textvariable ::VMDPathFinder::state(ion_flow_shell)
