@@ -6029,6 +6029,51 @@ proc ::VMDPathFinder::draw_tunnel_profile_plot {} {
         $cv create text [expr {$lx+$lw/2}] [expr {$ly-3}] -anchor s -font {Helvetica 7 bold} -fill "#444444" \
             -text $prop
     }
+    _draw_tunnel_metrics_readout $cv $ml $mt $pw $ph
+}
+
+proc ::VMDPathFinder::_draw_tunnel_metrics_readout {cv ml mt pw ph} {
+    # Tunnel counterpart of _draw_metrics_readout (HOLE's Pore Profile corner
+    # box): same box, same corner, but only the quantities a MOLE tunnel
+    # actually has - volume and per-species steric passability, both from
+    # metrics_for_tunnel's own radius-vs-distance series. No conductance/ESP/
+    # ellipse line: those need HOLE's own accumulated Sum(ds/pi r^2) factor or
+    # a per-slice centre to fit an ellipse against, neither of which MOLE
+    # computes (see metrics_for_tunnel).
+    variable state
+    if {[info exists state(show_metrics_readout)] && !$state(show_metrics_readout)} { return }
+    set m [metrics_for_tunnel]
+    if {$m eq ""} { return }
+    set vol  [dict get $m volume]
+    set rmin [dict get $m steric_radius]
+    set fnt {Helvetica 8}
+    set x  [expr {$ml + 12}]
+    set y  [expr {$mt + 8}]
+    set lh 13
+    set items {}
+    lappend items [$cv create text $x $y -text [format "Volume %.0f Å³" $vol] \
+        -anchor nw -font $fnt -fill "#222222" -tags metricsreadout]
+    incr y $lh
+    set segs [list [list "pass:" "#555555"]]
+    foreach sp [_readout_species] {
+        lappend segs [list [string map {Water H2O Na Na+ K K+ Ca Ca2+ Mg Mg2+ Cl Cl- Li Li+ Cs Cs+} $sp] \
+            [_pass_color $rmin $sp]]
+    }
+    foreach id [_draw_ltr $cv $x $y $segs $fnt metricsreadout] { lappend items $id }
+    incr y $lh
+    set bx0 1e9; set by0 1e9; set bx1 -1e9; set by1 -1e9
+    foreach id $items {
+        set bb [$cv bbox $id]; if {$bb eq ""} { continue }
+        lassign $bb a b c d
+        if {$a < $bx0} { set bx0 $a }; if {$b < $by0} { set by0 $b }
+        if {$c > $bx1} { set bx1 $c }; if {$d > $by1} { set by1 $d }
+    }
+    if {$bx1 <= $bx0} { return }
+    set rid [$cv create rectangle [expr {$bx0-4}] [expr {$by0-3}] [expr {$bx1+3}] [expr {$by1+3}] \
+        -fill "#ffffff" -outline "#cccccc" -tags metricsreadout]
+    $cv lower $rid [lindex $items 0]
+    set dx [expr {($ml + $pw - 6) - ($bx1 + 3)}]
+    if {$dx != 0} { $cv move metricsreadout $dx 0 }
 }
 
 proc ::VMDPathFinder::draw_tunnel_trends_plot {} {
@@ -17674,6 +17719,11 @@ proc ::VMDPathFinder::_csg_draw_form {} {
 # openings survive. Analysis numbers stay per frame; this is the surface only.
 #   surface_smooth: follow (VMD's own window of the shown representations),
 #                   off, or an integer half-width.
+# Tunnel mode uses the SAME window (_tunnel_smooth_frames/_tunnel_smooth_with,
+# below the pore versions) but keyed by cross-frame CLUSTER rather than by
+# frame's sph_file directly - a bare rank is not a stable identity across
+# frames, so smoothing only applies to a tunnel that cross-frame clustering
+# has actually resolved (see _tunnel_rank_in_frame's own note on why).
 proc ::VMDPathFinder::_surface_smooth_window {} {
     variable state
     set v [expr {[info exists state(surface_smooth)] ? $state(surface_smooth) : "follow"}]
@@ -17696,9 +17746,23 @@ proc ::VMDPathFinder::_surface_smooth_tag {} {
     return [expr {$n > 0 ? "_s$n" : ""}]
 }
 
+proc ::VMDPathFinder::_surface_has_sph {frame} {
+    # Does $frame have a usable sphere file to smooth against right now?
+    # False for a frame HOLE hasn't reached yet (lazy) or whose run failed
+    # (no sph_file at all) - either way there is nothing on disk to read.
+    variable results
+    if {![dict exists $results $frame sph_file]} { return 0 }
+    return [file exists [dict get $results $frame sph_file]]
+}
+
 proc ::VMDPathFinder::_surface_smooth_frames {frame} {
-    # The other frames in the smoothing window of `frame`, clamped at the ends.
-    # {} when smoothing is off or the run is a tunnel search.
+    # The other frames in the smoothing window of `frame`. Walks outward one
+    # index at a time on each side and skips any candidate with no usable
+    # surface (failed run, not yet reached), reaching one index further to
+    # backfill it - the window's half-width N promises N real neighbours, not
+    # N index slots some of which may be empty. Still clamped at the ends of
+    # the trajectory (running out of frames there is not a gap to backfill
+    # across). {} when smoothing is off or the run is a tunnel search.
     variable result_frames
     set n [_surface_smooth_window]
     if {$n <= 0} { return {} }
@@ -17706,10 +17770,16 @@ proc ::VMDPathFinder::_surface_smooth_frames {frame} {
     set order [lsort -integer $result_frames]
     set i [lsearch -exact $order $frame]
     if {$i < 0} { return {} }
+    set nlist [llength $order]
     set out {}
-    for {set j [expr {$i - $n}]} {$j <= $i + $n} {incr j} {
-        if {$j == $i || $j < 0 || $j >= [llength $order]} continue
-        lappend out [lindex $order $j]
+    foreach dir {-1 1} {
+        set got 0
+        set j [expr {$i + $dir}]
+        while {$j >= 0 && $j < $nlist && $got < $n} {
+            set g [lindex $order $j]
+            if {[_surface_has_sph $g]} { lappend out $g; incr got }
+            incr j $dir
+        }
     }
     return $out
 }
@@ -17756,6 +17826,70 @@ proc ::VMDPathFinder::_surface_smooth_with_dir {run_dir} {
         if {[dict exists $d run_dir] && [dict get $d run_dir] eq $run_dir} { return [_surface_smooth_with $f] }
     }
     return {}
+}
+
+# ---- Tunnel-mode smoothing: same window, keyed by CROSS-FRAME CLUSTER -----
+# A bare rank is not a stable identity across frames (MOLE finds a different
+# tunnel COUNT per frame - see _tunnel_rank_in_frame), so "the neighbour
+# frame's version of this tunnel" only exists once cross-frame clustering has
+# resolved one. Without it (clustering off, or this tunnel outside
+# tunnel_xframe_max) smoothing has nothing safe to average against and is
+# simply skipped for that tunnel - the mesh still draws, just unsmoothed.
+proc ::VMDPathFinder::_tunnel_cluster_for_rank {frame rank} {
+    # Reverse lookup of tunnel_xrank ({cid,frame} -> rank): which cluster is
+    # $rank in $frame. "" if clustering is off or $rank is not one of its
+    # tracked members.
+    variable tunnel_xrank
+    if {![array exists tunnel_xrank]} { return "" }
+    foreach k [array names tunnel_xrank "*,$frame"] {
+        if {$tunnel_xrank($k) == $rank} { return [lindex [split $k ,] 0] }
+    }
+    return ""
+}
+
+proc ::VMDPathFinder::_tunnel_smooth_frames {frame cid} {
+    # {frame rank} pairs for cluster $cid in the smoothing window around
+    # $frame - same reach-further-to-backfill policy as _surface_smooth_frames
+    # (a frame the tunnel is simply absent from is skipped, not counted as a
+    # used window slot), clamped at the ends of the frames actually searched.
+    variable tunnel_result_frames
+    variable tunnel_xrank
+    set n [_surface_smooth_window]
+    if {$n <= 0 || $cid eq ""} { return {} }
+    set order [lsort -integer $tunnel_result_frames]
+    set i [lsearch -exact $order $frame]
+    if {$i < 0} { return {} }
+    set nlist [llength $order]
+    set out {}
+    foreach dir {-1 1} {
+        set got 0
+        set j [expr {$i + $dir}]
+        while {$j >= 0 && $j < $nlist && $got < $n} {
+            set g [lindex $order $j]
+            if {[info exists tunnel_xrank($cid,$g)]} {
+                lappend out [list $g $tunnel_xrank($cid,$g)]
+                incr got
+            }
+            incr j $dir
+        }
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_tunnel_smooth_with {frame rank} {
+    # The window's .sph files for the SAME cross-frame tunnel as (frame,
+    # rank) - the mesher's --with field-average list, tunnel counterpart of
+    # _surface_smooth_with. {} without a cross-frame cluster for this tunnel.
+    variable tunnel_root
+    set cid [_tunnel_cluster_for_rank $frame $rank]
+    if {$cid eq ""} { return {} }
+    set with {}
+    foreach pair [_tunnel_smooth_frames $frame $cid] {
+        lassign $pair g rk
+        set sph [file join $tunnel_root [format "tunnel_%05d" $g] [format "tunnel_%02d.sph" $rk]]
+        if {[file exists $sph]} { lappend with $sph }
+    }
+    return $with
 }
 
 proc ::VMDPathFinder::_set_surface_smooth {val disp} {
@@ -17825,8 +17959,11 @@ proc ::VMDPathFinder::surface_plot_name {dir base form {union 0}} {
     set tag [surface_mesh_tag $union]
     if {$tag ne "" && $form eq "draw"} { append tag "_draw" }
     if {$tag ne "" && $form eq "dots"} { append tag "_dots" }
-    set stag [expr {$union ? "" : [_surface_smooth_tag]}]
-    return [file join $dir "$base$stag$tag.vmd_plot"]
+    # Smoothing tag is independent of $union (which only ever gates the CSG
+    # voxel tag above) - every mesh this proc names, tunnels included, needs
+    # a filename that varies with the smoothing window so a cached mesh built
+    # under one window size is never silently reused under another.
+    return [file join $dir "$base[_surface_smooth_tag]$tag.vmd_plot"]
 }
 
 proc ::VMDPathFinder::surface_mesh {sph plot form {dotden ""} {color 1} {union 0} {with {}}} {
@@ -19324,7 +19461,7 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
             set fd [dict get $fdirs $fr]
             set nt [llength $tunnel_results($fr)]
             for {set i 1} {$i <= $nt} {incr i} {
-                lappend _prejobs {*}[_tunnel_mesh_jobs $fd [list $i] "f$fr "]
+                lappend _prejobs {*}[_tunnel_mesh_jobs $fd $fr [list $i] "f$fr "]
             }
             if {[llength $_prejobs] > $_prebudget} { break }
         }
@@ -19468,13 +19605,16 @@ proc ::VMDPathFinder::_tunnel_mesh_current {plot sph} {
     return [expr {[file mtime $plot] >= [file mtime $sph]}]
 }
 
-proc ::VMDPathFinder::_tunnel_mesh_jobs {fd ids {tag ""}} {
-    # run_shell_pool job list that meshes tunnel $ids in $fd: one
+proc ::VMDPathFinder::_tunnel_mesh_jobs {fd frame ids {tag ""}} {
+    # run_shell_pool job list that meshes tunnel $ids of $frame (dir $fd): one
     # sph_process + sos_triangle pair per tunnel, each independent, so they
     # parallelise cleanly. Shared by render_tunnels_for_frame (meshing the
     # frame being shown) and run_tunnel_analysis (pre-meshing every frame in
     # one pool) so the two cannot drift in flags or file naming.
     # $tag only distinguishes job labels when several frames share one pool.
+    # $frame is needed (not just derivable from $fd) to resolve each id's own
+    # smoothing window (_tunnel_smooth_with) - a different cluster per id, so
+    # each gets its own --with list rather than sharing one for the batch.
     variable state
     # Tunnels are thin tubes, not a pore lumen: the main surface's density
     # produced ~42k primitives EACH, 2.5M for one frame's clusters, which is
@@ -19494,7 +19634,8 @@ proc ::VMDPathFinder::_tunnel_mesh_jobs {fd ids {tag ""}} {
         set sph  [file join $fd [format "tunnel_%02d.sph" $i]]
         if {[_tunnel_mesh_current $plot $sph]} { continue }
         if {![file exists $sph]} { continue }
-        lappend jobs [list "mesh $tag$i" [list |sh -c [surface_mesh_cmd $sph $plot draw $dd 1 1]]]
+        lappend jobs [list "mesh $tag$i" \
+            [list |sh -c [surface_mesh_cmd $sph $plot draw $dd 1 1 [_tunnel_smooth_with $frame $i]]]]
     }
     return $jobs
 }
@@ -19580,12 +19721,13 @@ proc ::VMDPathFinder::render_tunnels_for_frame {frame {draft 0}} {
     foreach i $todo {
         set _ok 0
         if {[_tunnel_wants_csg $i]} {
-            set _ok [surface_mesh [file join $fd [format "tunnel_%02d.sph" $i]] [_tunnel_plot $fd $i] draw "" 1 1]
+            set _ok [surface_mesh [file join $fd [format "tunnel_%02d.sph" $i]] [_tunnel_plot $fd $i] \
+                draw "" 1 1 [_tunnel_smooth_with $frame $i]]
         }
         if {!$_ok} { lappend _todo_pool $i }
     }
     if {[llength $_todo_pool] > 1} {
-        run_shell_pool [_tunnel_mesh_jobs $fd $_todo_pool] [resolve_job_count] \
+        run_shell_pool [_tunnel_mesh_jobs $fd $frame $_todo_pool] [resolve_job_count] \
             "Meshing tunnels" "tunnel(s)"
     }
 
@@ -19596,7 +19738,7 @@ proc ::VMDPathFinder::render_tunnels_for_frame {frame {draft 0}} {
         set sph  [file join $fd [format "tunnel_%02d.sph" $i]]
         set plot [_tunnel_plot $fd $i]
         if {![_tunnel_mesh_current $plot $sph]} {
-            if {![surface_mesh $sph $plot draw 6 1 1]} { continue }
+            if {![surface_mesh $sph $plot draw 6 1 1 [_tunnel_smooth_with $frame $i]]} { continue }
         }
         # Per-tunnel gear overrides (show_tunnel_gear_settings): material and
         # wireframe are orthogonal to color source and apply to EVERY branch

@@ -2312,7 +2312,13 @@ chk "...no tag in plot names" [::VMDPathFinder::_surface_smooth_tag] ""
 set ::VMDPathFinder::state(surface_smooth) 2
 chk "a fixed half-width is the window" [::VMDPathFinder::_surface_smooth_window] 2
 chk "...and tags the plot name" [::VMDPathFinder::_surface_smooth_tag] "_s2"
-chk "surface_plot_name applies the tag to pore surfaces only" [expr {[string first {$union ? "" : [_surface_smooth_tag]} [info body ::VMDPathFinder::surface_plot_name]] >= 0}] 1
+# union only ever gates the CSG voxel tag now - the smoothing tag applies to
+# every surface surface_plot_name names, tunnels (union=1) included, so a
+# tunnel mesh built under one window size is never confused for another's.
+chk "surface_plot_name's smoothing tag no longer depends on \$union" \
+    [expr {[string first {$union ? "" : [_surface_smooth_tag]} [info body ::VMDPathFinder::surface_plot_name]] < 0}] 1
+chk "...and tags a union=1 (tunnel) name too" \
+    [string match "*_s2*" [::VMDPathFinder::surface_plot_name /tmp foo draw 1]] 1
 foreach _p {surface_mesh surface_mesh_cmd} {
     chk "$_p takes the window" [expr {[lsearch [info args ::VMDPathFinder::$_p] with] >= 0}] 1
 }
@@ -2320,6 +2326,56 @@ chk "the marching mesher gets --with" [expr {[string first {lappend _mopts --wit
 chk "the legacy pair smooths its dot cloud" [expr {[string first {_sos_smooth_cmd} [info body ::VMDPathFinder::_legacy_sos]] >= 0}] 1
 chk "...and the pool command too" [expr {[string first {_sos_smooth_cmd} [info body ::VMDPathFinder::surface_mesh_cmd]] >= 0}] 1
 chk "the Tcl fallback answers --sos-smooth" [expr {[string first {--sos-smooth} [info body ::VMDPathFinder::_hole_tcl_driver]] >= 0}] 1
+# A frame with no usable surface (failed run, no sph_file) inside the window
+# must be backfilled by reaching one frame further, not just dropped - a
+# window of N promises N real neighbours, not N index slots.
+set _sv_rf $::VMDPathFinder::result_frames
+set _sv_res $::VMDPathFinder::results
+set _smgap /tmp/vmdpathfinder_smoothgap_[pid]
+catch {file delete -force $_smgap}
+file mkdir $_smgap
+set ::VMDPathFinder::result_frames {0 1 2 3 4 5}
+set ::VMDPathFinder::results {}
+foreach _f {0 1 2 3 4 5} {
+    set _sph [file join $_smgap "f$_f.sph"]
+    if {$_f != 2} { close [open $_sph w] }
+    dict set ::VMDPathFinder::results $_f [dict create sph_file $_sph]
+}
+chk "reach-further backfills a missing interior frame" \
+    [lsort -integer [::VMDPathFinder::_surface_smooth_frames 3]] {0 1 4 5}
+chk "...and still clamps at the trajectory edge" \
+    [lsort -integer [::VMDPathFinder::_surface_smooth_frames 1]] {0 3 4}
+set ::VMDPathFinder::result_frames $_sv_rf
+set ::VMDPathFinder::results $_sv_res
+catch {file delete -force $_smgap}
+# Tunnel-mode smoothing is keyed by cross-frame CLUSTER, not by frame's
+# sph_file directly - a bare rank is not a stable identity across frames.
+chk "_tunnel_mesh_jobs threads the frame through for per-id smoothing" \
+    [expr {[lsearch [info args ::VMDPathFinder::_tunnel_mesh_jobs] frame] >= 0}] 1
+set _sv_txf $::VMDPathFinder::tunnel_result_frames
+set _sv_tr  $::VMDPathFinder::tunnel_root
+set _sv_txr [array get ::VMDPathFinder::tunnel_xrank]
+set ::VMDPathFinder::tunnel_result_frames {0 1 2}
+set ::VMDPathFinder::tunnel_root $_smgap
+array unset ::VMDPathFinder::tunnel_xrank
+array set ::VMDPathFinder::tunnel_xrank {}
+# cluster c1 is rank 1 in every frame; c2 only exists in frames 0 and 1.
+array set ::VMDPathFinder::tunnel_xrank {c1,0 1 c1,1 1 c1,2 1 c2,0 2 c2,1 2}
+foreach {_fr _rk} {0 1 1 1 2 1 0 2 1 2} {
+    file mkdir [file join $_smgap [format "tunnel_%05d" $_fr]]
+    close [open [file join $_smgap [format "tunnel_%05d" $_fr] [format "tunnel_%02d.sph" $_rk]] w]
+}
+chk "cluster lookup resolves a tracked rank" [::VMDPathFinder::_tunnel_cluster_for_rank 1 1] c1
+chk "...and returns empty for an untracked one" [::VMDPathFinder::_tunnel_cluster_for_rank 2 2] ""
+chk "tunnel window (c1, mid frame, both neighbours present)" \
+    [llength [::VMDPathFinder::_tunnel_smooth_with 1 1]] 2
+chk "tunnel window (c2, mid frame, absent from frame 2 -> only 1 neighbour)" \
+    [llength [::VMDPathFinder::_tunnel_smooth_with 1 2]] 1
+set ::VMDPathFinder::tunnel_result_frames $_sv_txf
+set ::VMDPathFinder::tunnel_root $_sv_tr
+array unset ::VMDPathFinder::tunnel_xrank
+array set ::VMDPathFinder::tunnel_xrank $_sv_txr
+catch {file delete -force $_smgap}
 set ::VMDPathFinder::state(surface_smooth) $_sv_ss
 # The fallback must retry at the region's OWN density, not the shared one -
 # retrying a big-sphere lobe at the pore's density rebuilds it coarse, which is
