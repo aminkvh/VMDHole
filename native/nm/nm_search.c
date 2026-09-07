@@ -719,7 +719,7 @@ static void usage(const char *a0) {
         "  --quiet           no slice listing on stdout\n", a0);
 }
 
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 int nm_search_main(int argc, char **argv)
 #else
 int main(int argc, char **argv)

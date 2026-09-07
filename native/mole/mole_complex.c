@@ -167,7 +167,7 @@ int mole_is_amino_name(const char *resn)
    Coordinates go through mole_parse_double so the input is bit-identical to
    MOLE's, which its own parser makes non-obvious. In the plugin proper VMD
    supplies these and none of this is needed. */
-/* Read one frame's atoms from VMDHole's packed record instead of the 12-column
+/* Read one frame's atoms from VMDPathFinder's packed record instead of the 12-column
    text. Same atoms, same doubles: the writer sends raw IEEE coordinates and the
    quantisation happens HERE, by rendering %.3f and running it back through the
    very parser the text path uses. That is what keeps the two inputs bit-identical

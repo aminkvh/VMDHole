@@ -18,14 +18,14 @@ statement of modifications.
 **Install everything, in one step:**
 
 ```sh
-./build-vmdhole-optimized.sh                                       # build into build/
-HOLE_INSTALL_DIR="$HOME/hole2/exe" ./build-vmdhole-optimized.sh    # build and install
+./build-vmdpathfinder-optimized.sh                                       # build into build/
+HOLE_INSTALL_DIR="$HOME/hole2/exe" ./build-vmdpathfinder-optimized.sh    # build and install
 ```
 
 It builds every binary the plugin uses: HOLE, `sph_process`, the fast
 `sos_triangle`, and `mole_tunnel_engine` (cloning HOLE2 if you don't pass a
 source path). It checks the toolchain first and backs up whatever it replaces.
-Without `HOLE_INSTALL_DIR`, point VMDHole at `build/` via
+Without `HOLE_INSTALL_DIR`, point VMDPathFinder at `build/` via
 **Settings… → Engines**.
 
 ## What's here
@@ -42,7 +42,7 @@ Without `HOLE_INSTALL_DIR`, point VMDHole at `build/` via
 | `conn_lobes.c` | classifies and clusters Connolly lateral openings, and splits the surface mesh by region - replaces the same computation in pure Tcl |
 | `connolly_patches/` | the optional HOLE-side Fortran patches (`apply_patches.py` + the patched units) |
 | `build.sh` | builds the three self-contained C tools — what CI runs on a fresh checkout, no HOLE tree needed |
-| `build-vmdhole-optimized.sh` | the full install script: patches and rebuilds HOLE + `sph_process` from a HOLE source tree and builds the C tools |
+| `build-vmdpathfinder-optimized.sh` | the full install script: patches and rebuilds HOLE + `sph_process` from a HOLE source tree and builds the C tools |
 | `verify.sh` | rebuild upstream + fast `sos_triangle` and confirm byte-identical output |
 | `CHANGES.md` | the statement of modifications relative to upstream |
 | `LICENSE`, `NOTICE` | Apache-2.0 license and attribution for this derivative work |
@@ -54,5 +54,5 @@ Compiled binaries land at this directory's top level and are never committed.
 This directory is a derivative of Apache-2.0 software and is distributed under
 the **Apache License, Version 2.0** (`LICENSE`), with attribution in `NOTICE`
 and a modification notice at the top of `sos_triangle_fast.c`. This is
-separate from the VMDHole plugin's own license (see the repository root).
+separate from the VMDPathFinder plugin's own license (see the repository root).
 HOLE 2.x © G. M. P. Coates, O. S. Smart, SmartSci Limited.

@@ -7,7 +7,7 @@
 # loadavg_at_start: 2.61 2.99 3.68  allow_noisy: 0
 # load_at_start: 2.61 2.99 3.68
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
-# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_615409/simple.rad
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_615409/simple.rad
 # PoreAnalyser scipy UNKNOWN / numpy 1.26.4  <- load-bearing for the major axis
 # structure: 1BL8 (KcsA), frame 0, raseed 1, PROTEIN ATOMS ONLY
 #   (the plugin's default 'protein' selection; 1BL8's 3 K+ ions have no
@@ -23,7 +23,7 @@
 #   on top of any real disagreement. The gap between the two pairings
 #   IS that mis-registration - neither tool changed between them.
 # PoreAnalyser scipy version  <- load-bearing for the major axis
-# method: PoreAnalyser was run on VMDHole's OWN .sph, so both tools fit the
+# method: PoreAnalyser was run on VMDPathFinder's OWN .sph, so both tools fit the
 #   same HOLE channel. The single fitted quantity is a constant axis offset,
 #   recovered from PoreAnalyser's b vs our HOLE radius (a quantity not under
 #   test) and then frozen: delta = 25.45 A, join residual median

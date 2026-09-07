@@ -8,7 +8,7 @@
 # and locally built HOLE binaries.
 #
 # Exit 0 = all passed. A test that genuinely cannot run prints "SKIP:" at
-# column 0 and exits 0 - the same contract vmdhole/tests/run_tests.sh uses.
+# column 0 and exits 0 - the same contract vmdpathfinder/tests/run_tests.sh uses.
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SELF=$(basename -- "$0")
 pass=0; fail=0; skip=0

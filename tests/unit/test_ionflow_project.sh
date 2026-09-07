@@ -1,6 +1,6 @@
 #!/bin/sh
 # Contract test for sos_triangle_fast --ionflow-project, the C form of the Ion
-# Flow tab's water pass (VMDHole's _ion_flow_scan). The Tcl loop it replaces is
+# Flow tab's water pass (VMDPathFinder's _ion_flow_scan). The Tcl loop it replaces is
 # the reference: for each candidate point, offset from the frame COM, min-image
 # per box dimension, project on the axis (z), perpendicular distance (R), and
 # the signed distance to the nearest sphere SURFACE (d3). Points at R >= scan_r

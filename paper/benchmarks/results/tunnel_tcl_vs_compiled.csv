@@ -4,7 +4,7 @@
 # host: amin-System-Product-Name  cpu: AMD Ryzen 7 7700X 8-Core Processor
 # loadavg_at_start: <0.5 (confirmed idle before each of two runs)
 # repeats: 5, median reported (Tcl side); compiled side is tunnel_vs_mole2.csv's own median (repeats=3)
-# tcl: _tunnel_search_mole_tcl (the plugin's own pure-Tcl MOLE fallback), through the real plugin call path (source vmdhole.tcl, real state array, real _tunnel_cfg), one untimed warmup excluded (proc-compile cost, no equivalent on the compiled side)
+# tcl: _tunnel_search_mole_tcl (the plugin's own pure-Tcl MOLE fallback), through the real plugin call path (source vmdpathfinder.tcl, real state array, real _tunnel_cfg), one untimed warmup excluded (proc-compile cost, no equivalent on the compiled side)
 # compiled: mole_tunnel_engine (hole_speedup/), same structure/origin/parameters - median_s column copied from tunnel_vs_mole2.csv (same run, same fixtures)
 # same explicit origin as tunnel_vs_mole2.csv (1BL8: 73.853 26.536 26.594; 1MXT: 20.4632 0.4374 17.4692); tunnel/tetrahedra counts already verified matching in tunnel_vs_mole2.csv
 # NOTE: rerun manually (not wired into reproduce.sh - no stage calls this script). mole_tunnel_engine changed this

@@ -8,7 +8,7 @@
 # load_at_start: 5.19 4.53 4.05
 # bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
 # pool: REAL 50-frame trajectory tunnel search output (fixtures/tunnel50_frozen/,
-#   out.dat only - frozen from vmdhole/tunnel_output_step5_assembly.hmr, which
+#   out.dat only - frozen from vmdpathfinder/tunnel_output_step5_assembly.hmr, which
 #   is a live dev-scratch dir and NOT reproducible on its own), loaded via the
 #   plugin's own import_tunnel_results_from_folder. Tunnel SEARCH is excluded;
 #   only the clustering stage (tunnel_cluster_crossframe) is timed.

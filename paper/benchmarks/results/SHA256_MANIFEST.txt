@@ -1,4 +1,4 @@
-# SHA-256 manifest - VMDHole 1.0.1 numerical freeze
+# SHA-256 manifest - VMDPathFinder 1.0.1 numerical freeze
 # generated: 2026-09-07T06:20:58Z
 # code snapshot: git commit 03e7271dc19b71dc8841cc7c94627827cf6816f1 (tree 2e6d48355393f694fc2a2331b3457a64bc55d364)
 # scope: all files in paper/benchmarks/results/ + the benchmark inputs the env stage checksummed (see checksum_manifest.log)
@@ -50,12 +50,12 @@ d9d6a7b0ab5cf6ed237cc3ef2d7830c0b5e39b1598eea744160bb1ea6063081a  ./tunnel_vs_ca
 038366266f731312c7f5cca5e240263839ddc16f864aefbce08d3d2b56948802  ./verify.log
 #
 ## benchmark inputs (structures, trajectory, sweep input)
-e06a449384c98819d6d091623f0d363c84c3359dae2a77b64dc267337fb2e446  vmdhole/step5_assembly.hmr.psf
-33d4ba083b8de60cf6d2170a5c2e56a7339f1c757b40ee131cc0a37c947de7eb  vmdhole/sim_1.dcd
+e06a449384c98819d6d091623f0d363c84c3359dae2a77b64dc267337fb2e446  vmdpathfinder/step5_assembly.hmr.psf
+33d4ba083b8de60cf6d2170a5c2e56a7339f1c757b40ee131cc0a37c947de7eb  vmdpathfinder/sim_1.dcd
 360f7cc0ace6df7f2461be3617769aa3ff48eb7ef0a62e8a6297b405867743f2  paper/case_studies/case2_hydrophobic_gating/hole_output_9HNR/frame_00000/hole_out.sph
 d643f536c41c2d484edecc387d5af9c635323a8ca07e21dc4b320491d7ee99d3  paper/case_studies/case3_narrow_pore/1BL8.pdb
 d643f536c41c2d484edecc387d5af9c635323a8ca07e21dc4b320491d7ee99d3  paper/benchmarks/fixtures/tunnel_vs_mole2/1BL8.pdb
 3ec71d9b38b5b3f706dafd6962da1a4d7883d815d80217f1e7de503cc9860244  paper/benchmarks/fixtures/tunnel_vs_mole2/1MXT_noHET.pdb
-830cbdbea9117a0bf0f255088e950d6b76a14e2b7e2ba463cf177460844271ef  vmdhole/1GRM.pdb
-a7ca5ab960adf8a9c0bf56c844bbf96cc51489b3a9e5edad972d961725f01a3c  vmdhole/1MXT.pdb
+830cbdbea9117a0bf0f255088e950d6b76a14e2b7e2ba463cf177460844271ef  vmdpathfinder/1GRM.pdb
+a7ca5ab960adf8a9c0bf56c844bbf96cc51489b3a9e5edad972d961725f01a3c  vmdpathfinder/1MXT.pdb
 86cdad249e861419defe5412b80e14e7eeff95e4fc531a7e1940d60a35704769  paper/case_studies/case2_hydrophobic_gating/9HNR.pdb

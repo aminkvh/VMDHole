@@ -25,21 +25,21 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-SRC="$ROOT/vmdhole/vmdhole.tcl"
+SRC="$ROOT/vmdpathfinder/vmdpathfinder.tcl"
 
 echo "headless-run-guards: $SRC"
-[ -f "$SRC" ] || { echo "SKIP: no vmdhole.tcl"; exit 0; }
+[ -f "$SRC" ] || { echo "SKIP: no vmdpathfinder.tcl"; exit 0; }
 command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
 
 cat > "$T/drv.tcl" <<'TCLEOF'
-namespace eval ::VMDHole {}
+namespace eval ::VMDPathFinder {}
 set SRC [lindex $argv 0]; set T [lindex $argv 1]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 proc lift {src name} {
-    set pat "proc ::VMDHole::$name "
+    set pat "proc ::VMDPathFinder::$name "
     set i [string first $pat $src]
     if {$i < 0} { return "" }
     set buf ""
@@ -51,8 +51,8 @@ proc lift {src name} {
 }
 foreach p {run_tunnel_analysis shell_quote _is_finite _op_in_progress} {
     set b [lift $src $p]
-    if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
-    namespace eval ::VMDHole $b
+    if {$b eq ""} { puts "FATAL: could not lift ::VMDPathFinder::$p"; exit 3 }
+    namespace eval ::VMDPathFinder $b
 }
 
 # Stubs: enough of the environment to reach the entry checks and the first
@@ -60,57 +60,57 @@ foreach p {run_tunnel_analysis shell_quote _is_finite _op_in_progress} {
 proc vmdcon {args} {}
 proc molinfo {args} { return 10 }
 set ::ncalls_begin 0; set ::ncalls_end 0
-proc ::VMDHole::_begin_calc {} { incr ::ncalls_begin }
-proc ::VMDHole::_end_calc {}   { incr ::ncalls_end }
-proc ::VMDHole::parse_frame_spec {molid spec} { return {0} }
-proc ::VMDHole::_tunnel_cfg {} { return {} }
-proc ::VMDHole::resolve_output_root {molid kind} { error "simulated: unwritable output root" }
+proc ::VMDPathFinder::_begin_calc {} { incr ::ncalls_begin }
+proc ::VMDPathFinder::_end_calc {}   { incr ::ncalls_end }
+proc ::VMDPathFinder::parse_frame_spec {molid spec} { return {0} }
+proc ::VMDPathFinder::_tunnel_cfg {} { return {} }
+proc ::VMDPathFinder::resolve_output_root {molid kind} { error "simulated: unwritable output root" }
 
-set ::VMDHole::busy 0
-array set ::VMDHole::state {
+set ::VMDPathFinder::busy 0
+array set ::VMDPathFinder::state {
     molid 0  tunnel_auto_origin 0  frame_spec all  status ""
 }
 
 proc run_with_seed {seed} {
-    set ::VMDHole::state(tunnel_start) $seed
-    set ::VMDHole::state(status) ""
-    return [catch {::VMDHole::run_tunnel_analysis} ::_err]
+    set ::VMDPathFinder::state(tunnel_start) $seed
+    set ::VMDPathFinder::state(status) ""
+    return [catch {::VMDPathFinder::run_tunnel_analysis} ::_err]
 }
 
 # --- 1a. non-numeric third element is refused before anything runs ----------
 set rc [run_with_seed "12.3 4.5 nan_typo"]
-if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDPathFinder::state(status)]} {
     puts "OK typo seed is refused with a clear status"
 } else {
-    puts "BAD typo seed: rc=$rc status='$::VMDHole::state(status)'"
+    puts "BAD typo seed: rc=$rc status='$::VMDPathFinder::state(status)'"
 }
-if {$::VMDHole::busy == 0} { puts "OK busy released after refusal" } else { puts "BAD busy stuck after refusal" }
+if {$::VMDPathFinder::busy == 0} { puts "OK busy released after refusal" } else { puts "BAD busy stuck after refusal" }
 
 # --- 1b. a shell-metacharacter element is refused, and nothing executes -----
 set marker [file join $T pwned]
 set rc [run_with_seed "0 0 {1; touch $marker}"]
-if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)] && ![file exists $marker]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDPathFinder::state(status)] && ![file exists $marker]} {
     puts "OK metacharacter seed is refused and no side effect ran"
 } else {
-    puts "BAD metacharacter seed: rc=$rc marker=[file exists $marker] status='$::VMDHole::state(status)'"
+    puts "BAD metacharacter seed: rc=$rc marker=[file exists $marker] status='$::VMDPathFinder::state(status)'"
 }
 
 # --- 1c. literal nan/inf pass [string is double] and must still be refused --
 set rc [run_with_seed "nan nan nan"]
-if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDPathFinder::state(status)]} {
     puts "OK nan seed is refused (string-is-double alone accepts it)"
 } else {
-    puts "BAD nan seed: rc=$rc status='$::VMDHole::state(status)'"
+    puts "BAD nan seed: rc=$rc status='$::VMDPathFinder::state(status)'"
 }
 set rc [run_with_seed "0.0 inf 1.0"]
-if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDHole::state(status)]} {
+if {$rc == 0 && [string match "*must be three finite numbers*" $::VMDPathFinder::state(status)]} {
     puts "OK inf seed is refused"
 } else {
-    puts "BAD inf seed: rc=$rc status='$::VMDHole::state(status)'"
+    puts "BAD inf seed: rc=$rc status='$::VMDPathFinder::state(status)'"
 }
 
 # --- 1d. shell_quote really neutralises what the sites interpolate ----------
-set q [::VMDHole::shell_quote "1; touch $T/sq_marker"]
+set q [::VMDPathFinder::shell_quote "1; touch $T/sq_marker"]
 catch {exec sh -c "printf %s $q" } out
 if {![file exists $T/sq_marker] && $out eq "1; touch $T/sq_marker"} {
     puts "OK shell_quote passes the hostile string through inert"
@@ -126,10 +126,10 @@ if {$rc == 1 && [string match "*unwritable output root*" $::_err]} {
 } else {
     puts "BAD valid seed: rc=$rc err='$::_err'"
 }
-if {$::VMDHole::busy == 0} {
+if {$::VMDPathFinder::busy == 0} {
     puts "OK busy restored after a mid-body throw"
 } else {
-    puts "BAD busy stuck at $::VMDHole::busy after a mid-body throw"
+    puts "BAD busy stuck at $::VMDPathFinder::busy after a mid-body throw"
 }
 if {($::ncalls_begin - $::ncalls_end) == $before_diff} {
     puts "OK _begin_calc/_end_calc balanced across the throw"

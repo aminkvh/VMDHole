@@ -30,9 +30,9 @@
 #include "mc_tables.h"
 #include "../hole_io.h"
 #include "nm_threads.h"
-#ifdef VMDHOLE_MULTICALL
-int vmdhole_tunnel_cluster(const char *in, const char *out, double threshold, double maxdev);
-int vmdhole_tunnel_dist(const char *in, const char *out, int want_max);
+#ifdef VMDPATHFINDER_MULTICALL
+int vmdpathfinder_tunnel_cluster(const char *in, const char *out, double threshold, double maxdev);
+int vmdpathfinder_tunnel_dist(const char *in, const char *out, int want_max);
 #endif
 
 /* Every record is a CAPSULE: the points within sr of the segment (sx,sy,sz)-
@@ -567,11 +567,11 @@ static long mesh_run(const char *outpath, const char *plotpath) {
             dseen_cap = 1; while (dseen_cap < (size_t)total * 4) dseen_cap <<= 1;
             dseen = calloc(dseen_cap, sizeof *dseen);
         }
-        const char *G = (draw_form || dots_form) ? "draw " : "graphics $::VMDHole::_gmol ";
+        const char *G = (draw_form || dots_form) ? "draw " : "graphics $::VMDPathFinder::_gmol ";
         const size_t GL = strlen(G);
         if (!draw_form)
-            fprintf(plot, "if {![info exists ::VMDHole::_gmol]} "
-                          "{ set ::VMDHole::_gmol [molinfo top] }\n");
+            fprintf(plot, "if {![info exists ::VMDPathFinder::_gmol]} "
+                          "{ set ::VMDPathFinder::_gmol [molinfo top] }\n");
         /* "delete all" only in HOLE's own form, where the plugin's parser skips
            it. In the addressed form the file is SOURCED, and deleting there
            would discard the material the plugin set just before sourcing -
@@ -890,7 +890,7 @@ static long serve_one(const char *sph, const char *plot, const char *spec, const
     if (nsph < 1) return -1;
     return mesh_run(tri, plot);
 }
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 int mesh_csg_main(int argc, char **argv)
 #else
 int main(int argc, char **argv)
@@ -908,14 +908,14 @@ int main(int argc, char **argv)
             size_t L = strlen(line); while (L && (line[L-1] == '\n' || line[L-1] == '\r')) line[--L] = 0;
             char *f0 = strtok(line, "\t"), *sph = strtok(NULL, "\t"), *plot = strtok(NULL, "\t"), *vs = strtok(NULL, "");
             if (!f0 || !sph || !plot || !vs) { printf("ERR bad request\n"); continue; }
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
             if (!strcmp(f0, "tunnelcluster") || !strcmp(f0, "tunneldist")) {
                 /* tunnelcluster<TAB>IN<TAB>OUT<TAB>THRESHOLD MAXDEV, tunneldist<TAB>IN<TAB>OUT<TAB>WANTMAX:
                    sos_triangle's clustering kernels, run here so a per-frame call does not fork VMD */
                 double a = 0, b = 0;
                 sscanf(vs, "%lf %lf", &a, &b);
-                int rc = !strcmp(f0, "tunnelcluster") ? vmdhole_tunnel_cluster(sph, plot, a, b)
-                                                      : vmdhole_tunnel_dist(sph, plot, (int)a);
+                int rc = !strcmp(f0, "tunnelcluster") ? vmdpathfinder_tunnel_cluster(sph, plot, a, b)
+                                                      : vmdpathfinder_tunnel_dist(sph, plot, (int)a);
                 if (rc) printf("ERR %s failed\n", f0); else printf("OK 0\n");
                 continue;
             }

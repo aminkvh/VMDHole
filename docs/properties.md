@@ -52,7 +52,7 @@ outside the plugin or interpret the aggregate cautiously.
 
 ## How a slice receives a value
 
-For residue properties, VMDHole identifies lining residues within the selected
+For residue properties, VMDPathFinder identifies lining residues within the selected
 surface-distance shell, optionally applies the pore-facing filter, assigns each
 residue its table value, and smooths the result along the route. Pore and tunnel
 lining definitions differ, so aggregate values should not be compared across

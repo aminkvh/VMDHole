@@ -20,7 +20,7 @@ set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
 ENG="$ROOT/native/mole_tunnel_engine"
-AT="$ROOT/vmdhole/tests/fixtures/mole_atoms_1eri.txt"
+AT="$ROOT/vmdpathfinder/tests/fixtures/mole_atoms_1eri.txt"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "  PASS  $1"; }
@@ -33,7 +33,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
 
 # --- every well-formed fixture must still run, and be unchanged -------------
 nfix=0; nrun=0
-for f in "$ROOT"/vmdhole/tests/fixtures/mole_atoms_*.txt; do
+for f in "$ROOT"/vmdpathfinder/tests/fixtures/mole_atoms_*.txt; do
     [ -f "$f" ] || continue
     nfix=$((nfix+1))
     if "$ENG" "$f" "$T/ok.out" 3.0 1.25 8 5 0 0 >/dev/null 2>&1; then nrun=$((nrun+1)); fi

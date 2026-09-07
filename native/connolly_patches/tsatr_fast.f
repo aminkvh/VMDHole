@@ -1,8 +1,8 @@
 C ********************************************************************
-C * tsatr_fast.f - VMDHole patch of tsatr.f.                          *
+C * tsatr_fast.f - VMDPathFinder patch of tsatr.f.                          *
 C *                                                                  *
 C * Adds ONE alternate input path: when the coordinate file's name    *
-C * ends in .vhb, read a packed binary record VMDHole wrote straight  *
+C * ends in .vhb, read a packed binary record VMDPathFinder wrote straight  *
 C * from VMD's atom selection, instead of re-parsing 80-column ASCII  *
 C * that VMD had just finished formatting. Everything downstream -    *
 C * the HTEST/FE name resolution, UCASE, the IGNRES skip, both LMATCH *
@@ -21,7 +21,7 @@ C *   natoms x char3   PDB cols 18-20 (residue name)                  *
 C *   natoms x char1   PDB col  22    (chain)                         *
 C *   natoms x int4    PDB cols 23-26 (residue number, as HOLE's I4)  *
 C *   natoms x real8   x, then all y, then all z                      *
-C * The identity blocks are copied out of a PDB VMDHole wrote once    *
+C * The identity blocks are copied out of a PDB VMDPathFinder wrote once    *
 C * per run, so they are the SAME bytes the ASCII path would have     *
 C * produced - only the per-frame coordinates are packed fresh.       *
 C ********************************************************************
@@ -145,7 +145,7 @@ C hydrogen type record
       CHARACTER*1		HTEST
 
 
-C --- VMDHole binary-coordinate path -------------------------------
+C --- VMDPathFinder binary-coordinate path -------------------------------
 C name of the file connected to SIN, tested for the .vhb suffix
       CHARACTER*512             VHFNAM
 C true when that suffix is present
@@ -163,7 +163,7 @@ C initialize variables
       OATNO(0) = 0
       LERR = .FALSE.
 
-C === VMDHole: binary coordinate record? ==========================
+C === VMDPathFinder: binary coordinate record? ==========================
       VHBIN = .FALSE.
       VHFNAM = ' '
       INQUIRE( SIN, NAME = VHFNAM)
@@ -194,7 +194,7 @@ C all hole.f does with the unit before it closes it.
       READ( SIN, IOSTAT= VHIOS) VHMAG
       IF ((VHIOS.NE.0) .OR. (VHMAG.NE.'VMDHOLEC')) THEN
         WRITE(NOUT,*) '***ERROR***', CHAR(7)
-        WRITE(NOUT,*) 'Not a VMDHole binary co-ord file: ',
+        WRITE(NOUT,*) 'Not a VMDPathFinder binary co-ord file: ',
      &                VHFNAM(1:VHL)
         LERR = .TRUE.
         GOTO 55555
@@ -293,7 +293,7 @@ C ---- compact in place, applying IGNRES + the radius lookups -----
         OATNO(ATNO) = VHI
 10100 CONTINUE
       GOTO 55555
-C === end VMDHole binary path =====================================
+C === end VMDPathFinder binary path =====================================
 
 
 

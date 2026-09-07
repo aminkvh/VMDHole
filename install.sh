@@ -1,5 +1,5 @@
 #!/bin/sh
-# VMDHole installer. Checks what is required, reports what is missing, then
+# VMDPathFinder installer. Checks what is required, reports what is missing, then
 # copies the plugin into VMD's user plugin directory.
 #
 #   ./install.sh              install for the current user
@@ -22,7 +22,7 @@ done
 miss=0
 note() { printf '  %-28s %s\n' "$1" "$2"; }
 
-echo "VMDHole requirements"
+echo "VMDPathFinder requirements"
 
 # VMD itself. Everything else is optional; without VMD there is nothing to load.
 VMD=""
@@ -50,13 +50,13 @@ fi
 # binaries release asset (unpack it here as ./binaries/), or from a source
 # build of the repository (./native/). Detect both.
 BINDIR=""
-for d in "$SRC/binaries" "$SRC"/vmdhole-binaries-*/ "$SRC/native"; do
+for d in "$SRC/binaries" "$SRC"/vmdpathfinder-binaries-*/ "$SRC/native"; do
     [ -x "$d/mole_tunnel_engine" ] && { BINDIR="${d%/}"; break; }
 done
 if [ -n "$BINDIR" ]; then
     note "tunnel engine" "found ($BINDIR)"
 else
-    note "tunnel engine" "not present - Tunnel mode falls back to Tcl (slower). Download the vmdhole-binaries asset for your OS and unpack it next to this script."
+    note "tunnel engine" "not present - Tunnel mode falls back to Tcl (slower). Download the vmdpathfinder-binaries asset for your OS and unpack it next to this script."
 fi
 
 # Trajectory data is NOT distributed with the plugin - see README.
@@ -69,21 +69,21 @@ fi
 [ "$miss" -eq 0 ] || { echo; echo "Install aborted: VMD is required."; exit 1; }
 
 echo
-echo "Installing to $DEST/vmdhole"
-mkdir -p "$DEST/vmdhole"
+echo "Installing to $DEST/vmdpathfinder"
+mkdir -p "$DEST/vmdpathfinder"
 # Only what VMD loads: the plugin package, its licence/notice, and the binaries.
-cp "$SRC/vmdhole/vmdhole.tcl"  "$DEST/vmdhole/"
-cp "$SRC/vmdhole/pkgIndex.tcl" "$DEST/vmdhole/"
+cp "$SRC/vmdpathfinder/vmdpathfinder.tcl"  "$DEST/vmdpathfinder/"
+cp "$SRC/vmdpathfinder/pkgIndex.tcl" "$DEST/vmdpathfinder/"
 for f in NOTICE.md LICENSE-Apache-2.0.txt; do
-    [ -f "$SRC/vmdhole/$f" ] && cp "$SRC/vmdhole/$f" "$DEST/vmdhole/"
+    [ -f "$SRC/vmdpathfinder/$f" ] && cp "$SRC/vmdpathfinder/$f" "$DEST/vmdpathfinder/"
 done
 echo "Installed."
 if [ -n "$BINDIR" ]; then
     echo
     echo "Accelerator binaries found in $BINDIR:"
-    echo "  point VMDHole at them under File > Settings (engine/sos_triangle paths),"
+    echo "  point VMDPathFinder at them under File > Settings (engine/sos_triangle paths),"
     echo "  or copy them next to your HOLE binaries so they are found automatically."
 fi
 echo
-echo "Load it with:  vmd -e /dev/null   then  Extensions > Analysis > VMDHole"
-echo "or add to ~/.vmdrc:  vmd_install_extension vmdhole vmdhole_tk \"Analysis/VMDHole\""
+echo "Load it with:  vmd -e /dev/null   then  Extensions > Analysis > VMDPathFinder"
+echo "or add to ~/.vmdrc:  vmd_install_extension vmdpathfinder vmdpathfinder_tk \"Analysis/VMDPathFinder\""

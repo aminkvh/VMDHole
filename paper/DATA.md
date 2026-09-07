@@ -97,11 +97,11 @@ own — nothing downstream depends on this being one specific system.
 - The plugin itself, entirely.
 - The tutorial — [gramicidin A](case1_gramicidin_1GRM/) ships in the repository.
 - Cases 2, 3 and 5 — one `fetch_structures.sh` run gets their PDB inputs.
-- Most of the test groups (`vmdhole/tests/run_tests.sh`).
+- Most of the test groups (`vmdpathfinder/tests/run_tests.sh`).
 
 The groups that skip need locally built HOLE binaries
-(`native/stock_build/`, `vmdhole/hole_tcl/reference_bin/`), not trajectory data.
-Build them with `sh native/build-vmdhole-optimized.sh`.
+(`native/stock_build/`, `vmdpathfinder/hole_tcl/reference_bin/`), not trajectory data.
+Build them with `sh native/build-vmdpathfinder-optimized.sh`.
 
 ## If a script cannot find the data
 
@@ -117,7 +117,7 @@ Everything that produced `benchmarks/results/*.csv` but is not itself a
 reported number lives in one archive with one DOI:
 
 **Zenodo: DOI to be minted on upload — placeholder: `10.5281/zenodo.XXXXXXX`**
-(archive file: `VMDHole-replication-kit-1.0.0.tar.gz`)
+(archive file: `VMDPathFinder-replication-kit-1.0.0.tar.gz`)
 
 Contents: the complete `paper/benchmarks/` harness (reproduce.sh, every
 bench_* stage, comparison fixtures including the frozen 50-frame tunnel pool

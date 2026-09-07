@@ -12,7 +12,7 @@
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
 # bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sph_process
 # bin: sos_triangle sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
-# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_660453/simple.rad
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_660453/simple.rad
 # 1BL8 (KcsA), single structure, PROTEIN ATOMS ONLY - the same subset the
 #   plugin's default 'protein' selection feeds HOLE. The 3 K+ ions are
 #   excluded because no shipped .rad file defines a vdW radius for K, and

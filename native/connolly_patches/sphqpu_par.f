@@ -121,7 +121,7 @@ C colour to fill in gaps for a particular colour
 C vbles to test to see whether two points on line should be connected
       DOUBLE PRECISION		PREXYZ(3), MAXDIS, NOWDIS
 
-C ---- VMDHole parallel fast path: state ------------------------------------
+C ---- VMDPathFinder parallel fast path: state ------------------------------------
 C SPACC(  (sphere-1)*PTNO + dot ) = 1 when that dot survived the cull.
 C SPNACC( sphere )                = how many of its dots survived.
 C SPPAR_OK is false when the mask would be unreasonably large or allocation
@@ -148,7 +148,7 @@ C density dotden
 	GOTO 55555
       ENDIF
 
-C ---- VMDHole parallel fast path: allocate the accept mask -----------------
+C ---- VMDPathFinder parallel fast path: allocate the accept mask -----------------
 C 1 byte per (sphere, dot). Cap it so a pathological input cannot ask for an
 C absurd allocation; over the cap we simply run the original serial loop.
       SPPAR_OK = .FALSE.
@@ -177,7 +177,7 @@ C try to avoid gaps when doing uniform output by
 C making another pass with dmult reduced
 99      CONTINUE
 
-C ---- VMDHole parallel fast path -------------------------------------------
+C ---- VMDPathFinder parallel fast path -------------------------------------------
 C When LGRID is false the DO 40 loop below has NO cross-sphere state: every
 C sphere's dots are culled purely against the (read-only) sphere arrays, and the
 C only action is one WRITE per surviving dot. (All of VERNO/LINNO/NTIME
@@ -276,7 +276,7 @@ C original file byte for byte.
 380     CONTINUE
         GOTO 41
       ENDIF
-C ---- end VMDHole parallel fast path ---------------------------------------
+C ---- end VMDPathFinder parallel fast path ---------------------------------------
 C go through sphere centres one by one
 	DO 40 SCOUNT= 1, SPNO
 C if this is not an end and radius is greater than zero

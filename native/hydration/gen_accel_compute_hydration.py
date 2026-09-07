@@ -3,9 +3,9 @@
 compute_hydration that calls native/hydro_project for the measured
 Phase A (COG reduction + axial projection + envelope-radius test) and Phase C
 (KDE/hard binning) work, while extracting every OTHER line of the proc
-VERBATIM (byte-identical) from vmdhole.tcl via the same anchor-verified,
+VERBATIM (byte-identical) from vmdpathfinder.tcl via the same anchor-verified,
 offset-based introspection as gen_instrumented.py -- read-only, never edits
-vmdhole.tcl. Only the water-COG/projection/binning sub-block is hand-written
+vmdpathfinder.tcl. Only the water-COG/projection/binning sub-block is hand-written
 new Tcl; everything else (bulk density, axis resolution, envelope/bbox
 building, Welford aggregation, energy assembly, dict output, file I/O) is the
 UNCHANGED original text, so there is no hand-transcription risk in the parts
@@ -15,7 +15,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.normpath(os.path.join(HERE, "..", "..", "vmdhole", "vmdhole.tcl"))
+SRC = os.path.normpath(os.path.join(HERE, "..", "..", "vmdpathfinder", "vmdpathfinder.tcl"))
 OUT = os.path.join(HERE, "accel_compute_hydration.tcl")
 
 with open(SRC) as f:
@@ -23,7 +23,7 @@ with open(SRC) as f:
 
 start_idx = None
 for i, l in enumerate(lines):
-    if l.startswith("proc ::VMDHole::compute_hydration {} {"):
+    if l.startswith("proc ::VMDPathFinder::compute_hydration {} {"):
         start_idx = i
         break
 if start_idx is None:
@@ -32,13 +32,13 @@ if start_idx is None:
 # The proc's END is NOT a fixed offset: this file is edited concurrently by
 # other agents/sessions, and the tail (Phase D onward, extracted verbatim)
 # has already been observed to shift by a few lines between two runs in the
-# same session. Find it dynamically: the next top-level "proc ::VMDHole::"
+# same session. Find it dynamically: the next top-level "proc ::VMDPathFinder::"
 # definition marks the end of this one; walk back from there past any blank
 # lines to the lone "}" that closes compute_hydration.
 import re as _re
 next_proc_idx = None
 for i in range(start_idx + 1, len(lines)):
-    if _re.match(r'^proc ::VMDHole::\w', lines[i]):
+    if _re.match(r'^proc ::VMDPathFinder::\w', lines[i]):
         next_proc_idx = i
         break
 if next_proc_idx is None:
@@ -52,7 +52,7 @@ if lines[end_idx].strip() != '}':
 end_offset = end_idx - start_idx  # relative offset of the closing "}" line
 
 # --- Anchor location: SEQUENTIAL TEXT SEARCH, not fixed offsets. ---
-# vmdhole.tcl is edited concurrently (by other agents, and - once wired - by
+# vmdpathfinder.tcl is edited concurrently (by other agents, and - once wired - by
 # a dispatcher prologue added to
 # compute_hydration itself, which shifts every line after it). A fixed-
 # offset anchor table breaks under ANY line-count change anywhere before the
@@ -131,8 +131,8 @@ LOOP_CLOSE = extract_idx(a_progress, a_phaseC_start)    # progress message, clos
 POST_D_ONWARD = extract_idx(a_phaseD_start, end_idx + 1)  # Phase D onward through closing brace, UNCHANGED
 
 HEADER = HEADER.replace(
-    'proc ::VMDHole::compute_hydration {} {',
-    'proc ::VMDHole::_accel_compute_hydration {} {', 1)
+    'proc ::VMDPathFinder::compute_hydration {} {',
+    'proc ::VMDPathFinder::_accel_compute_hydration {} {', 1)
 
 # Guard: this accelerated path only supports a FIXED bandwidth (bw_auto=0).
 # bw_auto is computed earlier in HEADER; insert the guard right before the
@@ -248,7 +248,7 @@ with open(OUT, "w") as f:
     f.write("# AUTO-GENERATED accelerated variant of compute_hydration (see gen_accel_compute_hydration.py).\n")
     f.write("# Phase A COG+projection and Phase C binning are replaced with calls to\n")
     f.write("# native/hydro_project; every other line is extracted VERBATIM from the\n")
-    f.write("# real vmdhole.tcl (never edited). Requires $::HP_ACCEL_BIN and\n")
+    f.write("# real vmdpathfinder.tcl (never edited). Requires $::HP_ACCEL_BIN and\n")
     f.write("# $::HP_ACCEL_BATCH_DIR to be set before calling.\n")
     f.write(body)
     f.write("\n")

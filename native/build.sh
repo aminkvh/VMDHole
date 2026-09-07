@@ -4,7 +4,7 @@
 # plugin's own "No MOLE tunnel engine found" message points users at - so it
 # must need nothing beyond a C compiler. The HOLE-side Fortran acceleration
 # (patched hole/sph_process) is a separate, optional step that needs a HOLE
-# source tree: see build-vmdhole-optimized.sh.
+# source tree: see build-vmdpathfinder-optimized.sh.
 #
 # Produces, next to this script:
 #   sos_triangle_fast   - surface triangulation, properties, tunnel clustering
@@ -18,10 +18,10 @@ OPT="${OPT:--O2}"
 echo ">> Building sos_triangle_fast ($OPT) ..."
 # OpenMP is optional: without it the pragmas are ignored and the binary runs
 # serially (Apple clang has no -fopenmp, and CI builds on macOS too).
-# One binary: VMDHole's own tools ride inside it (sos_triangle --nm-search,
+# One binary: VMDPathFinder's own tools ride inside it (sos_triangle --nm-search,
 # --mesh, --conn-lobes), so a user installs sos_triangle and nothing else.
 # The standalone builds below are for development and byte-parity tests.
-MULTI="-DVMDHOLE_MULTICALL $HERE/nm/nm_search.c $HERE/nm/mesh_csg.c $HERE/conn_lobes.c"
+MULTI="-DVMDPATHFINDER_MULTICALL $HERE/nm/nm_search.c $HERE/nm/mesh_csg.c $HERE/conn_lobes.c"
 if $CC $OPT -fopenmp -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" $MULTI \
         "$HERE/voronoi/vor_predicates.c" "$HERE/voronoi/vor_delaunay.c" -lm -lpthread 2>/dev/null; then
   echo "   (OpenMP enabled)"
@@ -54,7 +54,7 @@ echo ">> Building mole_tunnel_engine ($OPT) ..."
 # at VP_SCALE 1e5 so MOLE's +-0.00005 A general-position jitter survives, while
 # sos_triangle_fast needs the default 1e3 and has byte-identity tests pinned to
 # it. One binary cannot hold both. Same translation units and flags as
-# build-vmdhole-optimized.sh, deliberately - two scripts producing DIFFERENT
+# build-vmdpathfinder-optimized.sh, deliberately - two scripts producing DIFFERENT
 # binaries under one name is the trap that script's own comments warn about.
 ( cd "$HERE" && $CC $OPT -DVP_SCALE=100000.0 -DVP_MAX_COORD=20000000L \
     -o "$HERE/mole_tunnel_engine" \

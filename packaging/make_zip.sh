@@ -1,8 +1,8 @@
 #!/bin/sh
-# Builds packaging/vmdhole.zip straight from the source trees - no hand-maintained
+# Builds packaging/vmdpathfinder.zip straight from the source trees - no hand-maintained
 # duplicate directory in between.
 #
-# There used to be a whole second copy of the plugin, packaging/vmdhole/, kept in
+# There used to be a whole second copy of the plugin, packaging/vmdpathfinder/, kept in
 # sync by hand on every change and separately zipped. It existed only because
 # this script once zipped whatever sat in that directory rather than building
 # from source, and CI's own release job just re-uploaded that checked-in zip
@@ -11,11 +11,11 @@
 # proves the package matches HEAD; a hand-copied one only proves someone
 # remembered to copy). This script now assembles the same content into a
 # throwaway staging directory and zips that, so there is exactly one source of
-# truth: vmdhole/, native/, docs/, and the top-level
+# truth: vmdpathfinder/, native/, docs/, and the top-level
 # install.sh/README/LICENSE.
 #
 # The archive is what a USER installs, and ONLY that: the plugin package
-# (vmdhole/ - the script, pkgIndex, licences, and the two small tutorial
+# (vmdpathfinder/ - the script, pkgIndex, licences, and the two small tutorial
 # structures), install.sh, README and LICENSE. Nothing else:
 #   - compiled accelerators are the per-OS release assets built by
 #     .github/workflows/binaries.yml (unpack one next to install.sh as
@@ -39,7 +39,7 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO=$(CDPATH= cd -- "$DIR/.." && pwd)
 cd "$REPO"
 
-STAGE="$DIR/build/VMDHole"
+STAGE="$DIR/build/VMDPathFinder"
 rm -rf "$DIR/build"
 mkdir -p "$STAGE"
 
@@ -71,9 +71,9 @@ copy_tracked() {
     done
 }
 
-copy_tracked vmdhole/ vmdhole/NOTES/ vmdhole/tests/ vmdhole/hole_tcl/
+copy_tracked vmdpathfinder/ vmdpathfinder/NOTES/ vmdpathfinder/tests/ vmdpathfinder/hole_tcl/
 
-# Top level: licence, readme, installer - not under vmdhole/, so
+# Top level: licence, readme, installer - not under vmdpathfinder/, so
 # copy_tracked's prefix match does not reach them. (The logo is not shipped:
 # it exists for the repository front page.)
 cp LICENSE "$STAGE/LICENSE"
@@ -81,19 +81,19 @@ cp README.md "$STAGE/README.md"
 cp install.sh "$STAGE/install.sh"
 chmod +x "$STAGE/install.sh"
 
-# Optional: VMDHOLE_BINARIES_DIR names a directory of compiled accelerators
+# Optional: VMDPATHFINDER_BINARIES_DIR names a directory of compiled accelerators
 # (the per-OS "wheel" set binaries.yml builds at -O0). When given, it is
-# bundled as vmdhole/binaries/ - the exact layout install.sh detects - so CI
+# bundled as vmdpathfinder/binaries/ - the exact layout install.sh detects - so CI
 # can assemble ONE download per OS: plugin + matching binaries. Unset (the
 # default, and what the release-integrity test checks) the zip stays the
 # portable plugin-only package.
-if [ -n "${VMDHOLE_BINARIES_DIR:-}" ]; then
-    [ -d "$VMDHOLE_BINARIES_DIR" ] || { echo "VMDHOLE_BINARIES_DIR is not a directory: $VMDHOLE_BINARIES_DIR" >&2; exit 1; }
+if [ -n "${VMDPATHFINDER_BINARIES_DIR:-}" ]; then
+    [ -d "$VMDPATHFINDER_BINARIES_DIR" ] || { echo "VMDPATHFINDER_BINARIES_DIR is not a directory: $VMDPATHFINDER_BINARIES_DIR" >&2; exit 1; }
     mkdir -p "$STAGE/binaries"
-    cp -r "$VMDHOLE_BINARIES_DIR"/* "$STAGE/binaries/"
+    cp -r "$VMDPATHFINDER_BINARIES_DIR"/* "$STAGE/binaries/"
     chmod +x "$STAGE/binaries"/* 2>/dev/null || true
 fi
 
-rm -f "$DIR/vmdhole.zip"
-( cd "$DIR/build" && find VMDHole -type f | LC_ALL=C sort | zip -q -X "$DIR/vmdhole.zip" -@ )
-echo "vmdhole.zip: $(unzip -l "$DIR/vmdhole.zip" | tail -1 | awk '{print $2}') files, $(du -h "$DIR/vmdhole.zip" | cut -f1)"
+rm -f "$DIR/vmdpathfinder.zip"
+( cd "$DIR/build" && find VMDPathFinder -type f | LC_ALL=C sort | zip -q -X "$DIR/vmdpathfinder.zip" -@ )
+echo "vmdpathfinder.zip: $(unzip -l "$DIR/vmdpathfinder.zip" | tail -1 | awk '{print $2}') files, $(du -h "$DIR/vmdpathfinder.zip" | cut -f1)"

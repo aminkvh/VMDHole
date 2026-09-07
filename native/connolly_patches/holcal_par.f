@@ -232,7 +232,7 @@ C number of steps of sd min apply in spherebox option
 C equivalent radius for connolly routine
       DOUBLE PRECISION		REQUIV
 
-C --- PERF FORK (holcal_par.f, VMDHole): two-pass CONNOLLY driver so the
+C --- PERF FORK (holcal_par.f, VMDPathFinder): two-pass CONNOLLY driver so the
 C expensive per-plane CONCAL work can be parallelised while keeping the
 C .sph output identical. Pass 1 grows the whole centreline with
 C CONCAL suppressed (fast, plain-HOLE-like) to discover every plane.
@@ -281,7 +281,7 @@ C (holeen_par.f) and CONCAL's arrays are automatic (per-thread stack).
       CHARACTER*300		SCRLIN
       INTEGER			ILN, TNUM
       DOUBLE PRECISION		PC_REQUIV(-STRMAX:STRMAX)
-C VMDHole notice capture, see concal_par.f. CN_* in the common block are
+C VMDPathFinder notice capture, see concal_par.f. CN_* in the common block are
 C threadprivate scalars written by CONCAL; the two arrays are this routine's
 C own, indexed by the plane index the prepass loop owns.
       LOGICAL			CN_HIT(-STRMAX:STRMAX)
@@ -738,7 +738,7 @@ C store the sphere-box data
 
 C 18/07/94 output sphpdb file as we go along
 C is this a +ve or negative record?
-C VMDHole: set IREC unconditionally - PC_REQUIV(IREC) below needs it every
+C VMDPathFinder: set IREC unconditionally - PC_REQUIV(IREC) below needs it every
 C step, not just when FPDBSP.NE.'NONE'; left uninitialised, this segfaulted
 C whenever no 'sphpdb' card was given (PC_REQUIV read garbage).
           IF (SAMPLE.GT.0) THEN

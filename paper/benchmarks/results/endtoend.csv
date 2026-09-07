@@ -12,22 +12,22 @@
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
 # bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sph_process
 # bin: sos_triangle sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
-# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_751005/simple.rad
-# system: vmdhole/sim_1.dcd  160772 atoms x 50 frames
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_751005/simple.rad
+# system: vmdpathfinder/sim_1.dcd  160772 atoms x 50 frames
 # params: select=protein cpoint=-0.8,0.9,32.0 cvect=0,0,1 sample=0.25 endrad=15.0 ignore=HOH,WAT,TIP,SOL dotden=15
 # DELIVERABLE 'calc'    = a parsed radius profile on disk for every frame.
-#   Asymmetry, in the BASELINE's favour: VMDHole's clock also includes parsing
+#   Asymmetry, in the BASELINE's favour: VMDPathFinder's clock also includes parsing
 #   HOLE's table into a TSV; the bare shell loop and mdahole2 are not charged for it.
 # DELIVERABLE 'surface' = the above PLUS renderable surface geometry for every
 #   frame. It does NOT include loading that geometry into VMD's graphics context.
-#   mdahole2 writes ONE monolithic .vmd file, VMDHole and the shell loop write one
+#   mdahole2 writes ONE monolithic .vmd file, VMDPathFinder and the shell loop write one
 #   file per frame; both satisfy the deliverable, and the difference is reported.
 # 'bare_hole_parallel' is a CONTROL for 'is the speedup just parallelism?'. It is an
 #   upper bound on a shell-parallel baseline: xargs does no scheduling, no per-frame
 #   extraction from the trajectory, and no result bookkeeping.
-# 'vmdhole_stock' is the CONTROL for binary asymmetry: same plugin, HOLE's own
+# 'vmdpathfinder_stock' is the CONTROL for binary asymmetry: same plugin, HOLE's own
 #   unmodified binaries. accel-vs-stock on that pair isolates the binary work.
-# 'vmdhole_accel_pdb' is the SAME accel binary as 'vmdhole_accel', with
+# 'vmdpathfinder_accel_pdb' is the SAME accel binary as 'vmdpathfinder_accel', with
 #   state(keep_input_pdb) forced on so _hole_fast_coord_available returns 0 -
 #   same Fortran, same OpenMP, same everything, only the per-frame coordinate
 #   path differs (packed binary record vs a PDB written every frame). This pair
@@ -45,22 +45,22 @@ calc,mdahole2,stock,1,1,94.2621,0.5304,50
 calc,mdahole2,stock,1,2,93.8384,0.5328,50
 calc,mdahole2,stock,1,3,93.8282,0.5329,50
 calc,mdahole2,stock,1,median,93.8384,0.5328,50
-calc,vmdhole_stock,stock,15,1,1.4562,34.3359,50
-calc,vmdhole_stock,stock,15,2,1.4582,34.2888,50
-calc,vmdhole_stock,stock,15,3,1.4723,33.9605,50
-calc,vmdhole_stock,stock,15,median,1.4582,34.2888,50
-calc,vmdhole_accel,accel,15,1,0.9715,51.4668,50
-calc,vmdhole_accel,accel,15,2,1.0188,49.0773,50
-calc,vmdhole_accel,accel,15,3,1.0047,49.7661,50
-calc,vmdhole_accel,accel,15,median,1.0047,49.7661,50
-calc,vmdhole_accel_pdb,accel,15,1,1.4672,34.0785,50
-calc,vmdhole_accel_pdb,accel,15,2,1.4175,35.2734,50
-calc,vmdhole_accel_pdb,accel,15,3,1.4255,35.0754,50
-calc,vmdhole_accel_pdb,accel,15,median,1.4255,35.0754,50
-calc,vmdhole_nm,accel,15,1,1.0144,49.2902,50
-calc,vmdhole_nm,accel,15,2,1.0269,48.6902,50
-calc,vmdhole_nm,accel,15,3,1.0298,48.5531,50
-calc,vmdhole_nm,accel,15,median,1.0269,48.6902,50
+calc,vmdpathfinder_stock,stock,15,1,1.4562,34.3359,50
+calc,vmdpathfinder_stock,stock,15,2,1.4582,34.2888,50
+calc,vmdpathfinder_stock,stock,15,3,1.4723,33.9605,50
+calc,vmdpathfinder_stock,stock,15,median,1.4582,34.2888,50
+calc,vmdpathfinder_accel,accel,15,1,0.9715,51.4668,50
+calc,vmdpathfinder_accel,accel,15,2,1.0188,49.0773,50
+calc,vmdpathfinder_accel,accel,15,3,1.0047,49.7661,50
+calc,vmdpathfinder_accel,accel,15,median,1.0047,49.7661,50
+calc,vmdpathfinder_accel_pdb,accel,15,1,1.4672,34.0785,50
+calc,vmdpathfinder_accel_pdb,accel,15,2,1.4175,35.2734,50
+calc,vmdpathfinder_accel_pdb,accel,15,3,1.4255,35.0754,50
+calc,vmdpathfinder_accel_pdb,accel,15,median,1.4255,35.0754,50
+calc,vmdpathfinder_nm,accel,15,1,1.0144,49.2902,50
+calc,vmdpathfinder_nm,accel,15,2,1.0269,48.6902,50
+calc,vmdpathfinder_nm,accel,15,3,1.0298,48.5531,50
+calc,vmdpathfinder_nm,accel,15,median,1.0269,48.6902,50
 surface,bare_hole_serial,stock,1,1,42.6641,1.1719,50
 surface,bare_hole_serial,stock,1,2,41.9096,1.1930,50
 surface,bare_hole_serial,stock,1,3,42.7141,1.1706,50
@@ -73,23 +73,23 @@ surface,mdahole2,stock,1,1,130.9052,0.3820,50
 surface,mdahole2,stock,1,2,130.7011,0.3826,50
 surface,mdahole2,stock,1,3,131.6016,0.3799,50
 surface,mdahole2,stock,1,median,130.9052,0.3820,50
-surface,vmdhole_stock,stock,15,1,6.7874,7.3666,50
-surface,vmdhole_stock,stock,15,2,6.7734,7.3818,50
-surface,vmdhole_stock,stock,15,3,6.8478,7.3016,50
-surface,vmdhole_stock,stock,15,median,6.7874,7.3666,50
-surface,vmdhole_accel,accel,15,1,2.6676,18.7434,50
-surface,vmdhole_accel,accel,15,2,2.6224,19.0665,50
-surface,vmdhole_accel,accel,15,3,2.5101,19.9195,50
-surface,vmdhole_accel,accel,15,median,2.6224,19.0665,50
-surface,vmdhole_accel_pdb,accel,15,1,2.9487,16.9566,50
-surface,vmdhole_accel_pdb,accel,15,2,2.8904,17.2986,50
-surface,vmdhole_accel_pdb,accel,15,3,2.8691,17.4271,50
-surface,vmdhole_accel_pdb,accel,15,median,2.8904,17.2986,50
-surface,vmdhole_csg,accel,15,1,2.1177,23.6105,50
-surface,vmdhole_csg,accel,15,2,2.0426,24.4786,50
-surface,vmdhole_csg,accel,15,3,2.0033,24.9588,50
-surface,vmdhole_csg,accel,15,median,2.0426,24.4786,50
-surface,vmdhole_nm_csg,accel,15,1,2.1006,23.8027,50
-surface,vmdhole_nm_csg,accel,15,2,2.0630,24.2365,50
-surface,vmdhole_nm_csg,accel,15,3,2.0750,24.0964,50
-surface,vmdhole_nm_csg,accel,15,median,2.0750,24.0964,50
+surface,vmdpathfinder_stock,stock,15,1,6.7874,7.3666,50
+surface,vmdpathfinder_stock,stock,15,2,6.7734,7.3818,50
+surface,vmdpathfinder_stock,stock,15,3,6.8478,7.3016,50
+surface,vmdpathfinder_stock,stock,15,median,6.7874,7.3666,50
+surface,vmdpathfinder_accel,accel,15,1,2.6676,18.7434,50
+surface,vmdpathfinder_accel,accel,15,2,2.6224,19.0665,50
+surface,vmdpathfinder_accel,accel,15,3,2.5101,19.9195,50
+surface,vmdpathfinder_accel,accel,15,median,2.6224,19.0665,50
+surface,vmdpathfinder_accel_pdb,accel,15,1,2.9487,16.9566,50
+surface,vmdpathfinder_accel_pdb,accel,15,2,2.8904,17.2986,50
+surface,vmdpathfinder_accel_pdb,accel,15,3,2.8691,17.4271,50
+surface,vmdpathfinder_accel_pdb,accel,15,median,2.8904,17.2986,50
+surface,vmdpathfinder_csg,accel,15,1,2.1177,23.6105,50
+surface,vmdpathfinder_csg,accel,15,2,2.0426,24.4786,50
+surface,vmdpathfinder_csg,accel,15,3,2.0033,24.9588,50
+surface,vmdpathfinder_csg,accel,15,median,2.0426,24.4786,50
+surface,vmdpathfinder_nm_csg,accel,15,1,2.1006,23.8027,50
+surface,vmdpathfinder_nm_csg,accel,15,2,2.0630,24.2365,50
+surface,vmdpathfinder_nm_csg,accel,15,3,2.0750,24.0964,50
+surface,vmdpathfinder_nm_csg,accel,15,median,2.0750,24.0964,50

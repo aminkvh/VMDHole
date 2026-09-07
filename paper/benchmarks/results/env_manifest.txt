@@ -1,4 +1,4 @@
-# VMDHole benchmark environment manifest
+# VMDPathFinder benchmark environment manifest
 utc            2026-09-06T23:03:36Z
 host           amin-System-Product-Name
 cpu            AMD Ryzen 7 7700X 8-Core Processor

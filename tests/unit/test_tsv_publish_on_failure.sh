@@ -18,10 +18,10 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-SRC="$ROOT/vmdhole/vmdhole.tcl"
+SRC="$ROOT/vmdpathfinder/vmdpathfinder.tcl"
 
 echo "tsv-publish-on-failure: $SRC"
-[ -f "$SRC" ] || { echo "SKIP: no vmdhole.tcl"; exit 0; }
+[ -f "$SRC" ] || { echo "SKIP: no vmdpathfinder.tcl"; exit 0; }
 command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
@@ -48,12 +48,12 @@ cat > "$T/one_row_out.txt" <<'TXTEOF'
 TXTEOF
 
 cat > "$T/drv.tcl" <<'TCLEOF'
-namespace eval ::VMDHole {}
+namespace eval ::VMDPathFinder {}
 set SRC [lindex $argv 0]; set T [lindex $argv 1]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 proc lift {src name} {
-    set pat "proc ::VMDHole::$name "
+    set pat "proc ::VMDPathFinder::$name "
     set i [string first $pat $src]
     if {$i < 0} { return "" }
     set buf ""
@@ -65,14 +65,14 @@ proc lift {src name} {
 }
 foreach p {parse_profile _resolve_conn_radii _hole_error_hint _thread_parse_initscript} {
     set b [lift $src $p]
-    if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
-    namespace eval ::VMDHole $b
+    if {$b eq ""} { puts "FATAL: could not lift ::VMDPathFinder::$p"; exit 3 }
+    namespace eval ::VMDPathFinder $b
 }
 proc vmdcon {args} {}
 
 # The worker parser, from the real initscript: everything but the thread::wait
 # it ends with (there is no worker thread here).
-set ws [::VMDHole::_thread_parse_initscript]
+set ws [::VMDPathFinder::_thread_parse_initscript]
 regsub {\nthread::wait\n?$} $ws "" ws
 if {[string match "*thread::wait*" $ws]} { puts "FATAL: thread::wait not stripped"; exit 3 }
 eval $ws
@@ -148,7 +148,7 @@ proc exercise {name parsecmd} {
     }
 }
 
-exercise serial {::VMDHole::parse_profile}
+exercise serial {::VMDPathFinder::parse_profile}
 exercise worker {thread_parse_frame}
 TCLEOF
 

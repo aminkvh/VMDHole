@@ -3,8 +3,8 @@
 # runner can detect.
 #
 # THE DEFECT THIS GUARDS (verified to go red on the pre-fix tree):
-#   vmdhole/tests/run_tests.sh decides a group "checked nothing" by grepping its
-#   output for an anchored `^SKIP:`. Under VMDHOLE_RELEASE=1 that is what turns a
+#   vmdpathfinder/tests/run_tests.sh decides a group "checked nothing" by grepping its
+#   output for an anchored `^SKIP:`. Under VMDPATHFINDER_RELEASE=1 that is what turns a
 #   skipped group into a release-blocking failure.
 #
 #   hole_tcl_fallback.tcl announced its skip as "  SKIP hole_tcl_fallback: ..."
@@ -29,14 +29,14 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-TDIR="$ROOT/vmdhole/tests"
+TDIR="$ROOT/vmdpathfinder/tests"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "  PASS  $1"; }
 bad() { fail=$((fail+1)); echo "  FAIL  $1"; }
 
 echo "skip-contract: $TDIR"
-[ -d "$TDIR" ] || { echo "SKIP: no vmdhole/tests directory"; exit 0; }
+[ -d "$TDIR" ] || { echo "SKIP: no vmdpathfinder/tests directory"; exit 0; }
 
 # 1. The runner still gates the way this test assumes. If run_tests.sh changes
 #    its detection, fail loudly rather than keep enforcing a dead contract.

@@ -2,7 +2,7 @@
 
 ## Result directories
 
-With **Save results** enabled, VMDHole creates a saved run with per-frame data
+With **Save results** enabled, VMDPathFinder creates a saved run with per-frame data
 and a manifest. Use **File → Import** to restore it; do not rearrange files
 inside the saved run.
 
@@ -61,7 +61,7 @@ remove only directories known to belong to that stopped run.
 
 ## Trajectory preparation
 
-VMDHole uses the coordinates loaded in VMD. For periodic trajectories, make
+VMDPathFinder uses the coordinates loaded in VMD. For periodic trajectories, make
 molecules whole before analysis. Align frames when comparing pore positions or
 matching tunnel routes; Tunnel mode enables alignment by default for multi-frame
 searches and applies it to the loaded VMD frames. Hydration and ion analyses

@@ -82,7 +82,7 @@ the surface file to  stdout */
 #include <unistd.h>
 #include "xalloc.h"
 #include "hole_io.h"
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 int nm_search_main(int argc, char **argv);
 int mesh_csg_main(int argc, char **argv);
 int conn_lobes_main(int argc, char **argv);
@@ -259,7 +259,7 @@ int format=4; /* OSS vmd now the default */
 double axis[3];
 float max_vertex_length=5.0; /* maximum length for a triangle vertex */
 
-/* --- hydrophobicity recolouring (VMDHole extension) --------------------- */
+/* --- hydrophobicity recolouring (VMDPathFinder extension) --------------------- */
 /* When --hydro-atoms is given, each emitted triangle is coloured by the      */
 /* hydrophobicity of the nearest HOLE channel sphere instead of by the        */
 /* surface's own colour index. This reproduces the plugin's Tcl               */
@@ -292,7 +292,7 @@ char   hydro_sph_path[2048]   = "";
 /* (it never sees residues, atom names or scale names): the plugin computes the  */
 /* value for ANY scheme + lining/facing/side-chain mode in Tcl and hands over a  */
 /* plain scalar per sphere. --hydro-signed picks the colour ramp (diverging vs   */
-/* sequential) to match ::VMDHole::norm_to_vmd_color. Values are expected already */
+/* sequential) to match ::VMDPathFinder::norm_to_vmd_color. Values are expected already */
 /* normalized: [-1,1] for signed scales, [0,1] for unsigned ones.                */
 char   hydro_values_path[2048] = "";
 int    hydro_values_mode = 0;     /* 1 = colour from --hydro-values, not atoms   */
@@ -300,7 +300,7 @@ int    hydro_signed = 1;          /* 1 = diverging ramp, 0 = sequential ramp    
 /* --hydro-range LO HI: the property scale's REAL extremes. When given, the      */
 /* values in --hydro-values / --hydro3d-values sidecars are RAW (real units,     */
 /* e.g. Kyte-Doolittle -4.5..+4.5) and the binary normalises them to a colour    */
-/* band internally (see normalize_raw, replicating ::VMDHole::property_norm).    */
+/* band internally (see normalize_raw, replicating ::VMDPathFinder::property_norm).    */
 /* When absent (older plugin), the sidecar values are assumed already-normalized */
 /* to [-1,1]/[0,1] - back-compatible. This is what lets the plugin store/show    */
 /* RAW property numbers everywhere (panels/axes) while the surface still colours */
@@ -611,7 +611,7 @@ static void nb_consider(struct base_line *node, const double *pointm,
 }
 
 /* Map an averaged hydropathy value to a VMD colour name. This MUST stay in    */
-/* step with ::VMDHole::hydro_to_vmd_color in vmdhole.tcl (golden-tested by     */
+/* step with ::VMDPathFinder::hydro_to_vmd_color in vmdpathfinder.tcl (golden-tested by     */
 /* verify.sh). Positive = hydrophobic (red), negative = hydrophilic (blue).     */
 static const char *hydro_color_name(double h)
 {
@@ -635,7 +635,7 @@ static const char *hydro_color_name(double h)
 }
 
 /* Map a PRE-NORMALIZED property value (t) to a VMD colour name. This MUST stay  */
-/* in step with ::VMDHole::norm_to_vmd_color in vmdhole.tcl. Used by the         */
+/* in step with ::VMDPathFinder::norm_to_vmd_color in vmdpathfinder.tcl. Used by the         */
 /* --hydro-values path, where the plugin has already mapped any scale to a       */
 /* normalized position: signed scales give t in [-1,1] (diverging blue->white->  */
 /* red); unsigned scales give t in [0,1] (sequential white->red).                */
@@ -657,7 +657,7 @@ static const char *norm_color_name(double t)
 }
 
 /* Map a RAW property value to a normalized position, replicating              */
-/* ::VMDHole::property_norm exactly. Signed scales: v<0 -> v/|lo|, v>=0 -> v/hi  */
+/* ::VMDPathFinder::property_norm exactly. Signed scales: v<0 -> v/|lo|, v>=0 -> v/hi  */
 /* (so the neutral value 0 always lands at the centre even when |lo| != hi),    */
 /* clamped to [-1,1]. Unsigned scales: (v-lo)/(hi-lo), clamped to [0,1]. Used   */
 /* only when --hydro-range gave us the scale's real extremes; keeps the surface */
@@ -723,7 +723,7 @@ static void hydro_read_spheres(void)
 }
 
 /* Splice HOLE's two-arm .sph centerline into one continuous path, mirroring Tcl's
-   _asym_gather (vmdhole.tcl) EXACTLY: HOLE grows the pore path in TWO directions
+   _asym_gather (vmdpathfinder.tcl) EXACTLY: HOLE grows the pore path in TWO directions
    from CPOINT, so the raw .sph sphere order is typically two arm segments
    concatenated back-to-back (real inter-sample steps stay under a few A; the arm
    seam reaches tens to ~100 A). Reverse the first arm and concatenate the second,
@@ -3229,8 +3229,8 @@ static int sos_smooth(int argc, char **argv) {
 
 int main (int argc, char *argv[])
 {
-#ifdef VMDHOLE_MULTICALL
-  /* One shipped binary carries VMDHole's own tools as well: sos_triangle
+#ifdef VMDPATHFINDER_MULTICALL
+  /* One shipped binary carries VMDPathFinder's own tools as well: sos_triangle
      --nm-search|--mesh|--conn-lobes ARGS... runs nm_search, mesh_csg or
      conn_lobes with ARGS as its own argv. The plugin finds them here when no
      standalone build sits beside this file. */
@@ -3355,7 +3355,7 @@ int main (int argc, char *argv[])
 	  break;
 
 	case '-':
-	  /* long options (VMDHole hydrophobicity extension) */
+	  /* long options (VMDPathFinder hydrophobicity extension) */
 	  /* Arity guard: the options below read argv[2] (some also argv[3]) as operands.
 	     Reject a missing operand with a message instead of dereferencing past argv.
 	     --asymmetry is excluded on purpose: its output file is optional. */
@@ -3380,7 +3380,7 @@ int main (int argc, char *argv[])
 	    /* capability probe: the plugin greps stdout for these tokens to decide
 	       which accelerated outputs this binary supports. */
 	    fprintf(stdout, "hole_features: hydro points batch recolor values props residue batchrecolor hydro3d hydro3dprops batchhydro3dprops hydrorange hydro3dlining batchhydro3drecolor hydro3daverage asymellipse batchasymellipse asymellipsegeo asymthreads clipgeo esp recolorthreads tunneldist tunneldistmax tunnelcluster tunnelclusterdist ionflowproject ionflowcoords ionflowpath sossmooth"
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 	            " nm mesh lobes tunnelserve"
 #endif
 	            "\n");
@@ -3714,7 +3714,7 @@ int main (int argc, char *argv[])
 	       qualifying residues is skipped entirely (not counted in job-count):
 	       hydro_at_point_3d()'s 0.0 sentinel for "no contributors" would
 	       otherwise pull every triangle's average toward a spurious neutral
-	       value (VMDHole extension). */
+	       value (VMDPathFinder extension). */
 	    if (argc < 4 || recolor_path[0] == '\0') {
 	      fprintf(stderr, "\n--batch-hydro3d-average requires --recolor BASE first, then JOBLIST OUTFILE\n");
 	      return(1);
@@ -3946,7 +3946,7 @@ int main (int argc, char *argv[])
 	    argc--; argv++;
 	  } else if (strcmp(argv[1], "--hydro3d-values") == 0) {
 	    /* TRUE per-triangle colouring: "x y z value" per qualifying pore-lining
-	       residue (VMDHole extension, not part of stock sos_triangle/HOLE) -
+	       residue (VMDPathFinder extension, not part of stock sos_triangle/HOLE) -
 	       see hydro_at_point_3d(). Additive: turns on hydro colouring same as
 	       --hydro-values, but picks the real-3D-distance lookup instead of the
 	       nearest-centerline-sphere one, so colour varies by angular position
@@ -3961,7 +3961,7 @@ int main (int argc, char *argv[])
 	       base mesh) instead of live-evaluating hydro_at_point_3d() - the final
 	       colourise pass for the Mean Profile's trajectory-averaged "Accurate
 	       3D" feature, fed by --batch-hydro3d-average's merged output
-	       (VMDHole extension). */
+	       (VMDPathFinder extension). */
 	    hydro_mode = 1;
 	    hydro3d_mode = 1;
 	    hydro3d_precomputed = 1;
@@ -4133,7 +4133,7 @@ int main (int argc, char *argv[])
   cull_coords();
   build_neighbour_grid();   /* speedup 5: index dots for the neighbour search */
 
-  /* VMDHole hydrophobicity: load spheres + atoms and pre-average so vmd_out()
+  /* VMDPathFinder hydrophobicity: load spheres + atoms and pre-average so vmd_out()
      can colour each triangle by its nearest channel sphere. If the inputs are
      unusable, fall back to the normal (uncoloured) output and let the plugin's
      Tcl path take over. */
@@ -5790,7 +5790,7 @@ void vmd_out ()
  
 }
 
-/* VMDHole --points output: write each surface vertex once as a "draw point",
+/* VMDPathFinder --points output: write each surface vertex once as a "draw point",
    preserving the per-triangle colour so hole_def (radius) colouring carries
    over. Reproduces the plugin's dots_from_trinorm: vertices are emitted in the
    order first encountered while scanning triangles, each carrying the colour
@@ -5941,7 +5941,7 @@ void help ()
   printf ("\n -r Produces a Povray v3.0 surface.\n"); 
   printf ("\n -v Produces a vmd surface (the default).\n"); 
   printf ("\n -X NUMB Use a maximum vertex cull distance of NUMB angs (default 5.0).\n");
-  printf ("\n VMDHole extensions:");
+  printf ("\n VMDPathFinder extensions:");
   printf ("\n --hole-features         Print build capabilities and exit (probe).");
   printf ("\n --points                Emit unique surface vertices as 'draw point'.");
   printf ("\n --batch FILE            Process multiple surfaces from a batch file.");
@@ -5959,7 +5959,7 @@ void help ()
   printf ("\n                         to the old normalized path (kept in real units).");
   printf ("\n --hydro-shell A         Lining-shell thickness in Angstrom (default 3.0):");
   printf ("\n                         atoms within (sphere_radius + A) are averaged.");
-  printf ("\n --hydro3d-values FILE   TRUE per-triangle colouring (VMDHole extension):");
+  printf ("\n --hydro3d-values FILE   TRUE per-triangle colouring (VMDPathFinder extension):");
   printf ("\n                         FILE has rows 'x y z value', one per qualifying");
   printf ("\n                         pore-lining residue. Colours by real 3D distance");
   printf ("\n                         to every residue, not nearest-centerline-sphere,");
@@ -5996,12 +5996,12 @@ void help ()
  return;
 }
 
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 /* The resident mesher (mesh_csg --serve, same binary) answers the tunnel
    clustering kernels for the plugin: forking VMD costs ~33 ms per call on a
    loaded trajectory, the kernel itself a few ms per frame. */
-int vmdhole_tunnel_cluster(const char *in, const char *out, double threshold, double maxdev)
+int vmdpathfinder_tunnel_cluster(const char *in, const char *out, double threshold, double maxdev)
 { return tunnel_cluster_c(in, out, threshold, maxdev); }
-int vmdhole_tunnel_dist(const char *in, const char *out, int want_max)
+int vmdpathfinder_tunnel_dist(const char *in, const char *out, int want_max)
 { return tunnel_dist(in, out, want_max); }
 #endif

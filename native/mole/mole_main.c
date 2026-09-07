@@ -334,7 +334,7 @@ int main(int argc, char **argv)
         if (strncmp(a, "--", 2) || !v) continue;
         v++;
         /* arg_num/arg_int, not bare atof/atoi: these come straight from GUI
-           entry-widget text (_mole_cfg_flags in vmdhole.tcl), unvalidated, so
+           entry-widget text (_mole_cfg_flags in vmdpathfinder.tcl), unvalidated, so
            a blank or malformed field silently became 0.0/0 - the same class
            of silent-wrong-run the positional arguments above were hardened
            against, just reached from a flag instead of a position. */

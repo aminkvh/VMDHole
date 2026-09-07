@@ -38,7 +38,7 @@ default is load-bearing, not a no-op.
 `nm_search` and `mesh_csg` are wired into the plugin (Search picker under the
 HOLE parameters; Surface mesher under Settings > Engines).
 Both, and `conn_lobes`, are also compiled INTO `sos_triangle_fast`
-(`-DVMDHOLE_MULTICALL`, see `native/build.sh`) and reached as
+(`-DVMDPATHFINDER_MULTICALL`, see `native/build.sh`) and reached as
 `sos_triangle --nm-search|--mesh|--conn-lobes ARGS`, so one shipped file
 carries them all; the plugin looks there when no standalone build sits
 beside it.
@@ -111,7 +111,7 @@ lies exactly on the sphere governing the inside corner, and the quadratic
 for it is solved directly. That halves the vertex error at every spacing
 and is what lets one mesh (the plugin sends `1.0/0.5`) serve both playback
 and the settled view instead of a coarse mesh being replaced by a fine one.
-Records are written as `graphics $::VMDHole::_gmol ...` rather than `draw`,
+Records are written as `graphics $::VMDPathFinder::_gmol ...` rather than `draw`,
 so the plugin can replay a mesh by sourcing the file: `draw` is a Tcl proc
 that re-resolves the top molecule on every call, which costs more per
 triangle than the drawing. The plugin's parser accepts either form.

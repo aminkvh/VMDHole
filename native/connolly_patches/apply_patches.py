@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Apply the VMDHole parallel-CONNOLLY / fast-CAPSULE patches to a HOLE2 src tree.
+Apply the VMDPathFinder parallel-CONNOLLY / fast-CAPSULE patches to a HOLE2 src tree.
 
 Idempotent and non-destructive: every file it changes in place is first backed
-up to <file>.vmdhole_orig (only once - the pristine copy is preserved). Running
+up to <file>.vmdpathfinder_orig (only once - the pristine copy is preserved). Running
 it twice is a no-op. New source files are simply copied in.
 
 Usage:  apply_patches.py  <hole2/src dir>
@@ -28,7 +28,7 @@ import sys, os, re, shutil, hashlib
 # written against, at HOLE2 a8eaf6121ba66625446933f4acd7d6aa336dbb47. The
 # patches REPLACE whole files rather than applying diffs, so a drifted upstream
 # would be overwritten silently and the result would be a binary built from a
-# mixture nobody validated. Checked, not assumed. Set VMDHOLE_SKIP_BASE_CHECK=1
+# mixture nobody validated. Checked, not assumed. Set VMDPATHFINDER_SKIP_BASE_CHECK=1
 # to override deliberately.
 BASE_SHA16 = {
     "hcapen.f":        "0fbfb016033a12ba",
@@ -57,15 +57,15 @@ def _sha16(path):
 
 def check_base_files(src):
     """Verify the upstream files we are about to replace are the ones these
-    patches were validated against. Compares the .vmdhole_orig backup when one
+    patches were validated against. Compares the .vmdpathfinder_orig backup when one
     exists, so re-running on an already-patched tree still checks the original."""
-    if os.environ.get("VMDHOLE_SKIP_BASE_CHECK"):
-        print("  base-file check : SKIPPED (VMDHOLE_SKIP_BASE_CHECK set)")
+    if os.environ.get("VMDPATHFINDER_SKIP_BASE_CHECK"):
+        print("  base-file check : SKIPPED (VMDPATHFINDER_SKIP_BASE_CHECK set)")
         return
     bad = []
     for f, want in BASE_SHA16.items():
         path = os.path.join(src, f)
-        orig = path + ".vmdhole_orig"
+        orig = path + ".vmdpathfinder_orig"
         probe = orig if os.path.isfile(orig) else path
         if not os.path.isfile(probe):
             bad.append("%s: missing" % f)
@@ -78,9 +78,9 @@ def check_base_files(src):
             "ERROR: upstream sources differ from the revision these patches were\n"
             "       written and validated against:\n         "
             + "\n         ".join(bad)
-            + "\n       Build with the pinned revision (build-vmdhole-optimized.sh does\n"
+            + "\n       Build with the pinned revision (build-vmdpathfinder-optimized.sh does\n"
               "       this automatically), or re-validate and update BASE_SHA16 in\n"
-              "       this file. Set VMDHOLE_SKIP_BASE_CHECK=1 to override.")
+              "       this file. Set VMDPATHFINDER_SKIP_BASE_CHECK=1 to override.")
     print("  base-file check : %d file(s) match the pinned upstream" % len(BASE_SHA16))
 
 NEW_FILES = ["hcapen_fast.f", "coarea_fast.f", "holcal_par.f", "holeen_par.f",
@@ -92,7 +92,7 @@ OBJ_SWAPS = [("coarea.o", "coarea_fast.o"),
              ("holeen.o", "holeen_par.o"),
              ("sphqpu.o", "sphqpu_par.o"),
              ("h2dmap.o", "h2dmap_par.o"),
-             # tsatr_fast reads VMDHole's packed binary coordinate record when the
+             # tsatr_fast reads VMDPathFinder's packed binary coordinate record when the
              # coord file ends .vhb, and is byte-for-byte the stock reader otherwise.
              ("tsatr.o", "tsatr_fast.o"),
              # concal_par's only behavioural change from stock: the "initial
@@ -118,7 +118,7 @@ OMP_FILES = ["holcal_par", "holeen_par", "concal_par", "coarea_fast", "sphqpu_pa
 
 
 def backup_once(path):
-    b = path + ".vmdhole_orig"
+    b = path + ".vmdpathfinder_orig"
     if not os.path.exists(b):
         shutil.copy2(path, b)
 
@@ -136,7 +136,7 @@ def patch_machine_dep(src):
     txt, n1 = re.subn(
         r"(\n\s*COMMON\s*/CSEED/\s*FSEED\n)",
         r"\1"
-        "C VMDHole parallel-CONNOLLY: inert RNG draw counter (see holcal_par.f)\n"
+        "C VMDPathFinder parallel-CONNOLLY: inert RNG draw counter (see holcal_par.f)\n"
         "      INTEGER           NDRAW\n"
         "      COMMON /RNGCNT/   NDRAW\n",
         txt, count=1)
@@ -189,7 +189,7 @@ def patch_makefile(src):
       txt, n = re.subn(
         r"(?m)^(FFLAGS\s*\+=.*\n)",
         r"\1"
-        "# VMDHole parallel CONNOLLY: -fopenmp applied ONLY to the 4 parallel-\n"
+        "# VMDPathFinder parallel CONNOLLY: -fopenmp applied ONLY to the 4 parallel-\n"
         "# region files below (per-file rules), never globally - global -fopenmp\n"
         "# implies -frecursive, pushing hole.f's ~24MB arrays onto the stack and\n"
         "# seg-faulting every mode.\n"
@@ -203,7 +203,7 @@ def patch_makefile(src):
     missing = [f for f in OMP_FILES
                if not re.search(r"(?m)^" + re.escape(f) + r"\.o:\s", txt)]
     if missing:
-        rules = ["", "# VMDHole parallel CONNOLLY: per-thread automatic arrays +",
+        rules = ["", "# VMDPathFinder parallel CONNOLLY: per-thread automatic arrays +",
                  "# OpenMP directives + THREADPRIVATE for the parallel-region files."]
         for f in missing:
             rules += ["%s.o: %s.f" % (f, f),
@@ -236,12 +236,12 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     if not os.path.isfile(os.path.join(src, "Makefile")):
         sys.exit("ERROR: '%s' is not a hole2/src tree (no Makefile)." % src)
-    print(">> Applying VMDHole parallel-CONNOLLY patches to %s" % src)
+    print(">> Applying VMDPathFinder parallel-CONNOLLY patches to %s" % src)
     check_base_files(src)
     copy_new_files(src, here)
     patch_machine_dep(src)
     patch_makefile(src)
-    print(">> Patches applied (originals backed up to *.vmdhole_orig).")
+    print(">> Patches applied (originals backed up to *.vmdpathfinder_orig).")
 
 
 if __name__ == "__main__":

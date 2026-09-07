@@ -1,27 +1,27 @@
 # Large input data — provide separately / regenerate, don't version-control
-vmdhole/sim_1.dcd
-vmdhole/step5_assembly.hmr.psf
+vmdpathfinder/sim_1.dcd
+vmdpathfinder/step5_assembly.hmr.psf
 
 # Generated HOLE output + plugin surface artifacts. Produced by running the plugin
 # on the (un-versioned) input data; not part of the distributable. The fork's
 # deterministic test corpus lives in native/benchmarks/fixtures/ instead.
-vmdhole/hole_output/
-vmdhole/hole_output_*/
+vmdpathfinder/hole_output/
+vmdpathfinder/hole_output_*/
 
 # Generated snapshots / figures (scale-bar renders, profile/heatmap exports).
-vmdhole/*.ppm
-vmdhole/*.tga
-vmdhole/*.eps
+vmdpathfinder/*.ppm
+vmdpathfinder/*.tga
+vmdpathfinder/*.eps
 
 # Case-study test data: input structures plus their generated runs and renders.
 # Regenerate, or provide minimal inputs separately; force-add a specific input
 # file (git add -f ...) if you deliberately want to ship it.
-vmdhole/1GRM/
-vmdhole/*GABA*/
+vmdpathfinder/1GRM/
+vmdpathfinder/*GABA*/
 
-# Screenshots / pasted images dropped into vmdhole during development.
-vmdhole/*.png
-vmdhole/main.pdf
+# Screenshots / pasted images dropped into vmdpathfinder during development.
+vmdpathfinder/*.png
+vmdpathfinder/main.pdf
 
 # Paper case-study: generated HOLE outputs, renders, and scratch figures.
 # PDB inputs and PDFs (supp figures, scheme references) are intentionally kept.
@@ -47,7 +47,7 @@ paper/benchmarks/env/
 paper/benchmarks/scratch_bench/
 paper/benchmarks/__pycache__/
 # Any Python cache, not just that one directory. A stray
-# vmdhole/hole_tcl/__pycache__/*.pyc reached a commit because only the
+# vmdpathfinder/hole_tcl/__pycache__/*.pyc reached a commit because only the
 # paper/benchmarks path was listed.
 __pycache__/
 *.py[cod]
@@ -67,7 +67,7 @@ scratch_chap_gromacs/
 native/stock_build/
 native/sphproc_build/
 native/sos_triangle
-vmdhole/graphify-out/
+vmdpathfinder/graphify-out/
 
 # ---- Published papers: DO NOT COMMIT ----------------------------------------
 # These are third-party copyrighted articles kept locally for reference while
@@ -75,16 +75,16 @@ vmdhole/graphify-out/
 # be a licensing problem entirely separate from our own Apache-2.0 code. Cite
 # them in the reference list instead - the DOIs are all we need to ship.
 paper/refrences/
-vmdhole/papers/
+vmdpathfinder/papers/
 
 # ---- Per-run scratch that lands in the working tree -------------------------
 # HOLE writes these next to wherever it was invoked.
 /hole.out
 /hole000.*
 /simple2.rad
-vmdhole/*.csv
-vmdhole/images.jpeg
-vmdhole/*.jpeg
+vmdpathfinder/*.csv
+vmdpathfinder/images.jpeg
+vmdpathfinder/*.jpeg
 # out so the two cannot drift into disagreement (see README.legacy.md).
 paper/benchmarks/bare_hole_calc.csv
 paper/benchmarks/calc_speed_3way.csv
@@ -95,10 +95,10 @@ paper/benchmarks/csv
 paper/benchmarks/plugin_endtoend_out*.txt
 
 # Generated per-case profile exports (the .pdb input is what we commit).
-# Reference HOLE binaries built from source for validating vmdhole/hole_tcl/ - large,
+# Reference HOLE binaries built from source for validating vmdpathfinder/hole_tcl/ - large,
 # machine-specific, and rebuildable from native/stock_build/hole2/src.
-# Local reference-binary builds (see vmdhole/hole_tcl/README.md) - never committed.
-vmdhole/hole_tcl/reference_bin/
+# Local reference-binary builds (see vmdpathfinder/hole_tcl/README.md) - never committed.
+vmdpathfinder/hole_tcl/reference_bin/
 
 # MkDocs build output
 /site/
@@ -127,9 +127,9 @@ vmdhole/hole_tcl/reference_bin/
 04_full_trajectory.tar.gz
 
 # Generated tunnel output. 3,037 files / 351 MB of it was tracked INSIDE
-# vmdhole/ - the one directory users are told to install.
-vmdhole/tunnel_output_*/
-packaging/vmdhole/vmdhole/tunnel_output_*/
+# vmdpathfinder/ - the one directory users are told to install.
+vmdpathfinder/tunnel_output_*/
+packaging/vmdpathfinder/vmdpathfinder/tunnel_output_*/
 
 # Stray HOLE outputs written into the case-study directories, named after the
 # card argument that produced them rather than after their contents.
@@ -144,18 +144,18 @@ updated manuscript/
 
 # Generated, not source. NOTES/ is internal development history; the three notes
 # the shipped C source actually cites live in native/NOTES/ instead.
-vmdhole/NOTES/
-packaging/vmdhole/vmdhole/NOTES/
+vmdpathfinder/NOTES/
+packaging/vmdpathfinder/vmdpathfinder/NOTES/
 # The benchmark corpus is 5.7 MB reproducible from one PDB - see
 # native/benchmarks/make_fixtures.sh
 native/benchmarks/fixtures/
-packaging/vmdhole/native/benchmarks/fixtures/
+packaging/vmdpathfinder/native/benchmarks/fixtures/
 
 # Small structural inputs the benchmarks and case studies use, fetched on
 # demand by paper/benchmarks/fetch_structures.sh from RCSB rather than
 # redistributed - see paper/DATA.md.
-vmdhole/tests/fixtures/mole_reference/1BL8.pdb
-vmdhole/tests/fixtures/mole_reference/1ERI.pdb
+vmdpathfinder/tests/fixtures/mole_reference/1BL8.pdb
+vmdpathfinder/tests/fixtures/mole_reference/1ERI.pdb
 
 # Vendored third-party MOLE 2 binary - build from source per
 # paper/benchmarks/real_mole_build/README.md instead of redistributing it.
@@ -165,13 +165,14 @@ paper/benchmarks/real_mole_build/*.dll
 # The release archive and its staging directory are built fresh from
 # `git ls-files` by packaging/make_zip.sh - see that script's own header for
 # why there is no checked-in copy any more.
+packaging/vmdpathfinder.zip
 packaging/vmdhole.zip
 packaging/build/
 
 # --- Publication hygiene (2026-08-24): internal development material that
 # stays on this machine but must never be tracked again. See the commit that
 # added this block for what each is.
-vmdhole/Caver.pdf
+vmdpathfinder/Caver.pdf
 04_full_trajectory/
 native/NOTES/
 native/NOTES-hydration-accel.md
@@ -221,9 +222,9 @@ paper/benchmarks/results/*
 # corpus, the ion-flow post-analysis helper.
 native/upstream/
 native/benchmarks/
-vmdhole/ion_flow_analysis.py
+vmdpathfinder/ion_flow_analysis.py
 # deliberately untracked test structure - see test_mole_tcl_port.sh
-vmdhole/tests/fixtures/9HNR.pdb
+vmdpathfinder/tests/fixtures/9HNR.pdb
 
 # built binaries in the ported nm/ tools directory (sources are tracked)
 native/nm/nm_search

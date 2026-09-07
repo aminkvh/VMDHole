@@ -2,7 +2,7 @@
 # The two TSV readers must agree. They are the same question asked twice.
 #
 # THE DEFECT THIS GUARDS (verified to go red on the pre-fix tree):
-#   vmdhole.tcl has two readers for hole_profile.tsv. The main-thread one,
+#   vmdpathfinder.tcl has two readers for hole_profile.tsv. The main-thread one,
 #   parse_profile_from_tsv, hands its rows to _resolve_conn_radii, which applies
 #   the CONNOLLY convention (Requiv where real, interpolated across HOLE's
 #   un-evaluated mid-point rows, spherical-probe radius where the pore has
@@ -20,10 +20,10 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-SRC="$ROOT/vmdhole/vmdhole.tcl"
+SRC="$ROOT/vmdpathfinder/vmdpathfinder.tcl"
 
 echo "tsv-reader-parity: $SRC"
-[ -f "$SRC" ] || { echo "SKIP: no vmdhole.tcl"; exit 0; }
+[ -f "$SRC" ] || { echo "SKIP: no vmdpathfinder.tcl"; exit 0; }
 command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
@@ -40,15 +40,15 @@ printf -- '0.0\t5.0\t0.0\t0.50\t4.00\t0.50\t4.00\n'                            >
 
 # Quoted heredoc: no shell expansion at all. Paths arrive via argv.
 cat > "$T/drv.tcl" <<'TCLEOF'
-namespace eval ::VMDHole {}
+namespace eval ::VMDPathFinder {}
 set SRC [lindex $argv 0]
 set TSV [lindex $argv 1]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 # Lift a proc out of the shipped file by brace balance, so this test always
-# checks the code that actually ships. qualified=1 for ::VMDHole::name.
+# checks the code that actually ships. qualified=1 for ::VMDPathFinder::name.
 proc lift {src name qualified} {
-    set pat [expr {$qualified ? "proc ::VMDHole::$name " : "proc $name "}]
+    set pat [expr {$qualified ? "proc ::VMDPathFinder::$name " : "proc $name "}]
     set i [string first $pat $src]
     if {$i < 0} { return "" }
     set buf ""
@@ -64,17 +64,17 @@ proc lift {src name qualified} {
 # reported PASS, because it only counted MISMATCH lines.
 foreach p {_resolve_conn_radii _conn_F_from_rows parse_profile_from_tsv} {
     set body [lift $src $p 1]
-    if {$body eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
-    namespace eval ::VMDHole $body
+    if {$body eq ""} { puts "FATAL: could not lift ::VMDPathFinder::$p"; exit 3 }
+    namespace eval ::VMDPathFinder $body
 }
 set body [lift $src _thr_read_tsv 0]
 if {$body eq ""} { puts "FATAL: could not lift _thr_read_tsv"; exit 3 }
-namespace eval ::VMDHole $body
+namespace eval ::VMDPathFinder $body
 
-if {[catch {::VMDHole::parse_profile_from_tsv $TSV 1} a]} {
+if {[catch {::VMDPathFinder::parse_profile_from_tsv $TSV 1} a]} {
     puts "FATAL: serial reader threw: $a"; exit 3
 }
-if {[catch {::VMDHole::_thr_read_tsv $TSV 1} b]} {
+if {[catch {::VMDPathFinder::_thr_read_tsv $TSV 1} b]} {
     puts "FATAL: threaded reader threw: $b"; exit 3
 }
 set bd [dict create {*}$b]

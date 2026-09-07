@@ -1,4 +1,4 @@
-# FINAL NUMERICAL RESULTS - VMDHole 1.0.1 freeze, Nelder-Mead search + marching-cubes mesher
+# FINAL NUMERICAL RESULTS - VMDPathFinder 1.0.1 freeze, Nelder-Mead search + marching-cubes mesher
 
 Generated: 2026-09-07T01:14:34Z
 Benchmarked commit: `061f7d75dafd9c4bbd3126b6ff1176844359eb49` (branch main; working tree CLEAN at run time
@@ -7,7 +7,7 @@ document was written, change only the CPOINT/CVECT stick dialog and documentatio
 Protocol: `paper/benchmarks/reproduce.sh`, the repository's own harness,
 3 timing repetitions per point, medians reported. No benchmark script parameter
 or dataset changed for this run; the harness gained three plugin rows
-(`vmdhole_nm`, `vmdhole_csg`, `vmdhole_nm_csg`) so the plugin's own search engine
+(`vmdpathfinder_nm`, `vmdpathfinder_csg`, `vmdpathfinder_nm_csg`) so the plugin's own search engine
 and mesher are timed beside the accelerated HOLE rows.
 
 ## Environment
@@ -21,20 +21,20 @@ no OpenMP.
 
 ## Commands executed (in order)
 
-1. `bash reproduce.sh --tier1 --tier2 --data vmdhole` - env, regress, gate-surface, identity-profile, identity-sos, identity-accel and poreanalyser passed with the quiet-machine gate active; the gate then timed out at load ~2.6 (>0.5 for 10 min: the desktop's own file-sync daemon at ~2.3 cores, browser and a live VMD session, none of them benchmark processes) and the run stopped, per protocol
-2. `bash reproduce.sh --tier1 --tier2 --data vmdhole --allow-noisy --skip <the 7 stages above>` - the timed stages and `figures`, recorded in every CSV header as allow_noisy: 1 with the load at start
-3. `bash reproduce.sh --allow-noisy --stage endtoend --stage figures --data vmdhole` - the end-to-end stage again after a harness fix: VMD drops empty `-args` entries, so the optional arguments now travel as `-`. Before the fix the trailing keep-PDB flag arrived in the job-count slot, which means the `vmdhole_accel_pdb` row of the 2026-09-03 freeze (6.48 s) timed a SERIAL 1-job run with the packed record, not a keep-PDB run; this run measures what the row says.
+1. `bash reproduce.sh --tier1 --tier2 --data vmdpathfinder` - env, regress, gate-surface, identity-profile, identity-sos, identity-accel and poreanalyser passed with the quiet-machine gate active; the gate then timed out at load ~2.6 (>0.5 for 10 min: the desktop's own file-sync daemon at ~2.3 cores, browser and a live VMD session, none of them benchmark processes) and the run stopped, per protocol
+2. `bash reproduce.sh --tier1 --tier2 --data vmdpathfinder --allow-noisy --skip <the 7 stages above>` - the timed stages and `figures`, recorded in every CSV header as allow_noisy: 1 with the load at start
+3. `bash reproduce.sh --allow-noisy --stage endtoend --stage figures --data vmdpathfinder` - the end-to-end stage again after a harness fix: VMD drops empty `-args` entries, so the optional arguments now travel as `-`. Before the fix the trailing keep-PDB flag arrived in the job-count slot, which means the `vmdpathfinder_accel_pdb` row of the 2026-09-03 freeze (6.48 s) timed a SERIAL 1-job run with the packed record, not a keep-PDB run; this run measures what the row says.
 4. `bash reproduce.sh --allow-noisy --stage chap` - CHAP replication (its inputs are the checked-in CHAP 0.9.1 example-02 outputs)
 
-Correctness gate BEFORE benchmarking: `vmdhole/tests/run_tests.sh` = ALL 23
+Correctness gate BEFORE benchmarking: `vmdpathfinder/tests/run_tests.sh` = ALL 23
 GROUPS PASSED and `tests/unit/run_unit_tests.sh` = 14 passed on `71d9ae9`; the tier-1 `regress` stage
-repeated the main suite under VMDHOLE_RELEASE=1: ALL 23 TEST GROUPS PASSED (`regression.log`).
+repeated the main suite under VMDPATHFINDER_RELEASE=1: ALL 23 TEST GROUPS PASSED (`regression.log`).
 
 ## Identity / numerical-parity gates (all PASS)
 
 | gate | result | source |
 |---|---|---|
-| HOLE vs VMDHole profile identity | PASS (4 frames) | `profile_identity.csv` |
+| HOLE vs VMDPathFinder profile identity | PASS (4 frames) | `profile_identity.csv` |
 | Pure-Tcl fallback vs HOLE (all 3 pore methods) | PASS | `regression.log` (groups hole_tcl_fallback, _pore_methods, _e2e) |
 | Packed-coordinate vs standard-PDB hand-off | PASS | `accel_parity.log` |
 | Connolly/capsule/surface output identity | PASS | `gate_surface.log` + `identity-sos` (verify.sh A/B/D/E) |
@@ -47,29 +47,29 @@ repeated the main suite under VMDHOLE_RELEASE=1: ALL 23 TEST GROUPS PASSED (`reg
 
 Baselines: bare HOLE = the stock `hole` binary scripted directly (serial, and
 a 15-way `xargs -P15` control); mdahole2 = the MDAnalysis HOLE wrapper;
-VMDHole = this plugin, 15 jobs, stock or accelerated binaries. The three new
+VMDPathFinder = this plugin, 15 jobs, stock or accelerated binaries. The three new
 rows keep the accelerated binaries and switch the plugin's own engines on:
-`vmdhole_nm` = Nelder-Mead search instead of HOLE's Monte Carlo (calc);
-`vmdhole_csg` = marching-cubes mesher on HOLE's search (surface);
-`vmdhole_nm_csg` = both (surface).
+`vmdpathfinder_nm` = Nelder-Mead search instead of HOLE's Monte Carlo (calc);
+`vmdpathfinder_csg` = marching-cubes mesher on HOLE's search (surface);
+`vmdpathfinder_nm_csg` = both (surface).
 
 | deliverable | tool | median s | repetitions (s) |
 |---|---|---|---|
 | calc | bare_hole_serial | 6.1398 | 6.1611, 6.1346, 6.1398 |
 | calc | bare_hole_parallel | 0.7987 | 0.7987, 0.7973, 0.8117 |
 | calc | mdahole2 | 93.8384 | 94.2621, 93.8384, 93.8282 |
-| calc | vmdhole_stock | 1.4582 | 1.4562, 1.4582, 1.4723 |
-| calc | vmdhole_accel | 1.0047 | 0.9715, 1.0188, 1.0047 |
-| calc | vmdhole_accel_pdb | 1.4255 | 1.4672, 1.4175, 1.4255 |
-| calc | vmdhole_nm | 1.0269 | 1.0144, 1.0269, 1.0298 |
+| calc | vmdpathfinder_stock | 1.4582 | 1.4562, 1.4582, 1.4723 |
+| calc | vmdpathfinder_accel | 1.0047 | 0.9715, 1.0188, 1.0047 |
+| calc | vmdpathfinder_accel_pdb | 1.4255 | 1.4672, 1.4175, 1.4255 |
+| calc | vmdpathfinder_nm | 1.0269 | 1.0144, 1.0269, 1.0298 |
 | surface | bare_hole_serial | 42.6641 | 42.6641, 41.9096, 42.7141 |
 | surface | bare_hole_parallel | 5.2479 | 5.1730, 5.2575, 5.2479 |
 | surface | mdahole2 | 130.9052 | 130.9052, 130.7011, 131.6016 |
-| surface | vmdhole_stock | 6.7874 | 6.7874, 6.7734, 6.8478 |
-| surface | vmdhole_accel | 2.6224 | 2.6676, 2.6224, 2.5101 |
-| surface | vmdhole_accel_pdb | 2.8904 | 2.9487, 2.8904, 2.8691 |
-| surface | vmdhole_csg | 2.0426 | 2.1177, 2.0426, 2.0033 |
-| surface | vmdhole_nm_csg | 2.0750 | 2.1006, 2.0630, 2.0750 |
+| surface | vmdpathfinder_stock | 6.7874 | 6.7874, 6.7734, 6.8478 |
+| surface | vmdpathfinder_accel | 2.6224 | 2.6676, 2.6224, 2.5101 |
+| surface | vmdpathfinder_accel_pdb | 2.8904 | 2.9487, 2.8904, 2.8691 |
+| surface | vmdpathfinder_csg | 2.0426 | 2.1177, 2.0426, 2.0033 |
+| surface | vmdpathfinder_nm_csg | 2.0750 | 2.1006, 2.0630, 2.0750 |
 
 **Derived ratios (full precision -> rounding):**
 
@@ -124,7 +124,7 @@ Range: **3.4x (density 10) to 73.2x (density 40)**, output identical at every po
 
 ## MOLE 2 tunnel validation + timing - `tunnel_vs_mole2.csv`, `tunnel_vs_mole2_auto_origin.csv`
 
-| structure | tetra MOLE2 | tetra VMDHole | tunnels (both) | MOLE2 s | VMDHole s | speedup |
+| structure | tetra MOLE2 | tetra VMDPathFinder | tunnels (both) | MOLE2 s | VMDPathFinder s | speedup |
 |---|---|---|---|---|---|---|
 | 1BL8 | 18394 | 18380 | 4/4 | 0.3813 | 0.0250 | 15.24x |
 | 1MXT_noHET | 45044 | 45031 | 5/5 | 0.6124 | 0.0581 | 10.55x |
@@ -136,7 +136,7 @@ Timing range: **9.66-16.41x**; tunnel counts agree on every structure: yes.
 
 ## CAVER comparison - `tunnel_vs_caver_timing.csv`, `tunnel_tcl_vs_compiled.csv`, `tunnel_clustering_real_pool.csv`
 
-| threshold | VMDHole s | CAVER stage-only s | CAVER full s | stage-only ratio | full ratio |
+| threshold | VMDPathFinder s | CAVER stage-only s | CAVER full s | stage-only ratio | full ratio |
 |---|---|---|---|---|---|
 | 2.0 | 0.014005 | 0.147579 | 0.262494 | 10.54x | 18.74x |
 | 4.0 | 0.010709 | 0.146122 | 0.261677 | 13.64x | 24.43x |
@@ -210,7 +210,7 @@ stock sos_triangle overflows above dotden ~12; always carry this caveat).
 
 The reference tools (mdahole2, bare HOLE, MOLE 2, CAVER, CHAP) and the stock
 build are unchanged; movements in those rows are run-to-run spread. New this
-run: the `vmdhole_nm`, `vmdhole_csg` and `vmdhole_nm_csg` rows above and their
+run: the `vmdpathfinder_nm`, `vmdpathfinder_csg` and `vmdpathfinder_nm_csg` rows above and their
 bars in Figure S2.
 
 ## Figure S2

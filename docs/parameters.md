@@ -1,6 +1,6 @@
 # Parameter reference
 
-This page lists VMDHole controls and their starting values. Saved settings can
+This page lists VMDPathFinder controls and their starting values. Saved settings can
 change a default.
 
 ## Shared input
@@ -116,7 +116,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Tunnel surface color | automatic rank | Route/rank color, selected property, or a flat VMD color |
 | Material | Opaque | VMD material applied to the generated representation |
 | Playback stride (Settings, `sos_triangle` mesher only) | 4 | Draw every Nth triangle while the trajectory plays; the marching-cubes mesher always draws full detail |
-| Synchronize playback | on | Update VMDHole geometry with the VMD frame |
+| Synchronize playback | on | Update VMDPathFinder geometry with the VMD frame |
 | Pore lining threshold | 3 Å | Maximum atom-to-local-surface distance used to classify lining residues for display and residue-property averaging |
 | Property smoothing | 3 Å | Axial smoothing bandwidth |
 | Pore-facing only | on | Retain side chains directed toward the lumen where applicable |

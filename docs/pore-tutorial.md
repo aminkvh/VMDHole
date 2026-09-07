@@ -12,8 +12,8 @@ membrane. Hydration, ion-flow, and permeation analyses therefore do not apply.
 
 ## 1. Load and inspect
 
-Load `vmdhole/1GRM.pdb`. Display all atoms and confirm that the two
-peptide chains form one continuous channel. Select `all` in VMDHole because the
+Load `vmdpathfinder/1GRM.pdb`. Display all atoms and confirm that the two
+peptide chains form one continuous channel. Select `all` in VMDPathFinder because the
 terminal groups are not included by VMD's `protein` macro.
 
 ## 2. Define an axis independent of file orientation
@@ -56,7 +56,7 @@ Record:
 - `CPOINT`, `CVECT`, `SAMPLE`, `ENDRAD`, and `SHORTO`;
 - pore method and dot density;
 - Monte Carlo seed, steps, step size, and temperature;
-- VMDHole, HOLE, and binary versions.
+- VMDPathFinder, HOLE, and binary versions.
 
 HOLE uses stochastic optimization. Exact reruns and method comparisons require
 the same effective seed and otherwise identical inputs.
@@ -100,7 +100,7 @@ reproducible.
 ## Citations
 
 Before publishing, open **Help → Guide & Citations… → Citations**. Cite
-VMDHole, VMD, and HOLE. Add citations for any additional method used, such as
+VMDPathFinder, VMD, and HOLE. Add citations for any additional method used, such as
 Connolly, ellipse fitting, hydration, or a property scale. See
 [References](references.md) for the full entries.
 

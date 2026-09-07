@@ -17,8 +17,8 @@
  * buffer) are deliberately left calling the real allocator - converting those
  * would turn a handled condition into an exit.
  */
-#ifndef VMDHOLE_XALLOC_H
-#define VMDHOLE_XALLOC_H
+#ifndef VMDPATHFINDER_XALLOC_H
+#define VMDPATHFINDER_XALLOC_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,4 +65,4 @@ static char *xalloc_strdup(const char *s, const char *file, int line)
 #define xa_realloc(p, n)   xalloc_realloc((p), (n), __FILE__, __LINE__)
 #define xa_strdup(s)       xalloc_strdup((s), __FILE__, __LINE__)
 
-#endif /* VMDHOLE_XALLOC_H */
+#endif /* VMDPATHFINDER_XALLOC_H */

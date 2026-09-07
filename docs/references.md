@@ -1,13 +1,13 @@
 # Citations and acknowledgements
 
 Use this page when preparing a manuscript, figure caption, data release, or
-software acknowledgement. Cite the three core entries for every VMDHole
+software acknowledgement. Cite the three core entries for every VMDPathFinder
 analysis. Then add only the entries for methods or quantities you report.
 
-## Cite for every VMDHole analysis
+## Cite for every VMDPathFinder analysis
 
-1. Ahangar, A. A. *VMDHole* (version used) [computer software].
-   <https://github.com/aminkvh/VMDHole>
+1. Ahangar, A. A. *VMDPathFinder* (version used) [computer software].
+   <https://github.com/aminkvh/VMDPathFinder>
 2. Humphrey, W., Dalke, A. & Schulten, K. "VMD: Visual Molecular Dynamics."
    *J. Mol. Graph.* **14**, 33-38 (1996).
    doi:[10.1016/0263-7855(96)00018-5](https://doi.org/10.1016/0263-7855(96)00018-5)
@@ -16,7 +16,7 @@ analysis. Then add only the entries for methods or quantities you report.
    Structural Models." *J. Mol. Graph.* **14**, 354-360 (1996).
    doi:[10.1016/S0263-7855(97)00009-X](https://doi.org/10.1016/S0263-7855(97)00009-X)
 
-Use the VMDHole version shown in **Help → Guide & Citations…**. If a versioned
+Use the VMDPathFinder version shown in **Help → Guide & Citations…**. If a versioned
 release DOI is available, use it in place of the repository URL.
 
 ## Add citations for the analyses used
@@ -50,7 +50,7 @@ release DOI is available, use it in place of the repository URL.
   for the Structural and Functional Annotation of Ion Channel Pores."
   *J. Mol. Biol.* **431**, 3353-3365 (2019).
   doi:[10.1016/j.jmb.2019.06.003](https://doi.org/10.1016/j.jmb.2019.06.003)
-- **VMDHole pore-lining or pore-facing assignments:** cite VMDHole. These
+- **VMDPathFinder pore-lining or pore-facing assignments:** cite VMDPathFinder. These
   surface-distance and orientation assignments are not PoreWalker
   classifications. Cite PoreWalker only when making a direct comparison:
   Pellegrini-Calace, M., Maiwald, T. & Thornton, J.M. "PoreWalker."

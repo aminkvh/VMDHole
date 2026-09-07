@@ -1,5 +1,5 @@
 C ===================================================================
-C VMDHole modification of HOLE 2's concal.f.
+C VMDPathFinder modification of HOLE 2's concal.f.
 C
 C Single change: the 'initial point probe radius ... less than probe
 C radius' notice can be RECORDED instead of printed. holcal_par's pass-1
@@ -230,7 +230,7 @@ C number of points eliminated, elimination distance
 
 
 
-C VMDHole notice-capture channel (see header). Threadprivate so each worker
+C VMDPathFinder notice-capture channel (see header). Threadprivate so each worker
 C in holcal_par's prepass records its own call; holcal_par copies the result
 C out under the plane index it owns. Declared identically in holcal_par.f.
       LOGICAL                   CN_REC, CN_FLAG
@@ -262,7 +262,7 @@ D    & 'D-line pore radius of supplied CENTRE = ', -NEWENG, ' Angs'
 
 C is the hole pore radius less than the probe radius - if so cannot do connolly
        IF (-NEWENG.LT.CONNR(1)) THEN
-C VMDHole: record instead of print when called from the parallel prepass.
+C VMDPathFinder: record instead of print when called from the parallel prepass.
 	   IF (CN_REC) THEN
 	      CN_FLAG = .TRUE.
 	      CN_VAL  = -NEWENG

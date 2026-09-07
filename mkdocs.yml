@@ -1,7 +1,7 @@
 use_directory_urls: false
-site_name: VMDHole
+site_name: VMDPathFinder
 site_description: Pore and tunnel analysis inside VMD using HOLE and MOLE 2, with live 3D surfaces.
-repo_url: https://github.com/aminkvh/VMDHole
+repo_url: https://github.com/aminkvh/VMDPathFinder
 edit_uri: edit/main/docs/
 docs_dir: docs
 
@@ -45,7 +45,7 @@ nav:
           - Overview: tutorials.md
           - Pore - gramicidin A: pore-tutorial.md
           - Tunnel - cholesterol oxidase: tunnel-tutorial.md
-  - Using VMDHole:
+  - Using VMDPathFinder:
       - Workflows:
           - Overview: workflows.md
           - Pore: pore-mode.md

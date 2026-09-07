@@ -1,9 +1,9 @@
 # AUTO-GENERATED accelerated variant of compute_hydration (see gen_accel_compute_hydration.py).
 # Phase A COG+projection and Phase C binning are replaced with calls to
 # native/hydro_project; every other line is extracted VERBATIM from the
-# real vmdhole.tcl (never edited). Requires $::HP_ACCEL_BIN and
+# real vmdpathfinder.tcl (never edited). Requires $::HP_ACCEL_BIN and
 # $::HP_ACCEL_BATCH_DIR to be set before calling.
-proc ::VMDHole::_accel_compute_hydration {} {
+proc ::VMDPathFinder::_accel_compute_hydration {} {
     # Water-density + free-energy profile along the pore (Klesse, Rao, Sansom &
     # Tucker 2019, J Mol Biol 431:3353; Help > References). rho(s) = <waters in
     # bin>/(pi*R(s)^2*dz) per frame; E = -kT ln(rho/rho_bulk), both averaged
@@ -27,7 +27,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
         # per-frame one, and this costs two atomselects per sampled water.
         set _bf [lrange $result_frames 0 4]
         if {[catch {measure_bulk_density $_bulk_mol $_bf $wsel} _bres]} {
-            vmdcon -warn "VMDHole: bulk-density measurement failed ($_bres) - using the literature value."
+            vmdcon -warn "VMDPathFinder: bulk-density measurement failed ($_bres) - using the literature value."
             set bulk ""
         } else {
             set bulk $_bres
@@ -43,7 +43,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # written. Printing it is the only way that path is visible.
     set _bulk_csel $wsel
     if {$_bulk_mol >= 0} { catch {set _bulk_csel [_canonical_water_sel $_bulk_mol [lindex $result_frames 0] $wsel]} }
-    vmdcon -info "VMDHole: bulk water density = [format %.5f $bulk] A^-3 ($_bulk_src; counted over \"$_bulk_csel\")"
+    vmdcon -info "VMDPathFinder: bulk water density = [format %.5f $bulk] A^-3 ($_bulk_src; counted over \"$_bulk_csel\")"
     set dz [expr {[info exists state(water_dz)] ? $state(water_dz) : 1.0}]
     if {![string is double -strict $dz] || $dz <= 0} { set dz 1.0 }
     # Density sampling cap (Å): a local cylindrical probe radius. HOLE's pore radius
@@ -124,7 +124,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     set fixed_axis {}
     # axis_use selects HOW each frame's binning axis is derived:
     #   frame         - THIS frame's own resolved CPOINT+CVECT, read back from the
-    #                   vmdhole_frame_axis.dat that run_analysis writes UNCONDITIONALLY
+    #                   vmdpathfinder_frame_axis.dat that run_analysis writes UNCONDITIONALLY
     #                   next to every frame's results (_frame_axis_persisted). This is
     #                   what Track/Stabilize actually produced for that frame, so it is
     #                   correct whether the axis is static, origin-drifting or fully
@@ -137,7 +137,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     #                   bins on HOLE's ACTUAL search direction instead of re-deriving a noisier
     #                   per-frame PCA estimate of a direction already known exactly.
     #   pca           - per-frame PCA of that frame's own centerline. Now only for results
-    #                   dirs that predate vmdhole_frame_axis.dat AND have no manifest, or
+    #                   dirs that predate vmdpathfinder_frame_axis.dat AND have no manifest, or
     #                   when the user turns the CPOINT/CVECT anchor off.
     #
     # There is ALWAYS a real cvect - HOLE cannot search without one, and a blank
@@ -196,7 +196,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
         } elseif {$fixed_axis eq {}} {
             set axis_use "pca"; set fixed_axis {}
             set _anchor_note " CPOINT/CVECT anchor requested but unavailable (no manifest, no per-frame axis) - used per-frame PCA instead."
-            vmdcon -info "VMDHole: hydration -$_anchor_note"
+            vmdcon -info "VMDPathFinder: hydration -$_anchor_note"
         } elseif {!$_odrift && !$_cdrift} {
             # Static axis for the whole run: the one manifest CPOINT+CVECT lands every frame
             # on HOLE's exact "coord" grid.
@@ -209,13 +209,13 @@ proc ::VMDHole::_accel_compute_hydration {} {
             set axis_use "manifest_dir"
         } else {
             # The axis DIRECTION genuinely evolves per frame (Stabilize CVECT /
-            # rotation) and this run is too old to carry vmdhole_frame_axis.dat,
+            # rotation) and this run is too old to carry vmdpathfinder_frame_axis.dat,
             # so the real per-frame direction is not recoverable and a fit from
             # each frame's own spheres is all that is left. Re-running HOLE would
             # write the per-frame axes and take the "frame" branch above.
             set axis_use "pca"; set fixed_axis {}
             set _anchor_note " This run's axis DIRECTION moves per frame (Stabilize CVECT) and predates the per-frame axis record - used per-frame PCA instead. Re-run HOLE to bin on the real per-frame axis."
-            vmdcon -info "VMDHole: hydration -$_anchor_note"
+            vmdcon -info "VMDPathFinder: hydration -$_anchor_note"
         }
     }
     set bincount [dict create]
@@ -228,7 +228,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # Per-frame density storage: list of dicts, one per processed frame.
     # Each dict: {frame <f> bins <dict bin->count>}
     set perframe_raw {}
-    vmdcon -info "VMDHole: hydration starting — $nframes frame(s)  water=\"$wsel\"  bulk=$bulk /A^3  T=$state(water_temp) K"
+    vmdcon -info "VMDPathFinder: hydration starting — $nframes frame(s)  water=\"$wsel\"  bulk=$bulk /A^3  T=$state(water_temp) K"
     # PHASE A (sequential - the only part that needs VMD/atomselect): per
     # frame, find the qualifying waters' axial coordinates (qco). This is the
     # CHEAP ~15% of the total cost (measured); the expensive part is the
@@ -847,7 +847,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
             set _gzero_note [format "NEITHER end of the profile is bulk solvent (%.3f x and %.3f x bulk) - G(z) is left on the raw -kT*ln(rho) scale, so only DIFFERENCES along it are meaningful, not absolute values" $_anchor_olo $_anchor_ohi]
         }
         if {$_gzero_note ne ""} {
-            vmdcon -warn "VMDHole hydration: $_gzero_note. Extend the water selection, or shorten the profile (ENDRAD) so it stops inside solvent."
+            vmdcon -warn "VMDPathFinder hydration: $_gzero_note. Extend the water selection, or shorten the profile (ENDRAD) so it stops inside solvent."
         }
         set _shifted {}
         foreach g $energy { lappend _shifted [expr {$g + $shift}] }
@@ -885,7 +885,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     catch {
         set _f0 [lindex $result_frames 0]
         set _root [file dirname [dict get $results $_f0 run_dir]]
-        set _hf [open [file join $_root vmdhole_hydration.dat] w]
+        set _hf [open [file join $_root vmdpathfinder_hydration.dat] w]
         puts $_hf $hydration_data
         close $_hf
     }
@@ -951,7 +951,7 @@ proc ::VMDHole::_accel_compute_hydration {} {
     # property pickers, which otherwise hide them until hydration exists.
     catch {refresh_property_scheme_menus}
     set state(status) "Hydration: $total_w water-in-pore counts over $nfdata frame(s); selection \"$wsel\".$_anchor_note[expr {$_gzero_note ne "" ? " G=0 reference: $_gzero_note." : ""}]"
-    vmdcon -info "VMDHole: hydration complete — $total_w water-in-pore counts over $nfdata frame(s) ($nfwater with water)."
+    vmdcon -info "VMDPathFinder: hydration complete — $total_w water-in-pore counts over $nfdata frame(s) ($nfwater with water)."
     return 1
 }
 

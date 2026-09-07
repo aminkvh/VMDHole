@@ -78,7 +78,7 @@ jobs:
 
       # Linux additionally gets the FULL acceleration: the pinned HOLE 2 source
       # is cloned, our Fortran patches applied, and the accelerated hole +
-      # sph_process built (build-vmdhole-optimized.sh; default -O2, portable -
+      # sph_process built (build-vmdpathfinder-optimized.sh; default -O2, portable -
       # the script itself refuses -march=native for FP-identity reasons).
       # macOS runners have no gfortran by default, so the mac bundle stays the
       # three C tools - stated in its README.
@@ -86,12 +86,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update && sudo apt-get install -y gfortran
-          sh native/build-vmdhole-optimized.sh "" "$PWD/accel_out"
+          sh native/build-vmdpathfinder-optimized.sh "" "$PWD/accel_out"
 
       - name: Stage the artefacts with their provenance
         shell: bash
         run: |
-          d="vmdhole-binaries-${{ matrix.tag }}"
+          d="vmdpathfinder-binaries-${{ matrix.tag }}"
           mkdir -p "$d"
           # MinGW-w64 always appends .exe; the plugin's discovery is .exe-aware
           # (_find_exe), so the bundle ships the suffixed names as built.
@@ -102,7 +102,7 @@ jobs:
             # indicator reads.
             cp accel_out/hole accel_out/sph_process accel_out/sos_triangle \
                accel_out/mole_tunnel_engine "$d/"
-            cp accel_out/vmdhole_accel.manifest "$d/"
+            cp accel_out/vmdpathfinder_accel.manifest "$d/"
           else
             cp "native/sos_triangle_fast$x" "$d/sos_triangle$x"
             cp "native/mole_tunnel_engine$x" "$d/"
@@ -113,7 +113,7 @@ jobs:
           # a working radius file so a from-zip user can run without a separate
           # HOLE install (HOLE 2's own simple.rad, Apache-2.0)
           mkdir -p "$d/rad"
-          cp vmdhole/tests/fixtures/simple.rad "$d/rad/"
+          cp vmdpathfinder/tests/fixtures/simple.rad "$d/rad/"
           # sos_triangle_fast is MODIFIED Apache-2.0 HOLE code: distributing
           # the binary requires the Apache licence text and NOTICE to travel
           # with it, not only the project's own MIT licence.
@@ -121,19 +121,19 @@ jobs:
           cp native/LICENSE "$d/LICENSE-Apache-2.0"
           cp native/NOTICE  "$d/NOTICE"
           {
-            echo "VMDHole portable binaries - ${{ matrix.tag }}"
+            echo "VMDPathFinder portable binaries - ${{ matrix.tag }}"
             echo
             echo "Built from $GITHUB_SHA."
             echo
             echo "Included:"
             if [ -d accel_out ]; then
-              echo "  hole                HOLE 2 with the VMDHole acceleration patches"
+              echo "  hole                HOLE 2 with the VMDPathFinder acceleration patches"
               echo "  sph_process         patched (parallel surface cull)"
               echo "  sos_triangle        the fast triangulation, the marching-cubes mesher,"
               echo "                      the Nelder-Mead search and the Connolly classifier"
               echo "  mole_tunnel_engine  tunnel search"
               echo "  hydro_project       hydration acceleration"
-              echo "  vmdhole_accel.manifest  read by the plugin's acceleration indicator"
+              echo "  vmdpathfinder_accel.manifest  read by the plugin's acceleration indicator"
               echo "  rad/simple.rad      HOLE radius file, so no separate install is needed"
             else
               echo "  sos_triangle        the fast triangulation (drop-in for stock)"
@@ -145,35 +145,35 @@ jobs:
               echo "  prebuilt for this platform - build locally (macOS: gfortran"
               echo "  via Homebrew; Windows: MSYS2/MinGW-w64, see"
               echo "  docs/installation.md):"
-              echo "      ./native/build-vmdhole-optimized.sh"
+              echo "      ./native/build-vmdpathfinder-optimized.sh"
             fi
             echo
             echo "Unpack this folder next to the plugin zip's install.sh (as"
             echo "./binaries/ or under its unpacked name) and the installer"
-            echo "points VMDHole at it - or select the files by hand under"
+            echo "points VMDPathFinder at it - or select the files by hand under"
             echo "File > Settings."
             echo "For the complete optimized binary set, build locally from the"
-            echo "matching VMDHole source release:"
+            echo "matching VMDPathFinder source release:"
             echo
-            echo "    ./native/build-vmdhole-optimized.sh"
+            echo "    ./native/build-vmdpathfinder-optimized.sh"
           } > "$d/README.txt"
           tar czf "$d.tar.gz" "$d"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: vmdhole-binaries-${{ matrix.tag }}
-          path: vmdhole-binaries-${{ matrix.tag }}.tar.gz
+          name: vmdpathfinder-binaries-${{ matrix.tag }}
+          path: vmdpathfinder-binaries-${{ matrix.tag }}.tar.gz
 
       - name: Attach to the release
         if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
-          files: vmdhole-binaries-${{ matrix.tag }}.tar.gz
+          files: vmdpathfinder-binaries-${{ matrix.tag }}.tar.gz
 
   plugin-zip:
     # The headline downloads: ONE zip per OS containing the plugin package
-    # PLUS that OS's compiled binaries as vmdhole/binaries/ (the layout
+    # PLUS that OS's compiled binaries as vmdpathfinder/binaries/ (the layout
     # install.sh detects). The bare plugin-only zip is kept as the
     # any-other-platform fallback - it runs everywhere on the built-in Tcl
     # engines.
@@ -182,32 +182,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Builds packaging/vmdhole.zip fresh from `git ls-files` at this commit -
+      # Builds packaging/vmdpathfinder.zip fresh from `git ls-files` at this commit -
       # nothing checked in to rebuild from and nothing that can drift, since
       # there is only one source tree. This also runs the release-integrity
       # checks against what it just built (integrity always checks the
       # plugin-only build; the bundles below add binaries/ on top of the
       # exact staging the checks passed).
       - name: Build and verify the plugin zip
-        run: sh vmdhole/tests/test_release_integrity.sh
+        run: sh vmdpathfinder/tests/test_release_integrity.sh
       - uses: actions/download-artifact@v4
         with:
-          pattern: vmdhole-binaries-*
+          pattern: vmdpathfinder-binaries-*
           path: wheels
           merge-multiple: true
       - name: Assemble one complete zip per OS
         run: |
           for tag in linux-x86_64 macos-arm64 windows-x86_64; do
-            tb="wheels/vmdhole-binaries-$tag.tar.gz"
+            tb="wheels/vmdpathfinder-binaries-$tag.tar.gz"
             [ -f "$tb" ] || { echo "no wheel for $tag (its build failed?) - skipping"; continue; }
             rm -rf wheels/unpack && mkdir wheels/unpack
             tar xzf "$tb" -C wheels/unpack
-            VMDHOLE_BINARIES_DIR="$(echo wheels/unpack/vmdhole-binaries-$tag)"               sh packaging/make_zip.sh
-            mv packaging/vmdhole.zip "vmdhole-$tag.zip"
+            VMDPATHFINDER_BINARIES_DIR="$(echo wheels/unpack/vmdpathfinder-binaries-$tag)"               sh packaging/make_zip.sh
+            mv packaging/vmdpathfinder.zip "vmdpathfinder-$tag.zip"
           done
           # rebuild the bare plugin-only zip last so the artifact below is clean
           sh packaging/make_zip.sh
-          ls -la vmdhole-*.zip packaging/vmdhole.zip
+          ls -la vmdpathfinder-*.zip packaging/vmdpathfinder.zip
       # Only the per-OS bundles are published - a plugin-only zip proved
       # redundant (anyone on another platform clones the repo, and the
       # bundles degrade gracefully: the binaries are optional at runtime).
@@ -215,11 +215,11 @@ jobs:
       # validate the exact staging the bundles are layered onto.
       - uses: actions/upload-artifact@v4
         with:
-          name: vmdhole-plugin
-          path: vmdhole-*.zip
+          name: vmdpathfinder-plugin
+          path: vmdpathfinder-*.zip
       - name: Attach to the release
         if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
-          files: vmdhole-*.zip
+          files: vmdpathfinder-*.zip

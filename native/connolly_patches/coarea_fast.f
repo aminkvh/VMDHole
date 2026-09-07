@@ -184,7 +184,7 @@ C by adding all 8 of the EDBLCK's together can assess square as white, black or 
 
       INTEGER			TELLN, TELLNNOT
 
-C --- PERF FORK (coarea_fast.f, VMDHole project): 2D spatial grid over the
+C --- PERF FORK (coarea_fast.f, VMDPathFinder project): 2D spatial grid over the
 C active circles, built ONCE per call (SCONUM circles, from CONCAL's flood
 C fill - typically hundreds), then queried for EVERY square in BOTH the
 C coarse pass (loop 40, below) and every refinement cycle (loop 70/80).

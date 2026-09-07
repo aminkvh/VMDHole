@@ -271,7 +271,7 @@ molecules that never crossed.
 None of these views is a full permeation count.
 Select **Permeation** to count complete bulk-to-bulk crossings along the
 per-frame pore axis. Supply bulk planes, the saved-frame interval, and an
-applied voltage only if they are physically defined. VMDHole warns
+applied voltage only if they are physically defined. VMDPathFinder warns
 for coarse sampling, wrapped protein coordinates, and non-orthorhombic cells;
 re-image or treat such counts as unvalidated.
 
@@ -293,7 +293,7 @@ should be accompanied by CSV data and the run parameters listed in the
 
 ## Citations
 
-For a publication, cite VMDHole, VMD, and HOLE. Add the method citation for the
+For a publication, cite VMDPathFinder, VMD, and HOLE. Add the method citation for the
 features used, such as hydration, property scales, ellipse analysis, Connolly
 surfaces, or conductance estimates. Use **Help → Guide & Citations… →
 Citations** in the plugin or the [reference list](references.md).

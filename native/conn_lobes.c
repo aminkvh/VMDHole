@@ -1,9 +1,9 @@
 /* conn_lobes.c - fast replacement for the plugin's two pure-Tcl hot loops in
  * the Connolly lateral-opening ("lobe") coloring path: classifying every
  * .sph dot as pore-or-lateral and clustering the lateral dots into lobes
- * (proc ::VMDHole::_conn_classify_sph + _conn_frame_lobes), and assigning
+ * (proc ::VMDPathFinder::_conn_classify_sph + _conn_frame_lobes), and assigning
  * each triangle of the unified surface mesh to the region its nearest dot
- * belongs to (proc ::VMDHole::_split_conn_mesh_by_region). Measured on a
+ * belongs to (proc ::VMDPathFinder::_split_conn_mesh_by_region). Measured on a
  * real 108,650-dot Connolly frame: classify+cluster 1.34s, split 2.12s in
  * Tcl - both are the SAME arithmetic this file does, line for line, just
  * compiled instead of interpreted with per-token string operations.
@@ -525,7 +525,7 @@ static void usage(const char *a0) {
         a0, a0);
 }
 
-#ifdef VMDHOLE_MULTICALL
+#ifdef VMDPATHFINDER_MULTICALL
 int conn_lobes_main(int argc, char **argv)
 #else
 int main(int argc, char **argv)

@@ -22,7 +22,7 @@ This document describes each change for a reader/reviewer. Line-level rationale
 is also in the source comments.
 
 > **Additive feature (opt-in):** the binary also gains a hydrophobicity-colouring
-> mode used by the VMDHole plugin (`--hydro-atoms`, see the last section). It is
+> mode used by the VMDPathFinder plugin (`--hydro-atoms`, see the last section). It is
 > **inert unless that flag is passed** — with the normal `-s`/`-v` invocation the
 > program is still byte-for-byte the upstream output, so the drop-in guarantee
 > above is unaffected.
@@ -139,10 +139,10 @@ It is important not to conflate these.
   > ⚠️ **The benchmark inputs are not in the repository yet**: `9HNR.pdb` is
   > untracked and `hole_output_9HNR/` is `.gitignore`d as generated output, so a
   > clean clone cannot run this stage today. See "Benchmark inputs are not
-  > committed" in `vmdhole/HANDOFF.md`. That is a packaging gap to close before
+  > committed" in `vmdpathfinder/HANDOFF.md`. That is a packaging gap to close before
   > submission, not a property of the measurement.
 
-* **End-to-end speedup (per analyzed frame).** Inside VMDHole each frame runs a
+* **End-to-end speedup (per analyzed frame).** Inside VMDPathFinder each frame runs a
   three-stage pipeline — `hole` (channel search) → `sph_process` (surface
   sampling) → `sos_triangle` (triangulation).
 
@@ -240,7 +240,7 @@ Two things this makes explicit that the old ~2.9x figure did not:
 * **Across-frame parallelism (already in the plugin).** A single `sos_triangle`
   invocation is inherently sequential (the advancing front depends on the dots
   already placed), so it is not internally multi-threaded. However, a trajectory
-  produces one independent surface *per frame*, and the VMDHole plugin already
+  produces one independent surface *per frame*, and the VMDPathFinder plugin already
   builds these in parallel across CPU cores (`prebuild_surfaces_parallel` /
   `run_shell_pool`). This is the embarrassingly-parallel part of the workload
   and scales near-linearly with cores; the optimisation here reduces the
@@ -250,7 +250,7 @@ Two things this makes explicit that the old ~2.9x figure did not:
 ## Verification
 
 Output was confirmed byte-for-byte identical to the unmodified upstream program
-on: the 50 real `.sos` surfaces under `vmdhole/hole_output/`; HOLE's own
+on: the 50 real `.sos` surfaces under `vmdpathfinder/hole_output/`; HOLE's own
 example structures (gramicidin 1grm, cholera toxin 1chb) run through the full
 `hole → sph_process → sos_triangle` pipeline; and dot densities 5–30. For
 surfaces where the as-shipped upstream binary overflows its 30000-polygon cap
@@ -260,7 +260,7 @@ yourself with `./verify.sh`.
 
 ## Additive feature: hydrophobicity colouring (opt-in)
 
-The VMDHole plugin can colour the pore surface by the hydrophobicity of the
+The VMDPathFinder plugin can colour the pore surface by the hydrophobicity of the
 nearest channel-lining residues (Kyte–Doolittle or Wimley–White). It originally
 did this in a pure-Tcl post-pass (`colorize_hydrophobic`) that re-read the mesh
 and, for every triangle, searched the channel spheres — fine for one frame but a
@@ -298,7 +298,7 @@ Part D checks `--points` emits exactly the trinorm mesh's unique vertices).
 For each sphere, the mean hydropathy of atoms within `r + 3 Å`; the spheres are
 then thinned to ≤200 (keeping the last). Each emitted triangle is coloured by
 its centroid's nearest thinned sphere, mapped to a VMD colour name by the same
-thresholds as `::VMDHole::hydro_to_vmd_color`. The triangle centroid is taken
+thresholds as `::VMDPathFinder::hydro_to_vmd_color`. The triangle centroid is taken
 from the coordinates **rounded to the 3 decimals the mesh is written with**, so
 the result is *bit-identical* to the Tcl path (which reads vertices back from the
 printed mesh), not merely close.
@@ -333,7 +333,7 @@ consumes the rest of argv (same convention as `--batch`'s global flags).
 
 ### Verification
 
-Tested against real generated surfaces (`vmdhole/hole_output_step5_assembly.hmr/`,
+Tested against real generated surfaces (`vmdpathfinder/hole_output_step5_assembly.hmr/`,
 three frames, ~1450 spheres / ~17-20k mesh lines each): ran each frame through
 the existing single-job `--recolor --hydro-values` path, then through
 `--batch-recolor` with the same three jobs **listed out of generation order**
@@ -476,7 +476,7 @@ sphere/atom-count diversity, not one frame repeated), single-frame vs
 `--batch-asym-ellipse` (a 50-frame joblist in one process, and a 1-job list),
 `--asym-threads 1` vs the new auto-detected thread count, and `OMP_NUM_THREADS`
 overriding the auto-detect — all byte-identical (0 mismatches / 50 frames).
-`vmdhole/tests/test_accel_parity.sh`'s CLI dispatch-chain probes (which
+`vmdpathfinder/tests/test_accel_parity.sh`'s CLI dispatch-chain probes (which
 guard the exact `--asym-*` argument-parsing
 class of bug fixed at `sos_triangle_fast.c:3072`) still pass against a binary
 built from this source.
@@ -521,7 +521,7 @@ only measured on one frame - see "Verified byte-identical" above for where the
 **Diagnostic note, outside this file's scope:** 3.6 s/frame matches serial
 execution almost exactly, which is the strongest evidence for *why* the field
 report is slow. There are two distinct ways `_asym_ellipse_c`
-(`vmdhole.tcl:26159`) can end up serial, and this fix only covers one of them:
+(`vmdpathfinder.tcl:26159`) can end up serial, and this fix only covers one of them:
 
 1. `sos_triangle_has_feature asymthreads` returns false (a stale capability
    cache, or a deployed binary that predates the flag) → `--asym-threads` is
@@ -535,8 +535,8 @@ report is slow. There are two distinct ways `_asym_ellipse_c`
    slow deployment is hitting.
 
 A one-line check in a live plugin session tells which branch applies:
-`puts [::VMDHole::sos_triangle_has_feature asymthreads]` and
-`puts [::VMDHole::resolve_job_count]`.
+`puts [::VMDPathFinder::sos_triangle_has_feature asymthreads]` and
+`puts [::VMDPathFinder::resolve_job_count]`.
 
 Also note: `~/hole2/exe/sos_triangle` (the binary path the plugin's Settings
 dialog points at by default) was deliberately **not** rebuilt or replaced by
@@ -547,7 +547,7 @@ result (`native/build.sh`), a step outside this file's scope.
 ## Additive feature: Ion Flow water projection (`--ionflow-project`)
 
 Opt-in like every other additive mode: inert unless the flag is passed, so
-the `-s` drop-in guarantee is untouched. It is the C form of the VMDHole Ion
+the `-s` drop-in guarantee is untouched. It is the C form of the VMDPathFinder Ion
 Flow tab's per-frame water pass. For each candidate point (a water oxygen the
 plugin has already prefiltered into the scan cylinder with a VMD selection)
 it does what the plugin's Tcl loop does for an ion: offset from the frame's

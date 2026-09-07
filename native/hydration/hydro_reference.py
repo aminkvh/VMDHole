@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reference implementation of the plugin's hydrophobicity colouring.
 
-This is a faithful port of ::VMDHole::colorize_hydrophobic (the built-in Tcl
+This is a faithful port of ::VMDPathFinder::colorize_hydrophobic (the built-in Tcl
 path) used to validate that sos_triangle_fast's compiled --hydro output is
 identical. It also writes the per-frame atom sidecar exactly as the plugin's
 write_hydro_sidecar does, so the same file feeds both implementations.
@@ -10,7 +10,7 @@ Usage:
   hydro_reference.py sidecar  SPH PDB SCHEME > atoms.dat
   hydro_reference.py colorize SPH ATOMS BASE_PLOT SCHEME > colors_per_triangle.txt
 
-The KD/WW scales and colour thresholds below MUST match vmdhole.tcl.
+The KD/WW scales and colour thresholds below MUST match vmdpathfinder.tcl.
 """
 import sys, math
 

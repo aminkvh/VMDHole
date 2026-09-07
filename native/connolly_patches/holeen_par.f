@@ -1,7 +1,7 @@
       SUBROUTINE HOLEEN( CENTRE, ENERGY, IAT1, IAT2, IAT3, DAT2, DAT3,
      &                   ATMAX, ATNO, ATXYZ, ATVDW, CUTSIZE)
       IMPLICIT NONE
-C PERF FORK (VMDHole): the original blanket SAVE made ALL locals static,
+C PERF FORK (VMDPathFinder): the original blanket SAVE made ALL locals static,
 C which races when HOLEEN is called from multiple OpenMP threads (parallel
 C CONNOLLY). Only the cutoff-list cache actually needs persistence, so SAVE
 C is narrowed to it below and marked THREADPRIVATE (each thread its own
@@ -293,7 +293,7 @@ C change sign of energy
 
 55555 RETURN
 
-C PERF FORK (VMDHole): reset the persistent cutoff-list cache to its
+C PERF FORK (VMDPathFinder): reset the persistent cutoff-list cache to its
 C program-start state (CUTSTORE(0)=0 forces a rebuild on the next call).
 C Used by holcal_par.f's two-pass CONNOLLY driver so Pass 2 begins with a
 C fresh cache, matching a normal single-pass run's HOLEEN cache history

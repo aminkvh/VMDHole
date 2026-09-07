@@ -17,7 +17,7 @@ set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
 ENG="$ROOT/native/mole_tunnel_engine"
-AT="$ROOT/vmdhole/tests/fixtures/mole_atoms_1eri.txt"
+AT="$ROOT/vmdpathfinder/tests/fixtures/mole_atoms_1eri.txt"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "  PASS  $1"; }

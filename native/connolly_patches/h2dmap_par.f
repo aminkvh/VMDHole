@@ -4,7 +4,7 @@
      &                 ATMAX, ATNO, ATBRK, ATRES,
      &                 ATCHN, ATRNO, ATXYZ, ATVDW, ATBND)
       IMPLICIT NONE
-C PERF FORK (VMDHole): the wall-distance map loop is run in parallel over
+C PERF FORK (VMDPathFinder): the wall-distance map loop is run in parallel over
 C angle. It is 10 HOLEEN calls per grid point (the DO 55 refinement) against
 C one for the property loop below, so it is where the time goes: measured
 C 2.26 s of a 2.45 s first unrolled-map draw on a 17k-atom channel.

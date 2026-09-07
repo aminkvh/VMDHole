@@ -7,7 +7,7 @@
 # loadavg_at_start: 3.82 4.15 3.88  allow_noisy: 1
 # load_at_start: 3.82 4.15 3.88
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
-# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdhole_repro_rad_660453/simple.rad
+# bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_660453/simple.rad
 # What is swept: the PLUGIN's own job pool (state(parallel_jobs)), not an xargs
 #   replay of pre-extracted inputs. Deliverable is 'calc' (a parsed radius profile
 #   per frame), which includes extracting each frame's PDB from the trajectory -

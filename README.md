@@ -1,35 +1,35 @@
-# VMDHole
+# VMDPathFinder
 
 <p align="center">
-  <img src="docs/images/logo.png" alt="VMDHole logo showing a molecular pore and pathway" width="900">
+  <img src="docs/images/logo.png" alt="VMDPathFinder logo showing a molecular pore and pathway" width="900">
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="VMD plugin" src="https://img.shields.io/badge/VMD-plugin-informational">
-  <a href="https://aminkvh.github.io/VMDHole/"><img alt="Documentation" src="https://img.shields.io/badge/docs-github.io-teal"></a>
+  <a href="https://aminkvh.github.io/VMDPathFinder/"><img alt="Documentation" src="https://img.shields.io/badge/docs-github.io-teal"></a>
   <a href="https://doi.org/10.5281/zenodo.22089390"><img src="https://zenodo.org/badge/1284504875.svg" alt="DOI"></a>
 </p>
 
-VMDHole is a [VMD](https://www.ks.uiuc.edu/Research/vmd/) plugin for analysing
+VMDPathFinder is a [VMD](https://www.ks.uiuc.edu/Research/vmd/) plugin for analysing
 pores and molecular tunnels. **Pore mode** runs
 [HOLE](https://www.holeprogram.org/) along a specified channel axis. **Tunnel
 mode** searches from a buried point for routes to the molecular surface. Results
 remain linked to the VMD structure and
 trajectory.
 
-[Documentation](https://aminkvh.github.io/VMDHole/) ·
+[Documentation](https://aminkvh.github.io/VMDPathFinder/) ·
 [Install](docs/installation.md) ·
 [First analysis](docs/quickstart.md) ·
 [Parameter reference](docs/parameters.md)
 
-## What VMDHole adds
+## What VMDPathFinder adds
 
 <p align="center">
-  <img src="docs/images/Header.png" alt="VMDHole property coloring on GABAAR" width="900">
+  <img src="docs/images/Header.png" alt="VMDPathFinder property coloring on GABAAR" width="900">
 </p>
 
-VMDHole brings pore and tunnel analysis into one trajectory-aware VMD workflow. Instead of treating structures, pathways, hydration, and visualization as separate tasks, it keeps them linked to the same molecule and simulation frame.
+VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD workflow. Instead of treating structures, pathways, hydration, and visualization as separate tasks, it keeps them linked to the same molecule and simulation frame.
 
 * **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and chemical properties.
 
@@ -51,26 +51,26 @@ Full numbers, provenance and the replication kit: [paper/README.md](paper/README
 
 ## Install
 
-VMDHole is a Tcl plugin, but native analysis binaries are strongly recommended.
+VMDPathFinder is a Tcl plugin, but native analysis binaries are strongly recommended.
 The bundled Tcl fallbacks maximize compatibility; they are much slower and are
 not the recommended path for trajectories or production calculations.
 
 ### 1. Install the plugin
 
-1. Download and extract a VMDHole release, or clone this repository.
-2. Add the directory containing `vmdhole` to VMD's Tcl path and load the
+1. Download and extract a VMDPathFinder release, or clone this repository.
+2. Add the directory containing `vmdpathfinder` to VMD's Tcl path and load the
    package from `.vmdrc`:
 
    ```tcl
-   lappend auto_path /absolute/path/to/VMDHole
-   package require vmdhole 1.0
+   lappend auto_path /absolute/path/to/VMDPathFinder
+   package require vmdpathfinder 1.0
    ```
 
-3. Restart VMD and open **Extensions → Analysis → VMDHole**.
+3. Restart VMD and open **Extensions → Analysis → VMDPathFinder**.
 
 ### 2. Install the native binaries (highly recommended)
 
-Use the binary bundle attached to the same VMDHole release when one is
+Use the binary bundle attached to the same VMDPathFinder release when one is
 available for your operating system and CPU. For the best performance and
 compatibility, rebuild the native tools locally.
 
@@ -85,7 +85,7 @@ Local-build requirements:
 From the repository, run:
 
 ```sh
-./native/build-vmdhole-optimized.sh
+./native/build-vmdpathfinder-optimized.sh
 ```
 
 With no argument, the script downloads the pinned HOLE 2 source and builds into
@@ -93,10 +93,10 @@ With no argument, the script downloads the pinned HOLE 2 source and builds into
 location, pass either absolute or relative paths:
 
 ```sh
-./native/build-vmdhole-optimized.sh /any/path/to/hole2/src /any/output/path
+./native/build-vmdpathfinder-optimized.sh /any/path/to/hole2/src /any/output/path
 ```
 
-In VMDHole, open **File → Settings** and select the resulting `hole`,
+In VMDPathFinder, open **File → Settings** and select the resulting `hole`,
 `sph_process`, `sos_triangle` (which also carries the marching-cubes mesher, the Nelder-Mead search and the Connolly classifier), and `mole_tunnel_engine` executables.
 
 See the [installation guide](docs/installation.md) for platform requirements,
@@ -107,10 +107,10 @@ binary choices, verification, and upgrades.
 ### Pore
 
 The distribution includes gramicidin A at
-`vmdhole/1GRM.pdb`.
+`vmdpathfinder/1GRM.pdb`.
 
 1. Load the PDB in VMD.
-2. Open VMDHole and select **Pore** mode.
+2. Open VMDPathFinder and select **Pore** mode.
 3. Set **Selection** to `all` and **Frames** to `now`.
 4. Keep the proposed `CPOINT` and `CVECT`, or define the direction with the
    **⌖** dialog beside `CVECT` (two points, or a stick that tilts it).
@@ -120,7 +120,7 @@ The distribution includes gramicidin A at
 
 ### Tunnel
 
-1. Load `vmdhole/1MXT.pdb` in VMD.
+1. Load `vmdpathfinder/1MXT.pdb` in VMD.
 2. Select **Tunnel**, set **Selection** to `protein`, and set **Frames** to
    `now`.
 3. Enable **Auto-detect origins (scan whole structure)**.
@@ -150,15 +150,15 @@ claims with suitable simulation or experimental data.
 
 ## Citation and notices
 
-For every VMDHole analysis, cite VMDHole, VMD, and HOLE. Additional citations
+For every VMDPathFinder analysis, cite VMDPathFinder, VMD, and HOLE. Additional citations
 depend on the features used, for example MOLE 2 for tunnel searches, CAVER 3.0
 for tunnel clustering, and CHAP for CHAP-compatible hydration analysis. Open
 **Help → Guide & Citations… → Citations** in the plugin or consult
 [References](docs/references.md) for the exact method-specific references.
 
-VMDHole's original plugin code is MIT-licensed. The installed folder also
+VMDPathFinder's original plugin code is MIT-licensed. The installed folder also
 contains a pure-Tcl derivative of Apache-2.0 HOLE 2 code; retain
-`vmdhole/LICENSE-Apache-2.0.txt` and `vmdhole/NOTICE.md`. The optional
+`vmdpathfinder/LICENSE-Apache-2.0.txt` and `vmdpathfinder/NOTICE.md`. The optional
 `native` derivative has its own `LICENSE` and `NOTICE`. See
-[LICENSE](LICENSE), [vmdhole/NOTICE.md](vmdhole/NOTICE.md), and
+[LICENSE](LICENSE), [vmdpathfinder/NOTICE.md](vmdpathfinder/NOTICE.md), and
 [native/NOTICE](native/NOTICE).

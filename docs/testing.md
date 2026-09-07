@@ -1,6 +1,6 @@
 # Testing
 
-VMDHole's tests live in three tiers, plus a set of native byte-identity
+VMDPathFinder's tests live in three tiers, plus a set of native byte-identity
 verifications. Each tier exists for a different question, needs different
 prerequisites, and is safe to run at a different frequency. Everything here
 follows two house rules:
@@ -12,7 +12,7 @@ follows two house rules:
    suite the per-group defect catalogue and the RED-verification statement
    live in `run_tests.sh`'s own header.
 2. **A test that genuinely cannot run prints `SKIP:` at column 0 and exits
-   0.** The release gate (`VMDHOLE_RELEASE=1`) anchors on that form to tell
+   0.** The release gate (`VMDPATHFINDER_RELEASE=1`) anchors on that form to tell
    "checked nothing" from a real pass;
    `tests/unit/test_skip_message_contract.sh` polices it.
 
@@ -21,8 +21,8 @@ follows two house rules:
 | Tier | Where | Question it answers | Needs | Run it with |
 |---|---|---|---|---|
 | Unit regression | `tests/unit/` | one defect each, in isolation | `sh`, a C compiler, `tclsh`; Tk + an X display for the GUI smoke test | `sh tests/unit/run_unit_tests.sh` |
-| Main suite | `vmdhole/tests/` | the plugin, end to end — 23 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdhole/tests/run_tests.sh` |
-| Pure-Tcl engine | `vmdhole/hole_tcl/tests/` | the Tcl HOLE engine vs a reference binary | a reference `hole` build | `vmdhole/hole_tcl/tests/run_all.sh` (`profile_vs_reference.sh <pdb>` is the by-hand comparison harness) |
+| Main suite | `vmdpathfinder/tests/` | the plugin, end to end — 23 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdpathfinder/tests/run_tests.sh` |
+| Pure-Tcl engine | `vmdpathfinder/hole_tcl/tests/` | the Tcl HOLE engine vs a reference binary | a reference `hole` build | `vmdpathfinder/hole_tcl/tests/run_all.sh` (`profile_vs_reference.sh <pdb>` is the by-hand comparison harness) |
 | Native verifications | `native/` | byte-identity of the accelerated binaries vs stock HOLE | stock `hole2` tree (source and/or binaries) | `native/verify.sh`, `native/connolly_patches/test_hcapen_cache.sh` |
 
 CI (`.github/workflows/tests.yml`) runs the unit suite under `xvfb-run`
@@ -33,17 +33,17 @@ release-integrity, and a hand-picked set of VMD-free main-suite groups.
 
 | Variable | Effect |
 |---|---|
-| `VMDHOLE_HOLE_EXE_DIR` | directory searched FIRST for `hole` and its siblings — honoured by the plugin's own discovery (`find_hole_exe`) and by the reference-dependent tests. Point it at `native/build` on a tree that builds there. |
-| `VMDHOLE_CONFIG_FILE` | overrides `~/.vmdhole_config`. `run_tests.sh` exports a per-run temp file automatically, so the suite never reads or rewrites the user's real config. |
+| `VMDPATHFINDER_HOLE_EXE_DIR` | directory searched FIRST for `hole` and its siblings — honoured by the plugin's own discovery (`find_hole_exe`) and by the reference-dependent tests. Point it at `native/build` on a tree that builds there. |
+| `VMDPATHFINDER_CONFIG_FILE` | overrides `~/.vmdpathfinder_config`. `run_tests.sh` exports a per-run temp file automatically, so the suite never reads or rewrites the user's real config. |
 | `VMD` / `VMD_BIN` | which VMD binary the wrappers drive (`VMD_BIN` for `test_gui_reachable.sh` and `test_adapter_schema.sh`, `VMD` elsewhere). |
-| `VMDHOLE_RELEASE=1` | a skipped group becomes a FAILURE — required before tagging. |
+| `VMDPATHFINDER_RELEASE=1` | a skipped group becomes a FAILURE — required before tagging. |
 | `EXE`, `STOCK`, `SRC` | `test_accel_parity.sh`'s accelerated dir, stock `sph_process`, and patched `hole2/src` tree. |
 | `GUI_TEST_*` | `test_gui_reachable.sh`'s fixture overrides (PDB, HET residue, selection, start point, engine). |
 
 ## Unit regression tests (`tests/unit/`)
 
 Small and self-contained: no VMD, no trajectory data, no gitignored fixture
-corpus, no network. The whole directory is new relative to VMDHole 1.0.0;
+corpus, no network. The whole directory is new relative to VMDPathFinder 1.0.0;
 tests marked **(review)** were added by the review-and-harden pass that also
 produced the fixes they guard.
 
@@ -60,12 +60,12 @@ produced the fixes they guard.
 | `test_headless_run_guards.sh` **(review)** | tunnel start-point validation and shell quoting (nan/inf included), busy/`_end_calc` restoration across a throw, the shared atomselect's lifetime in `run_analysis` |
 | `test_tsv_reader_parity.sh` | the threaded TSV reader skipping `_resolve_conn_radii` |
 | `test_tsv_publish_on_failure.sh` **(review)** | a failed profile parse truncating the good `hole_profile.tsv` beside it — both writers publish by rename only after a parse that produced rows |
-| `test_gui_smoke.sh` **(review)** | the GUI itself without VMD: `vmdhole.tcl` sourced under plain tclsh+Tk with VMD stubbed, the real widget tree built by the real `show_gui`, and scripted user actions asserting the close path, the busy guards, the deleted-molecule dialog class, tunnel gear-popup route pinning, and nan-tolerant option fields. Skips without Tk or a display; CI runs it under xvfb. |
+| `test_gui_smoke.sh` **(review)** | the GUI itself without VMD: `vmdpathfinder.tcl` sourced under plain tclsh+Tk with VMD stubbed, the real widget tree built by the real `show_gui`, and scripted user actions asserting the close path, the busy guards, the deleted-molecule dialog class, tunnel gear-popup route pinning, and nan-tolerant option fields. Skips without Tk or a display; CI runs it under xvfb. |
 
 `run_unit_tests.sh` globs `test_*.sh`, so a new test is picked up by being
 added — nothing to register.
 
-## Main suite groups (`vmdhole/tests/run_tests.sh`)
+## Main suite groups (`vmdpathfinder/tests/run_tests.sh`)
 
 Twenty groups. Each wrapper is a `test_<name>.sh`; the runner streams output,
 carries each group's real exit status out of the pipeline, names a failing
@@ -90,7 +90,7 @@ group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 | `test_tunnel_import` | tunnel Save/Import round-trips byte-identically; combined HOLE+tunnel folders load |
 | `test_mole_tcl_port` | the pure-Tcl MOLE engine reproduces the C engine slot for slot |
 | `test_hcapen_cache` | HCAPEN's cutoff cache vs stock (auto-discovers `native/stock_build/hole2/src`, or pass a tree as `$1`) |
-| `test_inline_current` | the inlined HOLE engine matches its `vmdhole/hole_tcl/` source |
+| `test_inline_current` | the inlined HOLE engine matches its `vmdpathfinder/hole_tcl/` source |
 | `test_adapter_schema` | the export adapter schema |
 | `test_gui_reachable` | every Tunnel control reachable ON SCREEN in a real GUI, dialogs open/close/reopen, the lining window follows the selection, plus a second pass on a HET-carrying structure |
 | `test_nm_engine` | Nelder-Mead search and the ported Connolly pass through the run path, against Monte Carlo and HOLE `conn` |

@@ -14,27 +14,27 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-SRC="$ROOT/vmdhole/vmdhole.tcl"
+SRC="$ROOT/vmdpathfinder/vmdpathfinder.tcl"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "  PASS  $1"; }
 bad() { fail=$((fail+1)); echo "  FAIL  $1"; }
 
 echo "headless-scratch-reclaim: $SRC"
-[ -f "$SRC" ] || { echo "SKIP: no vmdhole.tcl"; exit 0; }
+[ -f "$SRC" ] || { echo "SKIP: no vmdpathfinder.tcl"; exit 0; }
 command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 [ -d /proc ] || { echo "SKIP: sweeper is /proc-gated and this host has none"; exit 0; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
 
 cat > "$T/drv.tcl" <<'TCLEOF'
-namespace eval ::VMDHole {}
+namespace eval ::VMDPathFinder {}
 set SRC [lindex $argv 0]
 set SB  [lindex $argv 1]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 proc lift {src name} {
-    set pat "proc ::VMDHole::$name "
+    set pat "proc ::VMDPathFinder::$name "
     set i [string first $pat $src]
     if {$i < 0} { return "" }
     set buf ""
@@ -73,31 +73,31 @@ if {[string match {*_swept*} $ie] && ![string match {*_swept*} $sw]} {
 # the test would silently run against the real /tmp - so it is verified.
 set sb [string map [list "foreach base {/tmp /dev/shm}" "foreach base [list [list $SB]]"] $sw]
 if {$sb eq $sw} { puts "FATAL: could not redirect the sweeper's base list"; exit 3 }
-variable ::VMDHole::_swept 0
-namespace eval ::VMDHole $sb
+variable ::VMDPathFinder::_swept 0
+namespace eval ::VMDPathFinder $sb
 
 set dead 999999
 while {[file isdirectory /proc/$dead]} { incr dead }
 set live [pid]
 
 set old [expr {[clock seconds] - 7200}]
-foreach nm [list vmdhole_scratch_$dead vmdhole_$dead vmdhole_${dead}_f7 \
-                 vmdhole_clip_${dead}_1699999999999 vmdhole_scratch_$live] {
+foreach nm [list vmdpathfinder_scratch_$dead vmdpathfinder_$dead vmdpathfinder_${dead}_f7 \
+                 vmdpathfinder_clip_${dead}_1699999999999 vmdpathfinder_scratch_$live] {
     file mkdir [file join $SB $nm]
     file mtime [file join $SB $nm] $old
 }
 # A fresh dir belonging to a dead pid must survive the one-hour age guard.
-file mkdir [file join $SB vmdhole_scratch_${dead}_fresh]
+file mkdir [file join $SB vmdpathfinder_scratch_${dead}_fresh]
 
-::VMDHole::_sweep_stale_tmpdirs
+::VMDPathFinder::_sweep_stale_tmpdirs
 
 foreach {nm want} [list \
-        vmdhole_scratch_$dead              gone \
-        vmdhole_$dead                      gone \
-        vmdhole_${dead}_f7                 gone \
-        vmdhole_clip_${dead}_1699999999999 gone \
-        vmdhole_scratch_$live              kept \
-        vmdhole_scratch_${dead}_fresh      kept] {
+        vmdpathfinder_scratch_$dead              gone \
+        vmdpathfinder_$dead                      gone \
+        vmdpathfinder_${dead}_f7                 gone \
+        vmdpathfinder_clip_${dead}_1699999999999 gone \
+        vmdpathfinder_scratch_$live              kept \
+        vmdpathfinder_scratch_${dead}_fresh      kept] {
     set there [file isdirectory [file join $SB $nm]]
     set got [expr {$there ? "kept" : "gone"}]
     if {$got eq $want} { puts "OK sweep: $nm -> $got" } \

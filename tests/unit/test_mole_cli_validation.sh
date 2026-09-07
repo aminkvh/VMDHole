@@ -19,7 +19,7 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-FIX="$ROOT/vmdhole/tests/fixtures"
+FIX="$ROOT/vmdpathfinder/tests/fixtures"
 ENG="$ROOT/native/mole_tunnel_engine"
 AT="$FIX/mole_atoms_1eri.txt"
 

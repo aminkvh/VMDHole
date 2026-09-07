@@ -1,7 +1,7 @@
 # `conn_lobes` — fast Connolly lateral-opening classifier
 
 Replaces two pure-Tcl hot loops in the "lobe" coloring path for Connolly
-mode (`proc ::VMDHole::_conn_classify_sph`, `_conn_frame_lobes`,
+mode (`proc ::VMDPathFinder::_conn_classify_sph`, `_conn_frame_lobes`,
 `_split_conn_mesh_by_region`): classifying every `.sph` dot as pore or
 lateral and clustering the lateral dots into lobes, and assigning each
 triangle of the unified surface mesh to the region its nearest dot belongs
@@ -30,7 +30,7 @@ count.
 
 ## Correctness
 
-`test_conn_lobes_engine` (vmdhole/tests/) runs a real HOLE Connolly pass on
+`test_conn_lobes_engine` (vmdpathfinder/tests/) runs a real HOLE Connolly pass on
 1GRM and checks, native vs the Tcl path it replaces:
 - pore/lateral/keep dot SETS byte-identical
 - escaped-range boundaries agree to 1e-6

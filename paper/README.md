@@ -1,6 +1,6 @@
 # The paper's numbers
 
-This directory is the quantitative record behind the VMDHole paper, and only
+This directory is the quantitative record behind the VMDPathFinder paper, and only
 that. `benchmarks/results/` holds every reported CSV; each file's header
 records exactly how, where and from which commit it was produced
 (`env_manifest.txt` describes the machine).

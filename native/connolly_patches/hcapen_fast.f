@@ -17,7 +17,7 @@ C * (c) 1997 Oliver Smart                    *
 C *                                                                  *
 C ********************************************************************
 C
-C PERF FORK (hcapen_fast.f, VMDHole project) - unmodified original is
+C PERF FORK (hcapen_fast.f, VMDPathFinder project) - unmodified original is
 C hcapen.f. Same interface, same answer, bit for bit; only the way the
 C answer is found differs.
 C

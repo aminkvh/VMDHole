@@ -1,6 +1,6 @@
-# VMDHole documentation
+# VMDPathFinder documentation
 
-VMDHole turns a structure or trajectory loaded in VMD into pore and tunnel
+VMDPathFinder turns a structure or trajectory loaded in VMD into pore and tunnel
 profiles, linked 3D geometry, property annotations, trajectory-wide views, and
 exportable figures and tables. Independent frames run in parallel, and native
 engines accelerate production calculations.
@@ -19,7 +19,7 @@ reporting an analysis.
 
 ## Start here
 
-1. [Install VMDHole and native engines](installation.md).
+1. [Install VMDPathFinder and native engines](installation.md).
 2. Complete the [first pore and tunnel analyses](quickstart.md) (**highly recommended**).
 3. Choose a [tutorial](tutorials.md) for the analysis you need.
 4. Continue with the matching [workflow](workflows.md).

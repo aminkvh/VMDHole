@@ -1,5 +1,5 @@
-/* hydro_project.c -- compiled accelerator for VMDHole's Hydration analysis
- * (compute_hydration in vmdhole.tcl). Ports ONLY the measured hot path:
+/* hydro_project.c -- compiled accelerator for VMDPathFinder's Hydration analysis
+ * (compute_hydration in vmdpathfinder.tcl). Ports ONLY the measured hot path:
  * per-frame water residue-COG reduction, axial projection onto the pore
  * axis, and the envelope-radius in/out test that produces "qco" (the
  * per-frame list of accepted axial water coordinates) -- optionally also
@@ -18,7 +18,7 @@
  *
  * BIT-IDENTICALITY: every arithmetic expression below is transcribed
  * expression-for-expression from the Tcl source (envelope_radius and the
- * qco projection/inclusion test in compute_hydration, vmdhole.tcl), same
+ * qco projection/inclusion test in compute_hydration, vmdpathfinder.tcl), same
  * operation order, same associativity. Compiled with -ffp-contract=off (see
  * native/build.sh's hydro step) so the compiler cannot fuse multiply-add pairs
  * (dxc*ux + dyc*uy + dzc*uz, ra + f*(rb-ra), ...) into a single FMA
@@ -129,7 +129,7 @@ static void parse_longs_line(const char *line, int n, LArr *out) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* envelope_radius: EXACT port of ::VMDHole::envelope_radius (vmdhole.tcl). */
+/* envelope_radius: EXACT port of ::VMDPathFinder::envelope_radius (vmdpathfinder.tcl). */
 /* Linear scan, first bracketing interval wins (env may contain duplicate  */
 /* co values -- do NOT replace with a binary search, see NOTES).           */
 /* ---------------------------------------------------------------------- */
@@ -151,7 +151,7 @@ static double envelope_radius(const double *ec, const double *er, int n, double 
 
 /* ---------------------------------------------------------------------- */
 /* Residue centre-of-geometry reduction: EXACT port of the reduction block */
-/* in compute_hydration (vmdhole.tcl) -- one output position per DISTINCT  */
+/* in compute_hydration (vmdpathfinder.tcl) -- one output position per DISTINCT  */
 /* resid, in FIRST-ENCOUNTER order (matches Tcl's `dict keys $_wcn`,       */
 /* insertion-ordered). A simple open-addressing hash keyed on resid gives  */
 /* O(1) amortised lookup while preserving that order via a parallel        */

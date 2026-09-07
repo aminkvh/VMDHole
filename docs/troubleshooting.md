@@ -1,14 +1,14 @@
 # Troubleshooting
 
-Read the VMD console first. VMDHole reports the selected engine, frame, failed
+Read the VMD console first. VMDPathFinder reports the selected engine, frame, failed
 stage, and output path there.
 
 ## Plugin does not appear
 
 | Symptom | Check |
 |---|---|
-| `package require vmdhole` fails | `auto_path` must contain the parent of `vmdhole`; keep `pkgIndex.tcl` beside `vmdhole.tcl` |
-| Extension entry is absent | Restart VMD after changing `.vmdrc`, then evaluate `package require vmdhole 1.0` in the Tk Console |
+| `package require vmdpathfinder` fails | `auto_path` must contain the parent of `vmdpathfinder`; keep `pkgIndex.tcl` beside `vmdpathfinder.tcl` |
+| Extension entry is absent | Restart VMD after changing `.vmdrc`, then evaluate `package require vmdpathfinder 1.0` in the Tk Console |
 
 ## Pore run fails or finds the wrong path
 
@@ -56,8 +56,8 @@ stage, and output path there.
 |---|---|
 | A run is unexpectedly slow | Confirm native executable paths; the console identifies Tcl fallbacks |
 | Host is overloaded | Reduce Parallel jobs to the allocated CPU count |
-| Temporary storage fills | Reduce parallel jobs, choose disk-backed output, and remove only abandoned VMDHole scratch directories |
+| Temporary storage fills | Reduce parallel jobs, choose disk-backed output, and remove only abandoned VMDPathFinder scratch directories |
 | Memory grows during playback | Reduce Surface cache and mean frame cap |
 
-When reporting a problem, include the VMDHole and VMD versions, operating
+When reporting a problem, include the VMDPathFinder and VMD versions, operating
 system, complete console message, settings, and a minimal input.

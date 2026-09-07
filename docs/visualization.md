@@ -1,6 +1,6 @@
 # Visualization
 
-VMDHole creates separate VMD molecules or representations for calculated
+VMDPathFinder creates separate VMD molecules or representations for calculated
 geometry. These objects are visual aids tied to numerical results; they do not
 modify the analysed structure.
 

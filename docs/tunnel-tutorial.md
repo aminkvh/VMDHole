@@ -11,7 +11,7 @@ export the selected route with the inputs needed to repeat the analysis.
 
 ## 1. Load and select the structure
 
-Load `vmdhole/1MXT.pdb` in VMD. Open VMDHole, select **Tunnel**, and set:
+Load `vmdpathfinder/1MXT.pdb` in VMD. Open VMDPathFinder, select **Tunnel**, and set:
 
 | Control | Value |
 |---|---|
@@ -63,7 +63,7 @@ representation, material, or property coloring without rerunning the search.
 ## 5. Compare automatic origins
 
 Enable **Auto-detect origins (scan whole structure)** and rerun. The explicit
-start point is disabled because it is not used in this mode. VMDHole now scans
+start point is disabled because it is not used in this mode. VMDPathFinder now scans
 qualifying internal cavities and can return routes unrelated to the original
 site.
 
@@ -81,7 +81,7 @@ record:
 - explicit start point or automatic-origin setting;
 - probe, interior, origin-radius, bottleneck, and length thresholds;
 - weight function, exit constraints, and clustering settings;
-- VMDHole and tunnel-engine versions.
+- VMDPathFinder and tunnel-engine versions.
 
 For a trajectory, make the structure whole and image it consistently. **Align
 trajectory** is on by default in Tunnel mode; leave it on for cross-frame
@@ -91,7 +91,7 @@ VMD. **Seen** is the fraction of analysed frames assigned to the tracked route.
 ## Citations
 
 Before publishing, open **Help → Guide & Citations… → Citations**. Cite VMD,
-VMDHole, HOLE, and MOLE 2 for this workflow. **Cluster within frame** is on by
+VMDPathFinder, HOLE, and MOLE 2 for this workflow. **Cluster within frame** is on by
 default, so also cite CAVER 3.0 unless you disable clustering. See
 [References](references.md) for the full entries.
 

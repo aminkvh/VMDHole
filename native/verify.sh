@@ -28,7 +28,7 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 # surfaces which would overflow the 30000-polygon cap can still be compared.
 # The unmodified upstream sos_triangle.c is not vendored (the repo is the
 # plugin's code, not HOLE's): use a local copy if one exists, else fetch the
-# file from the same pinned HOLE 2 revision build-vmdhole-optimized.sh clones.
+# file from the same pinned HOLE 2 revision build-vmdpathfinder-optimized.sh clones.
 UP="upstream/sos_triangle.c"
 if [ ! -f "$UP" ]; then
     UP="$T/upstream_sos_triangle.c"
@@ -64,7 +64,7 @@ else
   echo "  skipped: no local corpus in benchmarks/fixtures/ (it is gitignored)."
   echo "           generate one, or run make_fixtures.sh, to enable Part A."
 fi
-for s in $(find ../vmdhole/hole_output -name '*.sos' 2>/dev/null); do diff_one "$s"; done
+for s in $(find ../vmdpathfinder/hole_output -name '*.sos' 2>/dev/null); do diff_one "$s"; done
 echo "  identical: $pass   mismatched: $fail   (of which needed raised cap: $overflow)"
 
 echo "== Part B: HOLE example structures (full pipeline) =="
@@ -109,7 +109,7 @@ if ! command -v python3 >/dev/null 2>&1 || [ ! -x "$SPHP" ]; then
   echo "  skipped: need python3 and sph_process (set SPHP or HOLE_EXE)."
 else
   hp=0; hf=0; found=0
-  for sph in $(find ../vmdhole/hole_output -name hole_out.sph 2>/dev/null); do
+  for sph in $(find ../vmdpathfinder/hole_output -name hole_out.sph 2>/dev/null); do
     pdb="$(dirname "$sph")/input_frame.pdb"
     [ -f "$pdb" ] || continue
     found=$((found+1))
@@ -158,7 +158,7 @@ echo "  vertex-set identical: $dp   mismatched: $df"
 [ "$df" -eq 0 ] || { echo "RESULT: dots mismatch(es)."; exit 1; }
 
 echo "== Part E: parallel CONNOLLY / fast CAPSULE (accelerated vs stock hole) =="
-# The accelerated `hole` (build-vmdhole-optimized.sh output) parallelises CONNOLLY
+# The accelerated `hole` (build-vmdpathfinder-optimized.sh output) parallelises CONNOLLY
 # and speeds up CAPSULE. CONN's per-plane progress lines are MUTED in the
 # parallel path (shorto 2), so the comparison is the DATA that matters - the .sph point
 # cloud (byte-identical) and the profile/conductance numbers - not the chatty

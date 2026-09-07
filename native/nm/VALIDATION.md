@@ -441,7 +441,7 @@ Not done at that point: mesh_csg had no capsule or Connolly path (their
 ## One shipped binary
 
 `sos_triangle_fast` now carries nm_search, mesh_csg and conn_lobes
-(`-DVMDHOLE_MULTICALL`; each tool's `main` becomes `<tool>_main` and the
+(`-DVMDPATHFINDER_MULTICALL`; each tool's `main` becomes `<tool>_main` and the
 dispatcher routes `--nm-search`, `--mesh` and `--conn-lobes`). One trap:
 nm_search re-execs itself once to pin `OMP_WAIT_POLICY=PASSIVE`, with the
 argv it was handed - the shifted one, minus the subcommand - so the re-exec
@@ -472,7 +472,7 @@ sidecar (~30 ms) and the mesh build itself.
 
 ## One surface pipeline
 
-Every mesh the plugin draws now goes through three procs in `vmdhole.tcl`:
+Every mesh the plugin draws now goes through three procs in `vmdpathfinder.tcl`:
 `surface_plot_name` (the one naming rule), `surface_mesh` (build one plot
 from one .sph: the mesher when it can serve the run, the legacy
 sph_process + sos_triangle pair otherwise and as the fallback, with the

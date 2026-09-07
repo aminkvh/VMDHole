@@ -22,7 +22,7 @@ SOFTWARE.
 
 ---
 
-This license applies to the VMDHole plugin in `vmdhole/`.
+This license applies to the VMDPathFinder plugin in `vmdpathfinder/`.
 
 The `native/` directory is a separate component: it is a modified copy of
 HOLE2 (https://github.com/osmart/hole2) and is licensed under the Apache

@@ -9,8 +9,8 @@ to find tunnels from internal cavities.
 ## 1. Load the structure
 
 In VMD, select **File → New Molecule…**, browse to
-`vmdhole/1GRM.pdb`, and select **Load**. Then open
-**Extensions → Analysis → VMDHole** and select **Pore**.
+`vmdpathfinder/1GRM.pdb`, and select **Load**. Then open
+**Extensions → Analysis → VMDPathFinder** and select **Pore**.
 
 ## 2. Set the input
 
@@ -36,7 +36,7 @@ reports missing radii; choose or edit an appropriate radius file first. See
 ## 3. Check the pore axis
 
 `CPOINT` should lie inside the channel, and `CVECT` should point along it. When
-a molecule is activated, VMDHole proposes suitable values from the current
+a molecule is activated, VMDPathFinder proposes suitable values from the current
 selection and structure. Keep them for this first run if the point and direction
 look correct.
 
@@ -85,7 +85,7 @@ frames, however, their order does not encode elapsed time.
 
 ### 1. Load the structure
 
-Load `vmdhole/1MXT.pdb` in VMD and select **Tunnel** in VMDHole. Set:
+Load `vmdpathfinder/1MXT.pdb` in VMD and select **Tunnel** in VMDPathFinder. Set:
 
 | Control | Value |
 |---|---|

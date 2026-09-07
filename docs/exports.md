@@ -33,7 +33,7 @@ An opening absent from a frame has `present=0` and blank measurement cells.
 
 ## Filenames
 
-VMDHole suggests a descriptive filename for each export. Confirm the destination
+VMDPathFinder suggests a descriptive filename for each export. Confirm the destination
 before saving.
 
 ## Hydration export

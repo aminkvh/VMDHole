@@ -3,10 +3,10 @@
 #
 # THE DEFECT THIS GUARDS:
 #   docs/scripting.md tells batch authors to point the plugin at their engines
-#   with `set ::VMDHole::state(hole_exec) /path/to/hole` and then call
+#   with `set ::VMDPathFinder::state(hole_exec) /path/to/hole` and then call
 #   init_executables. init_executables calls load_config FIRST, and load_config
 #   assigns every persisted key unconditionally - hole_exec among them. So a
-#   ~/.vmdhole_config holding an empty or stale hole_exec (one exists for anyone
+#   ~/.vmdpathfinder_config holding an empty or stale hole_exec (one exists for anyone
 #   who has opened the GUI once) silently threw the caller's path away.
 #   The run then used the embedded Tcl engine, roughly 100x slower, while the
 #   script believed it had selected a compiled one.
@@ -16,10 +16,10 @@
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-SRC="$ROOT/vmdhole/vmdhole.tcl"
+SRC="$ROOT/vmdpathfinder/vmdpathfinder.tcl"
 
 echo "preset-exec-paths: $SRC"
-[ -f "$SRC" ] || { echo "SKIP: no vmdhole.tcl"; exit 0; }
+[ -f "$SRC" ] || { echo "SKIP: no vmdpathfinder.tcl"; exit 0; }
 command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
@@ -41,13 +41,13 @@ printf '#!/bin/sh\necho hydroproject\n' > "$T/winenv/hydro_project.exe"; chmod +
 printf 'hole_exec = \nsph_process_exec = \nsos_triangle_exec = \n' > "$T/wincfg"
 
 cat > "$T/drv.tcl" <<'TCLEOF'
-namespace eval ::VMDHole {}
+namespace eval ::VMDPathFinder {}
 set SRC [lindex $argv 0]; set CFG [lindex $argv 1]; set ENG [lindex $argv 2]
 set WINCFG [lindex $argv 3]; set WINENV [lindex $argv 4]
 set fh [open $SRC r]; set src [read $fh]; close $fh
 
 proc lift {src name} {
-    set pat "proc ::VMDHole::$name "
+    set pat "proc ::VMDPathFinder::$name "
     set i [string first $pat $src]
     if {$i < 0} { return "" }
     set buf ""
@@ -60,39 +60,39 @@ proc lift {src name} {
 foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe \
            tool_path tool_exec_keys save_config _note} {
     set b [lift $src $p]
-    if {$b eq ""} { puts "FATAL: could not lift ::VMDHole::$p"; exit 3 }
-    namespace eval ::VMDHole $b
+    if {$b eq ""} { puts "FATAL: could not lift ::VMDPathFinder::$p"; exit 3 }
+    namespace eval ::VMDPathFinder $b
 }
 # the tool table the finder reads, lifted verbatim from the shipped file
 set ti [string first "variable _tools \{" $src]
 set tj [string first "\n}" $src $ti]
-namespace eval ::VMDHole [string range $src $ti [expr {$tj+1}]]
-namespace eval ::VMDHole { variable _tool_memo; array set _tool_memo {} }
-proc ::VMDHole::sos_triangle_has_feature {f} { return 0 }
+namespace eval ::VMDPathFinder [string range $src $ti [expr {$tj+1}]]
+namespace eval ::VMDPathFinder { variable _tool_memo; array set _tool_memo {} }
+proc ::VMDPathFinder::sos_triangle_has_feature {f} { return 0 }
 # stubs for the bits that need VMD / would write to $HOME
 proc vmdcon {args} {}
-proc ::VMDHole::save_config {} {}
-proc ::VMDHole::_sweep_stale_tmpdirs {} {}
-proc ::VMDHole::_note {args} {}
+proc ::VMDPathFinder::save_config {} {}
+proc ::VMDPathFinder::_sweep_stale_tmpdirs {} {}
+proc ::VMDPathFinder::_note {args} {}
 
-namespace eval ::VMDHole {
+namespace eval ::VMDPathFinder {
     variable config_file
     variable state
     variable _swept 0
 }
-set ::VMDHole::config_file $CFG
+set ::VMDPathFinder::config_file $CFG
 foreach k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file} {
-    set ::VMDHole::state($k) ""
+    set ::VMDPathFinder::state($k) ""
 }
 
 # The documented recipe: set the path, then init.
-set ::VMDHole::state(hole_exec) $ENG
-::VMDHole::init_executables
+set ::VMDPathFinder::state(hole_exec) $ENG
+::VMDPathFinder::init_executables
 
-if {$::VMDHole::state(hole_exec) eq $ENG} {
+if {$::VMDPathFinder::state(hole_exec) eq $ENG} {
     puts "OK preset hole_exec survived init_executables"
 } else {
-    puts "BAD preset hole_exec was discarded (now '$::VMDHole::state(hole_exec)')"
+    puts "BAD preset hole_exec was discarded (now '$::VMDPathFinder::state(hole_exec)')"
 }
 
 # Guard the guard: the config must really carry an empty hole_exec, or this
@@ -106,32 +106,32 @@ if {[regexp {hole_exec\s*=\s*$} [string trim $cfgtext "\n"]] || [string match "*
 
 # --- .exe discovery: bare names never exist on Windows, only *.exe does ----
 foreach k {hole_exec sph_process_exec sos_triangle_exec mole_engine_exec radius_file} {
-    set ::VMDHole::state($k) ""
+    set ::VMDPathFinder::state($k) ""
 }
-set ::VMDHole::config_file $WINCFG
-set ::env(VMDHOLE_HOLE_EXE_DIR) $WINENV
-::VMDHole::init_executables
+set ::VMDPathFinder::config_file $WINCFG
+set ::env(VMDPATHFINDER_HOLE_EXE_DIR) $WINENV
+::VMDPathFinder::init_executables
 
 set wantHole [file join $WINENV hole.exe]
 set wantSph  [file join $WINENV sph_process.exe]
-if {$::VMDHole::state(hole_exec) eq $wantHole} {
-    puts "OK .exe discovery found hole.exe via VMDHOLE_HOLE_EXE_DIR"
+if {$::VMDPathFinder::state(hole_exec) eq $wantHole} {
+    puts "OK .exe discovery found hole.exe via VMDPATHFINDER_HOLE_EXE_DIR"
 } else {
-    puts "BAD .exe discovery: hole_exec = '$::VMDHole::state(hole_exec)', wanted '$wantHole'"
+    puts "BAD .exe discovery: hole_exec = '$::VMDPathFinder::state(hole_exec)', wanted '$wantHole'"
 }
-if {$::VMDHole::state(sph_process_exec) eq $wantSph} {
+if {$::VMDPathFinder::state(sph_process_exec) eq $wantSph} {
     puts "OK .exe discovery backfilled the sph_process.exe sibling"
 } else {
-    puts "BAD .exe sibling backfill: sph_process_exec = '$::VMDHole::state(sph_process_exec)', wanted '$wantSph'"
+    puts "BAD .exe sibling backfill: sph_process_exec = '$::VMDPathFinder::state(sph_process_exec)', wanted '$wantSph'"
 }
 
 # --- the two discovery walks OUTSIDE init_executables -----------------------
 # tool_path mole_engine's fallback beside sos_triangle: clear the state hit that
 # init_executables just backfilled, so the sibling WALK itself is what runs.
-set ::VMDHole::state(mole_engine_exec) ""
-set ::VMDHole::state(sos_triangle_exec) [file join $WINENV sos_triangle.exe]
+set ::VMDPathFinder::state(mole_engine_exec) ""
+set ::VMDPathFinder::state(sos_triangle_exec) [file join $WINENV sos_triangle.exe]
 set wantMole [file join $WINENV mole_tunnel_engine.exe]
-set gotMole [::VMDHole::tool_path mole_engine]
+set gotMole [::VMDPathFinder::tool_path mole_engine]
 if {$gotMole eq $wantMole} {
     puts "OK tool_path mole_engine's sibling walk found mole_tunnel_engine.exe"
 } else {
@@ -142,9 +142,9 @@ if {$gotMole eq $wantMole} {
 # walk is its only non-PATH discovery. It also execs the found binary with
 # --hole-features and requires "hydroproject" in the reply (the fixture
 # answers that). Unset the memo first or a previous "" would be returned.
-array unset ::VMDHole::_tool_memo
+array unset ::VMDPathFinder::_tool_memo
 set wantHydro [file join $WINENV hydro_project.exe]
-set gotHydro [::VMDHole::tool_path hydro_project]
+set gotHydro [::VMDPathFinder::tool_path hydro_project]
 if {$gotHydro eq $wantHydro} {
     puts "OK tool_path hydro_project found hydro_project.exe beside sos_triangle"
 } else {
