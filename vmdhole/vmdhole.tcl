@@ -23551,6 +23551,10 @@ proc ::VMDHole::_build_vector_controls {d} {
     button $d.btns.calc  -text "Compute" -command [list ::VMDHole::compute_vector $d]
     pack $d.btns.guess $d.btns.z $d.btns.calc -side left -padx 4
     grid $d.btns -row 6 -column 0 -columnspan 3 -pady {4 6}
+    frame $d.close_row
+    button $d.close_row.close -text "Close" -command [list ::VMDHole::_axis_stick_close [winfo toplevel $d]]
+    pack $d.close_row.close -side right
+    grid $d.close_row -row 7 -column 0 -columnspan 3 -sticky ew -padx 6 -pady {0 6}
     add_tooltip $d.sb.cv "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
     add_tooltip $d.sb.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
     _cvect_sync_stab_controls $d
@@ -23838,25 +23842,68 @@ proc ::VMDHole::_axis_stick_apply {mode dx dy dz} {
     catch {_sync_point_marker [_axis_stick_key $mode] [_axis_stick_cue_key $mode]}
 }
 
-proc ::VMDHole::_axis_stick_rotate {ax ay az deg} {
-    # CVECT tilted by deg about the unit axis (ax ay az), Rodrigues' formula:
-    # the direction turns and never stretches. The cue is the CPOINT marker's
-    # arrow, which redraws from the new field.
+proc ::VMDHole::_axis_stick_view_basis {molid} {
+    lassign [_view_right_up $molid] rx ry rz ux uy uz
+    lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
+    return [list $rx $ry $rz $ux $uy $uz $tx $ty $tz]
+}
+
+proc ::VMDHole::_axis_stick_knob_from_cvect {v basis} {
+    # The pad position {nx nyup}, each in [-1,1], whose ABSOLUTE location
+    # always means the same direction relative to the current view: centre
+    # (0,0) = pointing at the viewer, the rim = lying flat in the screen
+    # plane toward that edge. This is what makes the knob's position, not
+    # its motion history, the whole story - drag it back to where it was and
+    # CVECT is back to what it was, which an incremental rotation cannot do.
+    lassign $v vx vy vz
+    lassign $basis rx ry rz ux uy uz tx ty tz
+    set tow [expr {$vx*$tx+$vy*$ty+$vz*$tz}]
+    if {$tow > 1.0} { set tow 1.0 }; if {$tow < -1.0} { set tow -1.0 }
+    set theta [expr {acos($tow)}]
+    set sn [expr {sin($theta)}]
+    set dist [expr {$theta/(3.14159265358979/2.0)}]
+    if {$dist > 1.0} { set dist 1.0 }
+    if {$sn < 1e-9} { return [list 0.0 0.0] }
+    set nxr [expr {$vx*$rx+$vy*$ry+$vz*$rz}]
+    set nyu [expr {$vx*$ux+$vy*$uy+$vz*$uz}]
+    return [list [expr {$nxr/$sn*$dist}] [expr {$nyu/$sn*$dist}]]
+}
+
+proc ::VMDHole::_axis_stick_cvect_from_knob {nx nyup basis} {
+    # The inverse of _axis_stick_knob_from_cvect: the pad position -> a unit
+    # CVECT, relative to the SAME view basis. Distance from centre is the
+    # angle away from "pointing at the viewer" (rim = 90 degrees, flat in
+    # the screen plane); direction from centre is which way it tilts.
+    lassign $basis rx ry rz ux uy uz tx ty tz
+    set dist [expr {sqrt($nx*$nx+$nyup*$nyup)}]
+    if {$dist > 1.0} { set nx [expr {$nx/$dist}]; set nyup [expr {$nyup/$dist}]; set dist 1.0 }
+    set theta [expr {$dist*3.14159265358979/2.0}]
+    set c [expr {cos($theta)}]; set sn [expr {sin($theta)}]
+    if {$dist < 1e-9} { set ex 0.0; set ey 0.0 } else { set ex [expr {$nx/$dist}]; set ey [expr {$nyup/$dist}] }
+    return [_normalize_dir [list [expr {$tx*$c+($rx*$ex+$ux*$ey)*$sn}] \
+                                 [expr {$ty*$c+($ry*$ex+$uy*$ey)*$sn}] \
+                                 [expr {$tz*$c+($rz*$ex+$uz*$ey)*$sn}]]]
+}
+
+proc ::VMDHole::_axis_stick_redraw_knob {d} {
+    # Puts the knob where the CURRENT CVECT actually is (arcball modes) or
+    # back at rest (translate modes) - called after anything besides a live
+    # drag changes what the pad should show: a mode switch, an arrow click,
+    # Guess/Use Z/Compute, or CVECT typed by hand.
     variable state
+    if {![winfo exists $d.pad.canv]} { return }
+    if {![_axis_stick_is_dir $state(axis_stick_mode)]} {
+        catch {$d.pad.canv coords knob 62 62 78 78}
+        return
+    }
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return }
     set cur [_axis_stick_current cvect]
     if {$cur eq {}} { return }
-    lassign $cur vx vy vz
-    set t [expr {$deg*3.14159265358979/180.0}]
-    set c [expr {cos($t)}]; set sn [expr {sin($t)}]
-    set d [expr {$ax*$vx+$ay*$vy+$az*$vz}]
-    set kx [expr {$ay*$vz-$az*$vy}]; set ky [expr {$az*$vx-$ax*$vz}]; set kz [expr {$ax*$vy-$ay*$vx}]
-    set nv [_normalize_dir [list [expr {$vx*$c+$kx*$sn+$ax*$d*(1-$c)}] \
-                                 [expr {$vy*$c+$ky*$sn+$ay*$d*(1-$c)}] \
-                                 [expr {$vz*$c+$kz*$sn+$az*$d*(1-$c)}]]]
-    if {$nv eq {}} { return }
-    _clear_cvect_def
-    set state(cvect) [format_triplet $nv]
-    catch {_sync_point_marker cpoint show_cpoint_marker}
+    lassign [_axis_stick_knob_from_cvect $cur [_axis_stick_view_basis $molid]] nx nyup
+    set cx 70; set cy 70; set r 52
+    set kx [expr {$nx*$r}]; set ky [expr {-$nyup*$r}]
+    catch {$d.pad.canv coords knob [expr {$cx+$kx-8}] [expr {$cy+$ky-8}] [expr {$cx+$kx+8}] [expr {$cy+$ky+8}]}
 }
 
 proc ::VMDHole::_axis_stick_nudge {mode dir} {
@@ -23868,15 +23915,26 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
     set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
     if {![string is double -strict $step]} { set step 1.0 }
     if {[_axis_stick_is_dir $mode]} {
-        # left/right turn CVECT flat in the screen plane (about the viewing
-        # axis, clockwise for right); up/down tilt it about the screen's right axis
-        lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
+        # Move the arcball knob by one step (in pad-radius units: a full step
+        # of 90 deg reaches the rim) and set CVECT from the new position -
+        # same absolute mapping the drag uses, so clicking and dragging never
+        # fight each other.
+        set basis [_axis_stick_view_basis $molid]
+        set cur [_axis_stick_current cvect]
+        if {$cur eq {}} { return }
+        lassign [_axis_stick_knob_from_cvect $cur $basis] nx nyup
+        set delta [expr {$step/90.0}]
         switch -- $dir {
-            right { _axis_stick_rotate $tx $ty $tz [expr {-$step}] }
-            left  { _axis_stick_rotate $tx $ty $tz $step }
-            up    { _axis_stick_rotate $rx $ry $rz [expr {-$step}] }
-            down  { _axis_stick_rotate $rx $ry $rz $step }
+            right { set nx [expr {$nx+$delta}] }
+            left  { set nx [expr {$nx-$delta}] }
+            up    { set nyup [expr {$nyup+$delta}] }
+            down  { set nyup [expr {$nyup-$delta}] }
         }
+        set nv [_axis_stick_cvect_from_knob $nx $nyup $basis]
+        if {$nv eq {}} { return }
+        _clear_cvect_def
+        set state(cvect) [format_triplet $nv]
+        catch {_sync_point_marker cpoint show_cpoint_marker}
         return
     }
     switch -- $dir {
@@ -23890,6 +23948,7 @@ proc ::VMDHole::_axis_stick_nudge {mode dir} {
 proc ::VMDHole::_axis_stick_drag_start {d x y} {
     variable _axis_stick_last
     set _axis_stick_last [list $x $y]
+    _axis_stick_drag_motion $d $x $y
 }
 
 proc ::VMDHole::_axis_stick_drag_motion {d x y} {
@@ -23909,20 +23968,26 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
     set kd [expr {sqrt($kx*$kx+$ky*$ky)}]
     if {$kd > $r} { set kx [expr {$kx*$r/$kd}]; set ky [expr {$ky*$r/$kd}] }
     catch {$d.pad.canv coords knob [expr {$cx+$kx-8}] [expr {$cy+$ky-8}] [expr {$cx+$kx+8}] [expr {$cy+$ky+8}]}
-    if {$dxpix == 0 && $dypix == 0} { return }
     set mode $state(axis_stick_mode)
     set molid ""; catch {set molid [resolve_molid]}
     if {$molid eq ""} { return }
-    lassign [_view_right_up $molid] rx ry rz ux uy uz
-    set step [expr {[_axis_stick_is_dir $mode] ? $state(axis_stick_step_cvect_deg) : $state(axis_stick_step_cpoint)}]
-    if {![string is double -strict $step]} { set step 1.0 }
     if {[_axis_stick_is_dir $mode]} {
-        set sens [expr {$step/5.0}]
-        lassign [_view_toward $rx $ry $rz $ux $uy $uz] tx ty tz
-        if {$dxpix != 0} { _axis_stick_rotate $tx $ty $tz [expr {-$dxpix*$sens}] }
-        if {$dypix != 0} { _axis_stick_rotate $rx $ry $rz [expr {$dypix*$sens}] }
+        # Absolute: the knob's position on the pad IS the direction, relative
+        # to the current view - not a delta, so there is nothing to compound
+        # and no history to lose track of.
+        set nv [_axis_stick_cvect_from_knob [expr {$kx/double($r)}] [expr {-$ky/double($r)}] \
+                    [_axis_stick_view_basis $molid]]
+        if {$nv ne {}} {
+            _clear_cvect_def
+            set state(cvect) [format_triplet $nv]
+            catch {_sync_point_marker cpoint show_cpoint_marker}
+        }
         return
     }
+    if {$dxpix == 0 && $dypix == 0} { return }
+    lassign [_view_right_up $molid] rx ry rz ux uy uz
+    set step $state(axis_stick_step_cpoint)
+    if {![string is double -strict $step]} { set step 1.0 }
     set sens [expr {$step/30.0}]
     # Canvas y grows downward, so screen "up" is a NEGATIVE canvas dy.
     set wx [expr {$dxpix*$sens*$rx - $dypix*$sens*$ux}]
@@ -23933,7 +23998,9 @@ proc ::VMDHole::_axis_stick_drag_motion {d x y} {
 
 proc ::VMDHole::_axis_stick_drag_end {d} {
     variable _axis_stick_last
+    variable state
     catch {unset _axis_stick_last}
+    if {[_axis_stick_is_dir $state(axis_stick_mode)]} { return }
     catch {$d.pad.canv coords knob 62 62 78 78}
 }
 
@@ -23954,10 +24021,11 @@ proc ::VMDHole::_axis_stick_sync_mode {d} {
     # point neither - so the choice sits with the point it governs.
     catch {
         if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
-        if {$m eq "cvect"}  { grid $d.vec; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } else { grid remove $d.vec; grid $d.pc }
+        if {$m eq "cvect"}  { grid $d.vec; grid $d.cvq; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } else { grid remove $d.vec; grid remove $d.cvq; grid $d.pc }
         if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
     }
     _axis_stick_sync_val_label $d
+    _axis_stick_redraw_knob $d
 }
 
 proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
@@ -23999,7 +24067,7 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     # Per-frame handling for whatever is being moved - the same variables and
     # handlers the panel rows use, so the two stay in step either way.
     frame $d.pf
-    grid $d.pf -row 6 -column 0 -columnspan 3 -sticky w -padx 10
+    grid $d.pf -row 7 -column 0 -columnspan 3 -sticky w -padx 10
     frame $d.pf.cp
     label       $d.pf.cp.l  -text "Per-frame:"
     checkbutton $d.pf.cp.st -text "Stabilize" -variable ::VMDHole::state(stabilize_cpoint) -command [list ::VMDHole::_on_stabilize_toggled cpoint]
@@ -24008,13 +24076,14 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     grid $d.pf.cp -row 0 -column 0 -sticky w
     frame $d.vec -relief groove -borderwidth 1
     _build_vector_controls $d.vec
-    grid $d.vec -row 5 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
+    grid $d.vec -row 6 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
     frame $d.pc
-    label  $d.pc.l   -text "Set to:"
     button $d.pc.cog -text "COG" -command [list ::VMDHole::_axis_stick_center sel]
     button $d.pc.cor -text "COR" -command [list ::VMDHole::_axis_stick_center view]
-    pack $d.pc.l $d.pc.cog $d.pc.cor -side left -padx {0 6}
-    grid $d.pc -row 5 -column 0 -columnspan 3 -sticky w -padx 10 -pady {0 6}
+    button $d.pc.close -text "Close" -command [list ::VMDHole::_axis_stick_close $d]
+    pack $d.pc.cog $d.pc.cor -side left -padx {0 6}
+    pack $d.pc.close -side right
+    grid $d.pc -row 6 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
     add_tooltip $d.pc.cog "The centre of geometry of the atom selection."
     add_tooltip $d.pc.cor "VMD's current centre of rotation."
     label $d.pf.none -text "Per-frame: the tunnel search re-runs from this point each frame." -foreground gray40 -font {Helvetica 8}
@@ -24022,8 +24091,16 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     add_tooltip $d.pf.cp.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
     add_tooltip $d.pf.cp.tk "Moves CPOINT by the translation of a frozen patch of atoms - drift-free, rotation-blind."
 
+    frame $d.cvq
+    button $d.cvq.guess -text "Guess" -command [list ::VMDHole::_cvect_guess $d.vec]
+    button $d.cvq.z     -text "Use Z" -command [list ::VMDHole::_cvect_set_z $d.vec]
+    pack $d.cvq.guess $d.cvq.z -side left -padx 4
+    grid $d.cvq -row 2 -column 0 -columnspan 3 -pady {2 0}
+    add_tooltip $d.cvq.guess "Guess CVECT from the pore-lining atoms near CPOINT."
+    add_tooltip $d.cvq.z "Set CVECT to the Z axis."
+
     frame $d.pad
-    grid $d.pad -row 2 -column 0 -columnspan 3 -pady {10 4}
+    grid $d.pad -row 3 -column 0 -columnspan 3 -pady {10 4}
     button $d.pad.up    -text "↑" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d up]
     button $d.pad.down  -text "↓" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d down]
     button $d.pad.left  -text "←" -width 3 -command [list ::VMDHole::_axis_stick_nudge_cur $d left]
@@ -24038,7 +24115,7 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     grid $d.pad.canv  -row 1 -column 1
     grid $d.pad.right -row 1 -column 2
     grid $d.pad.down  -row 2 -column 1
-    add_tooltip $d.pad.canv "Drag: moves the point in the direction you drag, relative to the CURRENT view. For CVECT, left/right turn it flat in the screen plane and up/down tilt it toward or away from you."
+    add_tooltip $d.pad.canv "For a point: drag moves it in the direction you drag, relative to the CURRENT view. For CVECT: the knob's POSITION is the direction - centre points at you, the rim lies flat in the screen plane that way. Drag back to the same spot for the same direction, every time."
     bind $d.pad.canv <ButtonPress-1> [list ::VMDHole::_axis_stick_drag_start $d %x %y]
     bind $d.pad.canv <B1-Motion>     [list ::VMDHole::_axis_stick_drag_motion $d %x %y]
     bind $d.pad.canv <ButtonRelease-1> [list ::VMDHole::_axis_stick_drag_end $d]
@@ -24051,12 +24128,10 @@ proc ::VMDHole::show_axis_stick_dialog {{mode ""}} {
     pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
     pack $d.sv.val_l -side left -padx {10 4}
     pack $d.sv.val_v -side left
-    grid $d.sv -row 3 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 10}
-    add_tooltip $d.sv.step_e "Per click: \u00c5 for a point, degrees of tilt for CVECT. Also the drag sensitivity."
+    grid $d.sv -row 4 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 10}
+    add_tooltip $d.sv.step_e "Per click: \u00c5 for a point, or degrees toward the rim for CVECT."
 
-    button $d.close -text "Close" -command [list ::VMDHole::_axis_stick_close $d]
     wm protocol $d WM_DELETE_WINDOW [list ::VMDHole::_axis_stick_close $d]
-    grid $d.close -row 7 -column 0 -columnspan 3 -pady {0 10}
     grid columnconfigure $d 2 -weight 1
     _axis_stick_sync_val_label $d
     trace add variable ::VMDHole::state(axis_stick_mode) write [list ::VMDHole::_axis_stick_sync_val_label_trace $d]
@@ -24081,6 +24156,7 @@ proc ::VMDHole::_axis_stick_close {d} {
 proc ::VMDHole::_axis_stick_nudge_cur {d dir} {
     variable state
     _axis_stick_nudge $state(axis_stick_mode) $dir
+    _axis_stick_redraw_knob $d
 }
 
 proc ::VMDHole::_axis_stick_sync_val_label {d} {
@@ -24088,7 +24164,7 @@ proc ::VMDHole::_axis_stick_sync_val_label {d} {
     if {![winfo exists $d.sv.val_v]} { return }
     catch {$d.sv.val_v configure -textvariable ::VMDHole::state([_axis_stick_key $state(axis_stick_mode)])}
 }
-proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d }
+proc ::VMDHole::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d; _axis_stick_redraw_knob $d }
 
 proc ::VMDHole::_axis_stick_dialog_closed {d args} {
     catch {trace remove variable ::VMDHole::state(axis_stick_mode) write         [list ::VMDHole::_axis_stick_sync_val_label_trace $d]}

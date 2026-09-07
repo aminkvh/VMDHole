@@ -47,14 +47,20 @@ atoms. HOLE searches in planes normal to the resulting vector. A poor direction 
 calculation through the wrong cavity, so always inspect the centreline.
 
 The **⌖** button beside either field opens an on-screen stick: drag the pad or
-click the arrows to move `CPOINT`, or tilt `CVECT`, relative to the current
-view, so up, down, left and right always match the screen whatever the model's
-rotation. `CPOINT` moves by the step in Å, and its page also offers **COG**
-and **COR**. `CVECT` turns by the step in degrees: left and right rotate it
-flat in the screen plane, up and down tilt it toward or away from you, so it
-only ever changes direction (HOLE uses nothing else of it). The same dialog
-holds the per-frame modes described below, and the cue is shown while it is
-open.
+click the arrows, relative to the current view, so up, down, left and right
+always match the screen whatever the model's rotation. `CPOINT`'s page moves
+it by the step in Å and offers **COG** and **COR** next to Close.
+
+`CVECT`'s page controls direction, not position, so the pad works like a
+trackball rather than a joystick: the knob's *position* is the direction, not
+its motion. Centre means CVECT points straight at you; drag toward the rim
+and it swings to lie flat in the screen plane in that direction - drag to the
+right edge and CVECT lies flat pointing right, release and drag back to
+centre and it points at you again, the same way every time. Arrow clicks move
+the knob by the step in degrees instead of a mouse. **Guess** and **Use Z**
+sit above the pad for a quick starting direction; **Compute** from two points
+is below it. The same dialog holds the per-frame modes described below, and
+the cue is shown while it is open.
 
 For a trajectory, `CPOINT` may be static, carried by a local rigid-body fit
 (**Stabilize**), or re-centred on nearby atoms (**Track**). A two-point `CVECT`

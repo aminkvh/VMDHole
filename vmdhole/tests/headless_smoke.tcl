@@ -5067,22 +5067,48 @@ if {[::VMDHole::sos_triangle_has_feature ionflowpath]} {
 } else {
     chk "kernel path mode (skipped: binary has no ionflowpath)" 1 1
 }
-# The CVECT stick is a rotation: a quarter turn of x about z is y, and the
-# length never changes.
-set ::VMDHole::state(cvect) "1 0 0"
-::VMDHole::_axis_stick_rotate 0 0 1 90
+# The CVECT stick is an arcball: the knob's POSITION on the pad, not its
+# motion history, is the whole story - drag it back to the same spot and
+# CVECT is back to the same vector. Basis = screen axes aligned with world
+# axes (right=x, up=y, toward=z) so the expected numbers are exact.
+set _basis {1 0 0  0 1 0  0 0 1}
+lassign [::VMDHole::_axis_stick_knob_from_cvect {0 0 1} $_basis] _nx _ny
+chk "knob at rest (centre) is CVECT pointing at the viewer" \
+    [expr {abs($_nx) < 1e-9 && abs($_ny) < 1e-9}] 1
+set _v [::VMDHole::_axis_stick_cvect_from_knob 1.0 0.0 $_basis]
+chk "knob pushed fully right is CVECT flat in the screen plane, to the right" \
+    [expr {[lindex $_v 0] > 0.999 && abs([lindex $_v 1]) < 1e-6 && abs([lindex $_v 2]) < 1e-6}] 1
+set _v [::VMDHole::_axis_stick_cvect_from_knob 0.0 1.0 $_basis]
+chk "knob pushed fully up is CVECT flat in the screen plane, upward" \
+    [expr {[lindex $_v 1] > 0.999 && abs([lindex $_v 0]) < 1e-6 && abs([lindex $_v 2]) < 1e-6}] 1
+set _v [::VMDHole::_axis_stick_cvect_from_knob 0.3 -0.4 $_basis]
+lassign [::VMDHole::_axis_stick_knob_from_cvect $_v $_basis] _nx _ny
+chk "knob position round-trips through CVECT and back (no drift)" \
+    [expr {abs($_nx-0.3) < 1e-9 && abs($_ny+0.4) < 1e-9}] 1
+chk "every knob position gives a unit CVECT" \
+    [expr {abs(([lindex $_v 0]**2+[lindex $_v 1]**2+[lindex $_v 2]**2)-1) < 1e-9}] 1
+
+# _axis_stick_nudge resolves the view basis through a live molecule - give it
+# one of its own rather than trust whatever the suite left state(molid) at.
+set _svmid $::VMDHole::state(molid)
+set _stkmol [mol new]
+set ::VMDHole::state(molid) $_stkmol
+molinfo $_stkmol set rotate_matrix {{{1 0 0 0} {0 1 0 0} {0 0 1 0} {0 0 0 1}}}
+# 0.6/0/0.8, not 1/0/0: a click AT the rim clamps ("right" from the rim is a
+# no-op, so "right" then "left" would not be inverses there - an interior
+# point is what makes this a fair round-trip check.
+set ::VMDHole::state(cvect) "0.6 0.0 0.8"
+set ::VMDHole::state(cvect_def_p1) "x"; set ::VMDHole::state(cvect_def_p2) "y"
+::VMDHole::_axis_stick_nudge cvect right
+::VMDHole::_axis_stick_nudge cvect left
 lassign $::VMDHole::state(cvect) _rx _ry _rz
-chk "stick tilt: x turned 90 deg about z is y" \
-    [expr {abs($_rx) < 1e-6 && abs($_ry-1) < 1e-6 && abs($_rz) < 1e-6}] 1
-::VMDHole::_axis_stick_rotate 1 0 0 30
-lassign $::VMDHole::state(cvect) _rx _ry _rz
-# the field holds 4 decimals, so 1e-3 is the resolution of the check
-chk "stick tilt keeps CVECT a unit vector" \
-    [expr {abs(sqrt($_rx*$_rx+$_ry*$_ry+$_rz*$_rz)-1) < 1e-3}] 1
-chk "stick tilt: 30 deg about x moves y toward z" \
-    [expr {abs($_ry-cos(30*3.14159265358979/180)) < 1e-3 && abs($_rz-sin(30*3.14159265358979/180)) < 1e-3}] 1
-chk "stick tilt drops the two-point CVECT definition" \
+# state stores 4 decimals, so two nudges round-trip to that resolution, not bit-for-bit
+chk "stick nudge right then left returns to (near) the same CVECT" \
+    [expr {abs($_rx-0.6) < 1e-3 && abs($_ry) < 1e-3 && abs($_rz-0.8) < 1e-3}] 1
+chk "stick nudge drops the two-point CVECT definition" \
     [expr {$::VMDHole::state(cvect_def_p1) eq "" && $::VMDHole::state(cvect_def_p2) eq ""}] 1
+mol delete $_stkmol
+set ::VMDHole::state(molid) $_svmid
 set ::VMDHole::state(cvect) "0 0 1"
 # Voxel thinning: 22,439 raw dots -> 4,329, 1,705 ms -> 346 ms (4.9x), and only
 # 10 of 424 lining residues differ from the unthinned answer.
