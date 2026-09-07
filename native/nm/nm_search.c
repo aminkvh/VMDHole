@@ -65,7 +65,7 @@ static double radius_for(const char *name4, const char *res3) {
 
 /* ---- pdb ------------------------------------------------------------- */
 /* The plugin's packed coordinate record (input_frame.vhb, written by
-   _write_hole_coord_bin): "VMDHOLEC", int32 version, int32 natoms, then
+   _write_hole_coord_bin): "VMDPFC01", int32 version, int32 natoms, then
    5*n name field (PDB cols 12-16), 3*n residue names, n chain ids, int32*n
    resids, and x[n], y[n], z[n] doubles, all native-endian. Coordinates are
    rounded through "%.3f" so this path gives exactly the result the PDB path
@@ -105,7 +105,7 @@ static void load_pdb(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) { perror(path); exit(1); }
     char line[256];
-    if (fread(line, 1, 8, f) == 8 && !memcmp(line, "VMDHOLEC", 8)) {
+    if (fread(line, 1, 8, f) == 8 && !memcmp(line, "VMDPFC01", 8)) {
         if (!load_vhb(f)) { fprintf(stderr, "%s: unreadable packed coordinate record\n", path); exit(1); }
         fclose(f);
         return;

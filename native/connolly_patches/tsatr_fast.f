@@ -15,7 +15,7 @@ C * close - HOLE's sphere search is chaotic enough that 1e-12 A of    *
 C * extra precision would move the .sph output.                       *
 C *                                                                  *
 C * Layout (little-endian, native, same host writes and reads it):    *
-C *   "VMDHOLEC" 8 bytes | version int4 | natoms int4                 *
+C *   "VMDPFC01" 8 bytes | version int4 | natoms int4                 *
 C *   natoms x char5   PDB cols 13-17 (HTEST then the 4-char name)    *
 C *   natoms x char3   PDB cols 18-20 (residue name)                  *
 C *   natoms x char1   PDB col  22    (chain)                         *
@@ -192,7 +192,7 @@ C all hole.f does with the unit before it closes it.
         GOTO 55555
       ENDIF
       READ( SIN, IOSTAT= VHIOS) VHMAG
-      IF ((VHIOS.NE.0) .OR. (VHMAG.NE.'VMDHOLEC')) THEN
+      IF ((VHIOS.NE.0) .OR. (VHMAG.NE.'VMDPFC01')) THEN
         WRITE(NOUT,*) '***ERROR***', CHAR(7)
         WRITE(NOUT,*) 'Not a VMDPathFinder binary co-ord file: ',
      &                VHFNAM(1:VHL)

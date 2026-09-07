@@ -21144,7 +21144,7 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     grid $d.hp.se_mb -row 2 -column 3 -sticky w -padx {2 6}
     add_tooltip $d.hp.se_mb "Monte Carlo: HOLE\'s annealing, with the rows below. Nelder-Mead: deterministic and\
         faster; no seed, SHORTO or extra cards (an extra card switches the run back to HOLE)."
-    grid [label $d.hp.ce_l -text "Connolly surface" -anchor w] -row 3 -column 4 -sticky w
+    grid [label $d.hp.ce_l -text "Connolly surface" -anchor w] -row 3 -column 0 -sticky w -pady 3
     switch -- $state(conn_engine) {
         fast    { set state(conn_engine_disp) "Fast port" }
         default { set state(conn_engine_disp) "HOLE conn" }
@@ -21155,13 +21155,13 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     foreach {_cev _ced} {hole {HOLE conn} fast {Fast port}} {
         $d.hp.ce_mb.m add command -label $_ced -command [list ::VMDPathFinder::_set_conn_engine $_cev $_ced]
     }
-    grid $d.hp.ce_mb -row 3 -column 5 -sticky w -padx {4 0}
+    grid $d.hp.ce_mb -row 3 -column 1 -sticky w -padx {2 6}
     add_tooltip $d.hp.ce_mb "HOLE\'s conn, or the nm_search port of it: same dots, faster. Nelder-Mead always uses the port."
     set ::VMDPathFinder::_hp_frame $d.hp
     after idle ::VMDPathFinder::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
         -variable ::VMDPathFinder::state(conn_pore_gate)
-    grid $d.hp.cgate_c -row 3 -column 2 -columnspan 2 -sticky w -pady 2
+    grid $d.hp.cgate_c -row 3 -column 2 -columnspan 4 -sticky w -pady 2
     add_tooltip $d.hp.cgate_c "Drops the Connolly volume that escapes sideways through openings, keeping the pore. Its Margin lives on the main panel, next to Show nearby."
     # Margin itself is NOT here - it moved to the main panel's color row, in
     # front of Color, because it governs what pore_lat/pore_lobes SHOW and is
@@ -44875,7 +44875,7 @@ proc ::VMDPathFinder::_write_hole_coord_bin {sel path natoms idblob} {
     # identity half never changes between frames, so it is appended verbatim.
     set fh [open $path w]
     fconfigure $fh -translation binary
-    puts -nonewline $fh "VMDHOLEC"
+    puts -nonewline $fh "VMDPFC01"
     puts -nonewline $fh [binary format ii 1 $natoms]
     puts -nonewline $fh $idblob
     puts -nonewline $fh [binary format d* [$sel get x]]
