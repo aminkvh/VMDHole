@@ -1,6 +1,6 @@
 # SHA-256 manifest - VMDHole 1.0.1 numerical freeze
-# generated: 2026-09-07T01:14:34Z
-# code snapshot: git commit 71d9ae9c5d7f7a43ce71c4630ce75278c1141bba (tree 0d9b14e69dec0db8193cc6e195edb78d18e5d8e4)
+# generated: 2026-09-07T06:14:30Z
+# code snapshot: git commit 80c1229aee2b0e22df7f6ebde81c8b3d716acf19 (tree da29dbede95c4b993ab832c9bcd070957c79eaa5)
 # scope: all files in paper/benchmarks/results/ + the benchmark inputs the env stage checksummed (see checksum_manifest.log)
 #
 ## results/ (raw outputs, processed CSVs, canonical doc, figures)
@@ -16,15 +16,15 @@ f9228ac02304252e38f3dfaa7dbc4cd1067b03d08d3a190d425faf265dd81ce8  ./fig_accuracy
 b804305ee31259365c3c51fe650a3ba3b15dfc40cce920467c864484ad5c201e  ./fig_accuracy.png
 d9a5f0925eb25799b1b0d5603b5811ef60e3923b1089fd90f4ca02e5135c8753  ./fig_overview.pdf
 802e218b8ed29eba7c0dc20437b196143ed4db42f93de1336d7e5810f4b4ff29  ./fig_overview.png
-b1dd49445ecf966e3d46e63d347d34c30b9ebf1e29c5c776f1933b9bd76321ec  ./fig_performance.eps
-17f305f89e45af0f4018943fde4e10425d5c6d2a0878b8ce85ce7308216e479b  ./fig_performance.pdf
-9131eefb7881043b079dc310bffb91f8f12a467e17365e673a914fcbb987f914  ./fig_performance.png
-b13a7e09bd01ef31ff6179736b55ec4a2ae9683079662b96407bdbecb4926020  ./fig_performance_provenance.txt
-387dfb5f244645732da0d04a39945e3275d167e64908f870d92d7a38b466dbdc  ./fig_pipeline_stages.eps
-e669fe1e885e6af60d809f02a4e803c731f085e3d4d3246cf327611bbe1be2ca  ./fig_pipeline_stages.pdf
+28b57503314733815926022285e21694594f4998bf99c5d06e95322b86feb535  ./fig_performance.eps
+019c326c04b92244507da0df9041513a5b621b109119b1b6ac8d393358c34aaf  ./fig_performance.pdf
+6324ae819a2c0af734bd7c8774ec02e7a556900ac85b0c1b956a05225f26143a  ./fig_performance.png
+8df188f72c36d91dcd70300a1d8dc8209071dcd7cc067fafc0fe91bb071df7fc  ./fig_performance_provenance.txt
+3ac92db527697e56904fdb8c47c0f5b3114feddd8ae597537131c47d96269ae5  ./fig_pipeline_stages.eps
+68b5e9ea05dec2bdeebab40bb0842d985015fae9894618aedddbf1c9a1fd73b1  ./fig_pipeline_stages.pdf
 989546ac5a41be08c79e5780b106f75da8fc3dad235e76c1149daf43a09623eb  ./fig_pipeline_stages.png
 d9a4c90b1b530020228b6fd2a8e1ae2614ccf2f5023aa840693eeaff285b57ad  ./fig_pipeline_stages_provenance.txt
-d9aa7d7367eb0e85f4e81808ef0865d52692b53e61b6074d09ee8d2a1671a90e  ./FINAL_NUMERICAL_RESULTS.md
+cdd211415d5c2badd3f82a01b84378c63542ed4f403abd6227106550609bf442  ./FINAL_NUMERICAL_RESULTS.md
 c360cce4548dd2d4a60848f2d2142ae706ea0883698d385078e01d99942e9f92  ./gate_surface.log
 ea0651668570fb63e3d1ecd2fed1b4921fd41a397c2b84d587ceb51ba603dd0f  ./hydro_qco_parity.log
 3b5fce5ec807b53625eeecac15e63b559777cfe1c2770237251cb8a1c51638de  ./o2_rebuild.csv
@@ -36,6 +36,7 @@ c05c4498da55313d5cb1ce89d581a759615607b805d093c32882f4ed491c260a  ./regression.l
 3f12105f422d7128e841b832666b481902af27d75dcaea63a3d7154ee0af86d7  ./scaling.csv
 1c1d714696fee7bda12cdb1b7cb9f3bc506a49a1b320c0605960eaafa1f36bd1  ./sos_scaling.csv
 c809b1b79d6fe33f581558b6ffcff6fa2d9c7ff334f546107f182e12d948429e  ./sos_sweep.log
+9e9ca20b6272a7cc37c465b2f8ee877b4a96dbd114caa137c0fa86c9a739efe9  ./thread_scaling.csv
 8940b0b9d829e9dd7b87224614853298f8f3ee6eec873fb7833e4e63c52a1a4a  ./tool_versions.txt
 7b7bbb22a83861ea1ba05e1ed74728bf585a4f032c17177688f463c8495ed983  ./tunnel_clustering_real_pool.csv
 c78215687c67630d98fab949f19b02ed19c27a62a48e30b4ea68458449fd3fe8  ./tunnel_clustering_scaling.csv
