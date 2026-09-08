@@ -141,13 +141,27 @@ A **cavity** is the pocket itself - a volume - as distinct from a route, which
 is a path out of one. Routes start inside cavities, so the two are views of the
 same search: the room and the corridor leaving it.
 
-**Cavities** lists what MOLE found in the displayed frame: type (*Cavity*, or
-*Void* when nothing lines it), this frame's volume, the mean and spread over the
-frames the cavity was tracked through, how often it was seen, its **max probe**
-(the largest sphere that fits inside - whether your ligand fits at all), depth,
-and the boundary/inner residue counts. Click a column header to sort. **Residues**
-opens the two residue sets with their MOLE properties and a ready-made VMD
-selection string.
+Cavities are an **input** to the tunnel search, not a result of it. MOLE derives
+them from each frame's own Delaunay geometry and then picks its automatic origins
+*inside* them, so re-running the search from one cavity cannot change which
+cavities exist - the list is a property of the structure, and it is expected to
+look the same after a re-run.
+
+**Cavities** lists what MOLE found in the displayed frame: type (*Cavity* when it
+opens to the surface - a pocket - or *Void* when it is fully enclosed), this
+frame's volume, the mean and spread over the frames the cavity was tracked
+through, how often it was seen, its **max probe** (the largest sphere that fits
+inside - whether your ligand fits at all), depth, the **Boundary / Inner**
+residue counts, and the **Start pt** the chosen rule below would search from.
+Click a column header to sort. **Residues** opens the two residue sets - boundary
+residues line the opening, inner residues are buried in it - with their MOLE
+properties and a ready-made VMD selection string.
+
+Most cavities are transient. On a 50-frame trajectory a typical run tracks ~315
+of them, of which ~108 appear in 5% of frames or fewer and only ~11 in half or
+more. The window therefore shows only pockets present in at least 25% of frames,
+with the count ("46 of 315 shown") beside the **All pockets** box that lifts the
+filter. The dozen that persist are what a trajectory is actually described by.
 
 ### Using a cavity to start a search
 

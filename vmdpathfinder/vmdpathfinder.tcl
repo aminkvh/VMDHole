@@ -18859,6 +18859,13 @@ proc ::VMDPathFinder::_cavity_origin {cv {rule ""}} {
     return [expr {[llength $mole] == 3 ? $mole : $caver}]
 }
 
+proc ::VMDPathFinder::_cavity_origin_short {cv} {
+    # The chosen rule's start point, short enough for a table cell.
+    set pt [_cavity_origin $cv]
+    if {[llength $pt] != 3} { return "-" }
+    return [format "%.1f %.1f %.1f" {*}$pt]
+}
+
 proc ::VMDPathFinder::_cavity_tracks {} {
     # Cavities followed ACROSS FRAMES, each with a STABLE id of its own.
     #
@@ -19332,7 +19339,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         return
     }
     foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole
-                   cavity_prop none} {
+                   cavity_prop none cavity_all_tracks 0 cavity_min_seen 25} {
         if {![info exists state($k)]} { set state($k) $d }
     }
     set state(cavity_prop_disp) [_tunnel_prop_label_short $state(cavity_prop)]
@@ -19356,9 +19363,11 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     _menu_two_columns $t.ctl.pm.m
     label $t.ctl.rl -text "  Start point:"
     radiobutton $t.ctl.rm -text "deepest (MOLE)" -value mole \
-        -variable ::VMDPathFinder::state(cavity_origin_rule)
+        -variable ::VMDPathFinder::state(cavity_origin_rule) \
+        -command ::VMDPathFinder::show_tunnel_cavities
     radiobutton $t.ctl.rc -text "largest sphere (CAVER)" -value caver \
-        -variable ::VMDPathFinder::state(cavity_origin_rule)
+        -variable ::VMDPathFinder::state(cavity_origin_rule) \
+        -command ::VMDPathFinder::show_tunnel_cavities
     pack $t.ctl.all $t.ctl.none $t.ctl.solid $t.ctl.sph $t.ctl.pl $t.ctl.pm \
         $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
@@ -19372,7 +19381,23 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # ONE grid for the header and the rows, inside a scrolling frame. Two
     # grids in two frames cannot share column widths, so every row drifted out
     # of line with its heading the moment a cell's text changed length.
-    set _tracks [_cavity_tracks]
+    set _every [_cavity_tracks]
+    # Most tracks are transient: on a 50-frame run 108 of 315 appear in <=5% of
+    # frames. Listing them all buries the dozen pockets that persist, which is
+    # what a trajectory is actually described by.
+    set _tracks {}
+    foreach _tr $_every {
+        if {$state(cavity_all_tracks) || [dict get $_tr seen] >= $state(cavity_min_seen)} {
+            lappend _tracks $_tr
+        }
+    }
+    checkbutton $t.ctl.allt -text "All pockets" \
+        -variable ::VMDPathFinder::state(cavity_all_tracks) \
+        -command ::VMDPathFinder::show_tunnel_cavities
+    label $t.ctl.cnt -foreground gray40 -font {Helvetica 8} \
+        -text "[llength $_tracks] of [llength $_every] shown"
+    pack $t.ctl.allt $t.ctl.cnt -side left -padx {6 0}
+    add_tooltip $t.ctl.allt "Off: only pockets present in at least $state(cavity_min_seen)% of analysed frames. On: every track, including one-frame transients."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
     set _hmax 460
@@ -19386,14 +19411,15 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
 
     set _cols {draw "Draw" "Draw this cavity, in every frame it appears in."
                id "Id" "Tracked cavity id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."
-               type "Type" "Cavity: has boundary residues. Void: fully enclosed."
+               type "Type" "Cavity: opens to the surface - a pocket. Void: fully enclosed, no boundary residues."
                vol "Volume" "This frame's volume, A^3. Click to sort."
                mean "Mean +/- SD" "Mean volume over the frames this cavity was tracked through. Click to sort."
                seen "Seen %" "Percentage of analysed frames this cavity was found in. Click to sort."
                probe "Max probe" "Radius of the largest sphere that fits inside. Click to sort."
                depth "Depth" "Depth in tetrahedron layers from the surface."
-               res "Bnd/Inner" "Boundary and inner residue counts in this frame."
-               rank "Rank here" "What MOLE ranked this cavity in the displayed frame - per frame, unlike Id."}
+               res "Boundary / Inner" "How many lining residues touch the surface opening (boundary) and how many are buried inside it. The Residues button lists them."
+               rank "Rank here" "What MOLE ranked this cavity in the displayed frame - per frame, unlike Id."
+               start "Start pt" "Where a tunnel search started from this pocket would begin, by the rule chosen above. Switching MOLE/CAVER changes this column."}
     set c 0
     foreach {key label tip} $_cols {
         set _sortable [expr {$key in {id vol mean seen probe depth}}]
@@ -19442,7 +19468,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             [format %.2f [dict get $tr maxprobe]] \
             [expr {$_here ? [dict get $cv depth] : "-"}] \
             [expr {$_here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
-            [expr {$_here ? $id : "absent"}]]
+            [expr {$_here ? $id : "absent"}] \
+            [expr {$_here ? [_cavity_origin_short $cv] : "-"}]]
         set c 1
         foreach v $vals {
             # numbers right-aligned, names left: a column of figures that is
@@ -19467,7 +19494,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
 
     set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
     label $t.note -justify left -wraplength 840 -foreground gray40 -font {Helvetica 8} -text \
-        "Id is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps)."
+        "A cavity is where a tunnel STARTS. MOLE derives cavities from each frame's own Delaunay geometry and then picks its automatic origins inside them, so the cavity list is an INPUT to the tunnel search, not a result of it - running the search again from one cavity cannot change which cavities exist. Type says which kind: Cavity opens to the surface (a pocket), Void is fully enclosed.\n\nId is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps)."
     grid $t.note -row 2 -column 0 -sticky ew -padx 8 -pady {4 8}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
