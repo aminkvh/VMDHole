@@ -6081,12 +6081,26 @@ if {$ntun > 0} {
         set ::VMDPathFinder::state(cavity_sort_dir) desc
         ::VMDPathFinder::show_tunnel_cavities
         update idletasks; update
-        # first data row's Volume cell: rows start at grid row 1 (row 0 is the
-        # header, which now shares this same grid), column 3 is Volume
-        set _fd ""; catch {set _fd [$w.tuncav.sc.c.inner.v1_3 cget -text]}
+        # Find the Volume cell by its HEADING, not by a column index: the index
+        # moved twice already (the Type column became conditional, and the two
+        # volume columns merged), and each time this read a different column and
+        # "failed" for a reason that had nothing to do with sorting.
+        proc _cav_volcol {w} {
+            set g $w.tuncav.sc.c.inner
+            for {set c 0} {$c < 20} {incr c} {
+                if {![winfo exists $g.h$c]} { continue }
+                if {[string match "Volume*" [$g.h$c cget -text]]} { return $c }
+            }
+            return -1
+        }
+        set _vc [_cav_volcol $w]
+        report "the cavity table still has a Volume column" [expr {$_vc >= 0}] \
+               "(no heading starting \"Volume\")"
+        set _fd ""; catch {set _fd [$w.tuncav.sc.c.inner.v1_$_vc cget -text]}
         ::VMDPathFinder::_cavity_sort vol
         update idletasks; update
-        set _fa ""; catch {set _fa [$w.tuncav.sc.c.inner.v1_3 cget -text]}
+        set _vc [_cav_volcol $w]
+        set _fa ""; catch {set _fa [$w.tuncav.sc.c.inner.v1_$_vc cget -text]}
         report "clicking a cavity column header reverses the sort" \
                [expr {$_fd ne "" && $_fa ne "" && $_fd != $_fa}] \
                "(desc '$_fd', asc '$_fa' - blank means the cell path moved)"

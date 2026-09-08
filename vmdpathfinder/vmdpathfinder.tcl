@@ -18897,22 +18897,27 @@ proc ::VMDPathFinder::_cavity_tracks {} {
     }
     set tracks {}
     set nfr 0
+    # The match loop runs (frames x cavities x tracks) times - 830k on a
+    # 50-frame run - so its body is kept off dicts: centroids live in three flat
+    # lists and "already matched this frame" is an integer compare instead of a
+    # dict lookup. Squared distances, no pow/sqrt. Same matches either way.
+    set tcx {}; set tcy {}; set tcz {}; set tlast {}
+    set cut2 [expr {$cut * $cut}]
     foreach fr $tunnel_result_frames {
         if {![info exists tunnel_lining($fr)]} { continue }
         incr nfr
         foreach {id cv} [_tunnel_cavities $fr] {
             set c [_cavity_centroid $cv]
             if {[llength $c] != 3} { continue }
-            set best -1; set bestd $cut
+            lassign $c cx cy cz
+            set best -1; set bestd $cut2
             set i -1
-            foreach t $tracks {
+            foreach ax $tcx ay $tcy az $tcz lf $tlast {
                 incr i
                 # one cavity per track per frame - the nearest wins
-                if {[dict exists $t ids $fr]} { continue }
-                set tc [dict get $t centroid]
-                set d [expr {sqrt(pow([lindex $c 0]-[lindex $tc 0],2)
-                                + pow([lindex $c 1]-[lindex $tc 1],2)
-                                + pow([lindex $c 2]-[lindex $tc 2],2))}]
+                if {$lf == $fr} { continue }
+                set dx [expr {$cx - $ax}]; set dy [expr {$cy - $ay}]; set dz [expr {$cz - $az}]
+                set d [expr {$dx*$dx + $dy*$dy + $dz*$dz}]
                 if {$d < $bestd} { set bestd $d; set best $i }
             }
             if {$best < 0} {
@@ -18920,6 +18925,7 @@ proc ::VMDPathFinder::_cavity_tracks {} {
                     ids [dict create $fr $id] centroid $c \
                     volumes [list [dict get $cv volume]] \
                     maxprobe [_cavity_max_probe $cv] type [dict get $cv type]]
+                lappend tcx $cx; lappend tcy $cy; lappend tcz $cz; lappend tlast $fr
             } else {
                 set t [lindex $tracks $best]
                 dict lappend t frames $fr
@@ -18934,6 +18940,10 @@ proc ::VMDPathFinder::_cavity_tracks {} {
                 foreach a $tc b $c { lappend nc [expr {$a + ($b-$a)/double($n)}] }
                 dict set t centroid $nc
                 lset tracks $best $t
+                lset tcx $best [lindex $nc 0]
+                lset tcy $best [lindex $nc 1]
+                lset tcz $best [lindex $nc 2]
+                lset tlast $best $fr
             }
         }
     }
@@ -19269,6 +19279,214 @@ proc ::VMDPathFinder::_cavity_property_range {prop} {
     return {0.0 1.0}
 }
 
+proc ::VMDPathFinder::_cavity_volume_plot {tid} {
+    # This pocket's volume across the trajectory, following its TRACK - the same
+    # rule draw_tunnel_trends_plot follows for a route, and for the same reason:
+    # MOLE's per-frame rank is not an identity.
+    variable w
+    variable tunnel_result_frames
+    set tr [_cavity_track_by_tid $tid]
+    if {$tr eq ""} { return }
+    set t $w.tuncavplot
+    if {[winfo exists $t]} { destroy $t }
+    toplevel $t
+    wm withdraw $t
+    wm title $t "Pocket $tid volume over time"
+    set cw 640; set ch 340
+    canvas $t.cv -width $cw -height $ch -background white -highlightthickness 0
+    pack $t.cv -fill both -expand 1 -padx 6 -pady 6
+    set cv $t.cv
+    set frames [dict get $tr frames]
+    set vols   [dict get $tr volumes]
+    if {[llength $frames] < 2} {
+        $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -justify center \
+            -width [expr {$cw-40}] -text \
+            "Pocket $tid appears in only [llength $frames] analysed frame.\nToo few occurrences to plot."
+        _center_toplevel $t $cw $ch
+        wm deiconify $t
+        return
+    }
+    set ml 62; set mr 20; set mt 34; set mb 40
+    set pw [expr {$cw-$ml-$mr}]; set ph [expr {$ch-$mt-$mb}]
+    set xmin [lindex $tunnel_result_frames 0]
+    set xmax [lindex $tunnel_result_frames end]
+    if {$xmax <= $xmin} { set xmax [expr {$xmin+1}] }
+    set ymin 1e30; set ymax -1e30
+    foreach v $vols { if {$v < $ymin} { set ymin $v }; if {$v > $ymax} { set ymax $v } }
+    set mean [dict get $tr vol_mean]; set sd [dict get $tr vol_sd]
+    if {$mean-$sd < $ymin} { set ymin [expr {$mean-$sd}] }
+    if {$mean+$sd > $ymax} { set ymax [expr {$mean+$sd}] }
+    if {$ymax <= $ymin} { set ymax [expr {$ymin+1.0}] }
+    set ypad [expr {($ymax-$ymin)*0.08 + 0.01}]
+    set ymin [expr {$ymin-$ypad}]; set ymax [expr {$ymax+$ypad}]
+    if {$ymin < 0} { set ymin 0.0 }
+    # mean +/- SD as a band: "is this frame typical?" answered by eye.
+    set yb1 [_tpp_y [expr {$mean+$sd}] $ymin $ymax $mt $ph]
+    set yb2 [_tpp_y [expr {$mean-$sd}] $ymin $ymax $mt $ph]
+    $cv create rectangle $ml $yb1 [expr {$ml+$pw}] $yb2 -fill "#eaf1fb" -outline ""
+    set ymn [_tpp_y $mean $ymin $ymax $mt $ph]
+    $cv create line $ml $ymn [expr {$ml+$pw}] $ymn -fill "#1a5fb4" -dash {4 3}
+    $cv create rectangle $ml $mt [expr {$ml+$pw}] [expr {$mt+$ph}] -outline "#999999"
+    # Break the line where the pocket is absent: a straight segment across
+    # missing frames reads as continuity that is not there.
+    set seg {}; set prev ""
+    set _ai -1
+    foreach fr $tunnel_result_frames {
+        incr _ai
+        set k [lsearch -exact $frames $fr]
+        if {$k < 0} { continue }
+        set v [lindex $vols $k]
+        if {$prev ne "" && $_ai != $prev + 1} {
+            if {[llength $seg] >= 4} { $cv create line $seg -fill "#c01c28" -width 2 }
+            set seg {}
+        }
+        lappend seg [_tpp_x $fr $xmin $xmax $ml $pw] [_tpp_y $v $ymin $ymax $mt $ph]
+        set prev $_ai
+    }
+    if {[llength $seg] >= 4} { $cv create line $seg -fill "#c01c28" -width 2 }
+    foreach fr $frames v $vols {
+        set xx [_tpp_x $fr $xmin $xmax $ml $pw]; set yy [_tpp_y $v $ymin $ymax $mt $ph]
+        $cv create oval [expr {$xx-2}] [expr {$yy-2}] [expr {$xx+2}] [expr {$yy+2}] \
+            -fill "#c01c28" -outline ""
+    }
+    for {set k 0} {$k <= 4} {incr k} {
+        set xv [expr {round($xmin + ($xmax-$xmin)*$k/4.0)}]
+        set xx [_tpp_x $xv $xmin $xmax $ml $pw]
+        $cv create line $xx [expr {$mt+$ph}] $xx [expr {$mt+$ph+4}] -fill "#666666"
+        $cv create text $xx [expr {$mt+$ph+6}] -anchor n -font {Helvetica 7} -text $xv
+        set yv [expr {$ymin + ($ymax-$ymin)*$k/4.0}]
+        set yy [_tpp_y $yv $ymin $ymax $mt $ph]
+        $cv create line [expr {$ml-4}] $yy $ml $yy -fill "#666666"
+        $cv create text [expr {$ml-6}] $yy -anchor e -font {Helvetica 7} -text [format %.0f $yv]
+    }
+    $cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} \
+        -text "Pocket $tid volume over time"
+    $cv create text [expr {$ml+$pw/2}] 26 -anchor n -font {Helvetica 7} -fill "#555555" \
+        -text [format "mean %.0f +/- %.0f A^3 (band); present in %d of %d analysed frames" \
+               $mean $sd [llength $frames] [llength $tunnel_result_frames]]
+    $cv create text 6 [expr {$mt+$ph/2}] -anchor w -font {Helvetica 7} -fill "#555555" \
+        -text "A^3"
+    _center_toplevel $t $cw [expr {$ch+16}]
+    wm deiconify $t
+}
+
+proc ::VMDPathFinder::_cavity_show_lining {frame id} {
+    # Boundary and inner lining as TWO reps in different colours, on the user's
+    # own molecule - the split is the whole point, so one rep over both sets
+    # would hide it. Same rep-index bookkeeping as the pore/tunnel lining reps:
+    # track the INDEX, not VMD's auto-generated rep name.
+    variable state
+    variable tunnel_lining
+    variable _cavity_lining_rep
+    if {![info exists tunnel_lining($frame)] \
+            || ![dict exists $tunnel_lining($frame) cav.$id]} { return }
+    set molid [_cavity_structure_molid]
+    if {$molid eq "" || $molid < 0} {
+        set state(status) "Cavity lining: no structure molecule to draw on."
+        return
+    }
+    if {![info exists _cavity_lining_rep]} { set _cavity_lining_rep [dict create] }
+    set cv [dict get $tunnel_lining($frame) cav.$id]
+    set n 0
+    foreach {which colour} {bres 7 ires 1} {
+        set sel {}
+        foreach e [dict get $cv $which] {
+            lappend sel "(resid [dict get $e resid] and chain [dict get $e chain])"
+        }
+        set key "$molid|$which"
+        if {![llength $sel]} {
+            if {[dict exists $_cavity_lining_rep $key]} {
+                catch {mol showrep $molid [dict get $_cavity_lining_rep $key] 0}
+            }
+            continue
+        }
+        set selstr "([join $sel { or }]) and noh"
+        incr n [llength $sel]
+        if {[dict exists $_cavity_lining_rep $key]} {
+            set idx [dict get $_cavity_lining_rep $key]
+            if {![catch {molinfo $molid get numreps} nr] && $idx < $nr} {
+                catch {mol modselect $idx $molid $selstr}
+                catch {mol showrep $molid $idx 1}
+                continue
+            }
+        }
+        mol representation Licorice 0.2 12.0 12.0
+        mol color ColorID $colour
+        mol selection $selstr
+        mol material Opaque
+        mol addrep $molid
+        dict set _cavity_lining_rep $key [expr {[molinfo $molid get numreps] - 1}]
+    }
+    # Name the TRACKED id, which is what the table shows - $id is MOLE's
+    # per-frame rank and is a different number on most frames.
+    set _tid [_cavity_track_for $frame $id]
+    set _lbl [expr {$_tid ne "" ? $_tid : "$id (frame rank)"}]
+    set state(status) "Pocket $_lbl lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red), $n residues on molecule $molid."
+}
+
+proc ::VMDPathFinder::_cavity_export_csv {} {
+    # Three tables, because cavity data is three shapes: one row per tracked
+    # pocket, one row per pocket PER FRAME, and one row per lining residue.
+    # Flattening them into a single sheet would repeat the per-pocket columns
+    # on every residue.
+    variable state
+    variable tunnel_result_frames
+    variable tunnel_lining
+    set tracks [_cavity_tracks]
+    if {![llength $tracks]} { set state(status) "Cavity export: nothing to export."; return }
+    set base [tk_getSaveFile -title "Export cavity data (writes three CSV files)" \
+        -initialdir [export_initial_dir] -initialfile "cavities.csv" \
+        -defaultextension .csv -filetypes {{"CSV" .csv} {"All files" *}}]
+    if {$base eq ""} { return }
+    set root [file rootname $base]
+    set written {}
+    # 1. per tracked pocket
+    set fh [open "${root}.csv" w]
+    puts $fh "tracked_id,type,n_frames_seen,seen_pct,volume_mean_A3,volume_sd_A3,max_probe_A"
+    foreach tr $tracks {
+        puts $fh [format "%s,%s,%d,%.1f,%.3f,%.3f,%.3f" [dict get $tr tid] [dict get $tr type] \
+            [llength [dict get $tr frames]] [dict get $tr seen] \
+            [dict get $tr vol_mean] [dict get $tr vol_sd] [dict get $tr maxprobe]]
+    }
+    close $fh
+    lappend written [file tail ${root}.csv]
+    # 2. per pocket per frame
+    set fh [open "${root}_per_frame.csv" w]
+    puts $fh "tracked_id,frame,mole_rank_in_frame,volume_A3,depth,n_boundary,n_inner"
+    foreach tr $tracks {
+        set tid [dict get $tr tid]
+        foreach fr [dict get $tr frames] {
+            set rk [_cavity_rank_in_frame $tid $fr]
+            if {$rk eq "" || ![dict exists $tunnel_lining($fr) cav.$rk]} { continue }
+            set cv [dict get $tunnel_lining($fr) cav.$rk]
+            puts $fh [format "%s,%s,%s,%.3f,%s,%d,%d" $tid $fr $rk [dict get $cv volume] \
+                [dict get $cv depth] [dict get $cv nboundary] [dict get $cv ninner]]
+        }
+    }
+    close $fh
+    lappend written [file tail ${root}_per_frame.csv]
+    # 3. one row per lining residue, in the displayed frame
+    set dfr [_tunnel_display_frame]
+    set fh [open "${root}_lining.csv" w]
+    puts $fh "tracked_id,frame,mole_rank_in_frame,role,resname,resid,chain"
+    if {[info exists tunnel_lining($dfr)]} {
+        foreach tr $tracks {
+            set tid [dict get $tr tid]
+            set rk [_cavity_rank_in_frame $tid $dfr]
+            if {$rk eq "" || ![dict exists $tunnel_lining($dfr) cav.$rk]} { continue }
+            set cv [dict get $tunnel_lining($dfr) cav.$rk]
+            foreach {which role} {bres boundary ires inner} {
+                foreach e [dict get $cv $which] {
+                    puts $fh "$tid,$dfr,$rk,$role,[dict get $e resname],[dict get $e resid],[dict get $e chain]"
+                }
+            }
+        }
+    }
+    close $fh
+    lappend written [file tail ${root}_lining.csv]
+    set state(status) "Cavity export: wrote [join $written {, }] to [file dirname $root]."
+}
+
 proc ::VMDPathFinder::_cavity_sort {col} {
     variable state
     if {[info exists state(cavity_sort_col)] && $state(cavity_sort_col) eq $col} {
@@ -19385,6 +19603,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # Most tracks are transient: on a 50-frame run 108 of 315 appear in <=5% of
     # frames. Listing them all buries the dozen pockets that persist, which is
     # what a trajectory is actually described by.
+    if {$state(cavity_sort_col) eq "mean"} { set state(cavity_sort_col) vol }
     set _tracks {}
     foreach _tr $_every {
         if {$state(cavity_all_tracks) || [dict get $_tr seen] >= $state(cavity_min_seen)} {
@@ -19396,7 +19615,10 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         -command ::VMDPathFinder::show_tunnel_cavities
     label $t.ctl.cnt -foreground gray40 -font {Helvetica 8} \
         -text "[llength $_tracks] of [llength $_every] shown"
+    button $t.ctl.exp -text "Export CSV" -command ::VMDPathFinder::_cavity_export_csv
     pack $t.ctl.allt $t.ctl.cnt -side left -padx {6 0}
+    pack $t.ctl.exp -side right -padx {6 0}
+    add_tooltip $t.ctl.exp "Write three CSVs: one row per tracked pocket, one row per pocket per frame, and one row per lining residue in the displayed frame."
     add_tooltip $t.ctl.allt "Off: only pockets present in at least $state(cavity_min_seen)% of analysed frames. On: every track, including one-frame transients."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
@@ -19409,17 +19631,25 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     _scrollable_fixed $t.sc $_th 860
     set g $t.sc.c.inner
 
-    set _cols {draw "Draw" "Draw this cavity, in every frame it appears in."
-               id "Id" "Tracked cavity id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."
-               type "Type" "Cavity: opens to the surface - a pocket. Void: fully enclosed, no boundary residues."
-               vol "Volume" "This frame's volume, A^3. Click to sort."
-               mean "Mean +/- SD" "Mean volume over the frames this cavity was tracked through. Click to sort."
-               seen "Seen %" "Percentage of analysed frames this cavity was found in. Click to sort."
-               probe "Max probe" "Radius of the largest sphere that fits inside. Click to sort."
-               depth "Depth" "Depth in tetrahedron layers from the surface."
-               res "Boundary / Inner" "How many lining residues touch the surface opening (boundary) and how many are buried inside it. The Residues button lists them."
-               rank "Rank here" "What MOLE ranked this cavity in the displayed frame - per frame, unlike Id."
-               start "Start pt" "Where a tunnel search started from this pocket would begin, by the rule chosen above. Switching MOLE/CAVER changes this column."}
+    # MOLE only exports a cavity that HAS boundary residues, so a Void - which by
+    # definition has none - almost never survives to us (0 of 2108 records on a
+    # 50-frame run). Carrying a column that reads "Cavity" on every row is
+    # clutter, so it appears only when the data actually holds a Void.
+    set _has_void 0
+    foreach _tr $_every { if {[dict get $_tr type] eq "Void"} { set _has_void 1; break } }
+    set _cols {draw "Draw" "Draw this pocket, in every frame it appears in."
+               id "Id" "Tracked id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."}
+    if {$_has_void} {
+        lappend _cols type "Type" "Cavity: opens to the surface. Void: fully enclosed, no boundary residues."
+    }
+    lappend _cols \
+        vol "Volume" "Volume in THIS frame, A^3. The trend button on the right plots it across the trajectory against the pocket's own mean +/- SD. Click to sort." \
+        seen "Seen %" "Percentage of analysed frames this pocket was found in. Click to sort." \
+        probe "Max probe" "Radius of the largest sphere that fits inside - whether your ligand fits at all. Click to sort." \
+        depth "Depth" "How many tetrahedron layers deep the pocket sits below the surface." \
+        res "Boundary / Inner" "Its lining, split in two. BOUNDARY residues sit on a face where the pocket opens outward - they line the mouth. INNER residues touch the pocket only on faces fully inside it - they line the wall. Both are computed from the Delaunay tetrahedra, not from a distance cutoff. The Residues button lists them." \
+        rank "Rank here" "What MOLE ranked this pocket in the displayed frame - per frame, unlike Id." \
+        start "Start pt" "Where a search started from this pocket would begin, by the rule chosen above. Switching MOLE/CAVER changes this column."
     set c 0
     foreach {key label tip} $_cols {
         set _sortable [expr {$key in {id vol mean seen probe depth}}]
@@ -19460,26 +19690,39 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             -command ::VMDPathFinder::_tunnel_cavity_toggle -padx 0 -pady 0
         grid $g.d$r -row $r -column 0 -sticky w -padx 4
         set _here [expr {[llength $cv] > 0}]
-        set vals [list $tid \
-            [expr {$_here ? [dict get $cv type] : [dict get $tr type]}] \
-            [expr {$_here ? [format %.1f [dict get $cv volume]] : "-"}] \
-            [format "%.0f +/- %.0f" [dict get $tr vol_mean] [dict get $tr vol_sd]] \
-            [format "%.0f" [dict get $tr seen]] \
-            [format %.2f [dict get $tr maxprobe]] \
-            [expr {$_here ? [dict get $cv depth] : "-"}] \
-            [expr {$_here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
-            [expr {$_here ? $id : "absent"}] \
-            [expr {$_here ? [_cavity_origin_short $cv] : "-"}]]
+        set _v [dict create \
+            id $tid \
+            type [expr {$_here ? [dict get $cv type] : [dict get $tr type]}] \
+            vol [expr {$_here ? [format %.1f [dict get $cv volume]] : "-"}] \
+            seen [format "%.0f" [dict get $tr seen]] \
+            probe [format %.2f [dict get $tr maxprobe]] \
+            depth [expr {$_here ? [dict get $cv depth] : "-"}] \
+            res [expr {$_here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
+            rank [expr {$_here ? $id : "absent"}] \
+            start [expr {$_here ? [_cavity_origin_short $cv] : "-"}]]
+        # Emitted BY KEY, in the header's own order: an index-based alignment
+        # mask silently shifts the moment a column is dropped.
+        set _right {id vol seen probe depth rank}
         set c 1
-        foreach v $vals {
-            # numbers right-aligned, names left: a column of figures that is
-            # left-aligned cannot be read down.
-            set _num [expr {$c in {1 3 4 5 6 7 9}}]
-            label $g.v${r}_$c -text $v -anchor [expr {$_num ? "e" : "w"}] \
+        foreach {key _lbl _tip} [lrange $_cols 3 end] {
+            set _num [expr {[lsearch -exact $_right $key] >= 0}]
+            label $g.v${r}_$c -text [dict get $_v $key] -anchor [expr {$_num ? "e" : "w"}] \
                 -font {Helvetica 9} -foreground [expr {$_here ? "black" : "gray50"}]
             grid $g.v${r}_$c -row $r -column $c -sticky [expr {$_num ? "e" : "w"}] -padx 4
             incr c
         }
+        button $g.tr$r -text "\U0001F4C8" -font {Helvetica 9} -padx 2 -pady 0 \
+            -command [list ::VMDPathFinder::_cavity_volume_plot $tid]
+        grid $g.tr$r -row $r -column $c -sticky w -padx {6 2}
+        add_tooltip $g.tr$r [format "Volume over time for this pocket: mean %.0f +/- %.0f A^3 over the %d frames it was seen in." \
+            [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
+        incr c
+        button $g.lin$r -text "Lining" -font {Helvetica 8} -padx 3 -pady 0 \
+            -command [list ::VMDPathFinder::_cavity_show_lining $frame $id]
+        if {!$_here} { $g.lin$r configure -state disabled }
+        grid $g.lin$r -row $r -column $c -sticky w -padx {2 2}
+        add_tooltip $g.lin$r "Draw this pocket's lining on the structure: boundary residues yellow, inner residues red."
+        incr c
         button $g.use$r -text "Use as start" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_cavity_use_as_start $frame $id]
         if {!$_here} { $g.use$r configure -state disabled }
@@ -19493,8 +19736,9 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     }
 
     set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
+    # The detail lives in the column tooltips, read when needed.
     label $t.note -justify left -wraplength 840 -foreground gray40 -font {Helvetica 8} -text \
-        "A cavity is where a tunnel STARTS. MOLE derives cavities from each frame's own Delaunay geometry and then picks its automatic origins inside them, so the cavity list is an INPUT to the tunnel search, not a result of it - running the search again from one cavity cannot change which cavities exist. Type says which kind: Cavity opens to the surface (a pocket), Void is fully enclosed.\n\nId is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps)."
+        "A pocket is where a search STARTS: re-running from one cannot change which pockets exist. Id is tracked across all $_nfr frames; \"Rank here\" is MOLE's own per-frame rank. Hover any heading for what it means."
     grid $t.note -row 2 -column 0 -sticky ew -padx 8 -pady {4 8}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
