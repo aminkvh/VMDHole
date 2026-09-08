@@ -146,6 +146,16 @@ namespace eval ::VMDPathFinder:: {
     # Color override only affects the FLAT fallback path (property coloring, whichever
     # property is in effect, still bakes its own per-triangle colors into the cached
     # .plot) - material/wireframe/prop apply unconditionally - see render_tunnels_for_frame.
+    # Per-pocket display overrides (show_cavity_gear_settings) and which
+    # pockets currently have their lining drawn. Dicts keyed by TRACKED id.
+    variable cavity_gear_color
+    set cavity_gear_color [dict create]
+    variable cavity_gear_material
+    set cavity_gear_material [dict create]
+    variable cavity_gear_style
+    set cavity_gear_style [dict create]
+    variable _cavity_lining_on
+    set _cavity_lining_on [dict create]
     variable tunnel_gear_color
     array set tunnel_gear_color {}
     variable tunnel_gear_material
@@ -1549,6 +1559,23 @@ proc ::VMDPathFinder::_log_status_line {name1 name2 op} {
     variable state
     if {$name2 ne "status"} { return }
     catch {_log_msg info $state(status)}
+    # The status bar is ONE line. A long message used to wrap to several and
+    # push the panel around, taking usable area away from everything below it;
+    # the whole text is in the log either way, which is where a long message
+    # belongs. Guarded against re-entry: this trace fires on every state write,
+    # including the one below.
+    variable _status_disp_busy
+    if {[info exists _status_disp_busy] && $_status_disp_busy} { return }
+    set _status_disp_busy 1
+    catch {
+        set _txt [string map {\n " "} $state(status)]
+        set _cap 150
+        if {[string length $_txt] > $_cap} {
+            set _txt "[string range $_txt 0 [expr {$_cap-1}]]...  (full text: Log)"
+        }
+        set state(status_disp) $_txt
+    }
+    set _status_disp_busy 0
 }
 
 proc ::VMDPathFinder::show_message_log {} {
@@ -2740,8 +2767,8 @@ Stricter than Passage, which counts ions that merely entered."
     # this opens everything it has shown.
     button $w.bottom.statusrow.log -text "Log" -padx 6 -pady 0 \
         -command ::VMDPathFinder::show_message_log
-    label $w.bottom.statusrow.summary -textvariable ::VMDPathFinder::state(status) \
-        -anchor w -justify left -wraplength 700
+    label $w.bottom.statusrow.summary -textvariable ::VMDPathFinder::state(status_disp) \
+        -anchor w -justify left -height 1
     # Visibility toggles for the two 3-D surface tracks (Pore/per-frame and Mean Profile), each
     # its own molecule in VMD. Clicking is equivalent to toggling that molecule's "D" in VMD Main,
     # but without leaving the plugin. Small indicatoron-0 toggle-buttons; their label/relief is
@@ -19279,6 +19306,190 @@ proc ::VMDPathFinder::_cavity_property_range {prop} {
     return {0.0 1.0}
 }
 
+proc ::VMDPathFinder::_sync_cavity_header_columns {t} {
+    # Keep the frozen header lined up with the scrolling body. They are two
+    # independent grids, so Tk sizes each from its own content and "Volume" over
+    # a column of 1234.5s drifts apart on its own.
+    #
+    # Copied from _sync_tunlist_header_columns, including its two hard-won
+    # rules: the LAST column is left unpinned to absorb the slack (header labels
+    # are wider than their data, and pinning every column pushes the rightmost
+    # ones out of the canvas), and the header follows the body, never the
+    # reverse.
+    if {![_have_tk]} { return }
+    set hf $t.hdr
+    set bf $t.sc.c.inner
+    if {![winfo exists $hf] || ![winfo exists $bf]} { return }
+    catch {update idletasks}
+    set nc 0
+    foreach m [list $hf $bf] {
+        set sz [grid size $m]
+        if {[llength $sz] == 2 && [lindex $sz 0] > $nc} { set nc [lindex $sz 0] }
+    }
+    for {set c 0} {$c < $nc-1} {incr c} {
+        set wmax 0
+        foreach {m r} [list $hf 0 $bf 1] {
+            if {[catch {grid bbox $m $c $r} bb]} { continue }
+            if {[llength $bb] == 4 && [lindex $bb 2] > $wmax} { set wmax [lindex $bb 2] }
+        }
+        if {$wmax > 0} {
+            catch {grid columnconfigure $hf $c -minsize $wmax}
+            catch {grid columnconfigure $bf $c -minsize $wmax}
+        }
+    }
+    if {$nc > 0} {
+        catch {grid columnconfigure $hf [expr {$nc-1}] -minsize 0 -weight 1}
+        catch {grid columnconfigure $bf [expr {$nc-1}] -minsize 0 -weight 1}
+    }
+    # The header must not drive the window's width: it is a direct child, while
+    # the body is insulated inside the canvas.
+    set cvw $t.sc.c
+    if {[winfo exists $cvw]} {
+        set _hh [winfo reqheight $hf]
+        set _cw [winfo width $cvw]
+        if {$_hh > 0 && $_cw > 1} {
+            catch {grid propagate $hf 0}
+            catch {$hf configure -height $_hh -width $_cw}
+        }
+    }
+}
+
+proc ::VMDPathFinder::_cavity_plot_export_csv {tid} {
+    # The plotted series itself: one row per frame this pocket appears in.
+    variable state
+    set tr [_cavity_track_by_tid $tid]
+    if {$tr eq ""} { return }
+    set f [tk_getSaveFile -title "Export pocket $tid volume series" \
+        -initialdir [export_initial_dir] \
+        -initialfile "cavity_[format %02d $tid]_volume_vs_frame.csv" \
+        -defaultextension .csv -filetypes {{"CSV" .csv} {"All files" *}}]
+    if {$f eq ""} { return }
+    if {[catch {open $f w} fh]} { set state(status) "Export failed: $fh"; return }
+    puts $fh "# pocket $tid, mean [format %.3f [dict get $tr vol_mean]] +/- [format %.3f [dict get $tr vol_sd]] A^3"
+    puts $fh "frame,volume_A3"
+    foreach fr [dict get $tr frames] v [dict get $tr volumes] {
+        puts $fh "$fr,[format %.3f $v]"
+    }
+    close $fh
+    set state(status) "Pocket $tid series written to [file tail $f]."
+}
+
+proc ::VMDPathFinder::_cavity_show_all_toggle {} {
+    # The master checkbox over the per-row ones. It drives only the pockets the
+    # filter is actually showing - ticking it must not silently switch on 300
+    # transients the list is hiding.
+    variable state
+    variable tunnel_cavity_shown
+    set on [expr {[info exists state(cavity_shown_all)] && $state(cavity_shown_all)}]
+    foreach tr [_cavity_visible_tracks] {
+        set tunnel_cavity_shown([dict get $tr tid]) $on
+    }
+    _tunnel_cavity_toggle
+    catch {show_tunnel_cavities}
+}
+
+proc ::VMDPathFinder::_cavity_visible_tracks {} {
+    # The tracks the filter currently admits - one definition, used by the
+    # master checkbox and the table so they cannot disagree.
+    variable state
+    set out {}
+    foreach tr [_cavity_tracks] {
+        if {[info exists state(cavity_all_tracks)] && $state(cavity_all_tracks)} {
+            lappend out $tr
+            continue
+        }
+        set floor [expr {[info exists state(cavity_min_seen)] ? $state(cavity_min_seen) : 50}]
+        if {[dict get $tr seen] >= $floor} { lappend out $tr }
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_cavity_lining_btn_sync {btn tid} {
+    # The Lining button is a toggle, so it has to LOOK toggled - otherwise the
+    # only way to know it is on is that the structure changed.
+    variable _cavity_lining_on
+    if {![_have_tk] || ![winfo exists $btn]} { return }
+    set on [expr {[info exists _cavity_lining_on] && [dict exists $_cavity_lining_on $tid] \
+                  && [dict get $_cavity_lining_on $tid]}]
+    catch {$btn configure -relief [expr {$on ? "sunken" : "raised"}]}
+}
+
+proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
+    # Per-pocket display override, the cavity counterpart of
+    # show_tunnel_gear_settings. Colour and material ride the same
+    # render_vmd_plot_to_mol parameters the tunnel gear uses; "surface vs
+    # spheres" is a different MESH, so it is stored here and read by
+    # _render_cavities_for_frame when it builds this pocket's geometry.
+    variable w
+    variable state
+    variable cavity_gear_color
+    variable cavity_gear_material
+    variable cavity_gear_style
+    if {![_have_tk]} { return }
+    foreach _a {cavity_gear_color cavity_gear_material cavity_gear_style} {
+        if {![info exists ${_a}]} { set $_a [dict create] }
+    }
+    set d $w.cavgear
+    if {[winfo exists $d]} { destroy $d }
+    toplevel $d
+    wm withdraw $d
+    wm title $d "Pocket $tid display"
+    set state(cavgear_tid) $tid
+    set state(cavgear_color)    [expr {[dict exists $cavity_gear_color $tid]    ? [dict get $cavity_gear_color $tid]    : "auto"}]
+    set state(cavgear_material) [expr {[dict exists $cavity_gear_material $tid] ? [dict get $cavity_gear_material $tid] : "auto"}]
+    set state(cavgear_style)    [expr {[dict exists $cavity_gear_style $tid]    ? [dict get $cavity_gear_style $tid]    : "auto"}]
+    set r 0
+    foreach {var label opts tip} [list \
+        cavgear_color "Colour" {auto blue red gray orange yellow tan green white pink cyan purple lime mauve ochre iceblue black} \
+            "Flat colour for this pocket. Only applies when it is not coloured by a property - property colouring bakes per-triangle colours into the mesh." \
+        cavgear_material "Material" {auto Opaque Transparent Glass1 Glossy EdgyShiny AOChalky} \
+            "VMD material for this pocket's surface." \
+        cavgear_style "Draw as" {auto surface spheres} \
+            "surface = one mesh over the clearance spheres. spheres = the clearance spheres themselves (CAVER Analyst's \"Locked Probes\"). auto follows the window default."] {
+        label $d.l$r -text $label
+        set _mb $d.m$r
+        menubutton $_mb -textvariable ::VMDPathFinder::state($var) -relief raised \
+            -indicatoron 1 -menu $_mb.m -width 14
+        menu $_mb.m -tearoff 0
+        foreach o $opts {
+            $_mb.m add command -label $o -command [list ::VMDPathFinder::_cavity_gear_set $var $o]
+        }
+        grid $d.l$r -row $r -column 0 -sticky w -padx {10 4} -pady 3
+        grid $_mb   -row $r -column 1 -sticky w -padx {0 10} -pady 3
+        add_tooltip $_mb $tip
+        incr r
+    }
+    button $d.close -text "Close" -command [list destroy $d]
+    grid $d.close -row $r -column 0 -columnspan 2 -sticky e -padx 10 -pady {4 10}
+    _center_toplevel $d 320 [expr {$r*34 + 70}]
+    wm deiconify $d
+}
+
+proc ::VMDPathFinder::_cavity_gear_set {var value} {
+    # One handler for all three fields: store the override (or drop it on
+    # "auto") and redraw, so the viewer follows the menu immediately.
+    variable state
+    variable cavity_gear_color
+    variable cavity_gear_material
+    variable cavity_gear_style
+    set state($var) $value
+    set tid $state(cavgear_tid)
+    switch -exact -- $var {
+        cavgear_color    { set _which cavity_gear_color }
+        cavgear_material { set _which cavity_gear_material }
+        cavgear_style    { set _which cavity_gear_style }
+        default          { return }
+    }
+    if {$value eq "auto"} {
+        catch {dict unset $_which $tid}
+        set $_which [dict remove [set $_which] $tid]
+    } else {
+        dict set $_which $tid $value
+        set $_which [set $_which]
+    }
+    _tunnel_cavity_toggle
+}
+
 proc ::VMDPathFinder::_cavity_volume_plot {tid} {
     # This pocket's volume across the trajectory, following its TRACK - the same
     # rule draw_tunnel_trends_plot follows for a route, and for the same reason:
@@ -19294,6 +19505,15 @@ proc ::VMDPathFinder::_cavity_volume_plot {tid} {
     wm title $t "Pocket $tid volume over time"
     set cw 640; set ch 340
     canvas $t.cv -width $cw -height $ch -background white -highlightthickness 0
+    frame $t.bar
+    # Same Export menubutton and the same stem rule as every other plot, so a
+    # saved pocket curve is named like the rest and never overwrites another
+    # view's file.
+    _build_export_menu $t.bar.exp \
+        [list ::VMDPathFinder::_cavity_plot_export_csv $tid] \
+        [list ::VMDPathFinder::export_figure_dialog $t.cv "cavity_[format %02d $tid]_volume_vs_frame"]
+    pack $t.bar.exp -side right
+    pack $t.bar -side bottom -fill x -padx 6 -pady {0 6}
     pack $t.cv -fill both -expand 1 -padx 6 -pady 6
     set cv $t.cv
     set frames [dict get $tr frames]
@@ -19386,6 +19606,26 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
         return
     }
     if {![info exists _cavity_lining_rep]} { set _cavity_lining_rep [dict create] }
+    # A toggle: clicking the button that drew this lining takes it away again.
+    # There was no way to undo it, so the reps accumulated on the structure with
+    # no route back to a clean view.
+    variable _cavity_lining_on
+    if {![info exists _cavity_lining_on]} { set _cavity_lining_on [dict create] }
+    set _trk [_cavity_track_for $frame $id]
+    set _key_tid [expr {[llength $_trk] ? [dict get $_trk tid] : $id}]
+    if {[dict exists $_cavity_lining_on $_key_tid] && [dict get $_cavity_lining_on $_key_tid]} {
+        foreach which {bres ires} {
+            set _k "$molid|$which"
+            if {[dict exists $_cavity_lining_rep $_k]} {
+                catch {mol showrep $molid [dict get $_cavity_lining_rep $_k] 0}
+            }
+        }
+        dict set _cavity_lining_on $_key_tid 0
+        set state(status) "Pocket $_key_tid lining: hidden."
+        catch {show_tunnel_cavities}
+        return
+    }
+    dict set _cavity_lining_on $_key_tid 1
     set cv [dict get $tunnel_lining($frame) cav.$id]
     set n 0
     foreach {which colour} {bres 7 ires 1} {
@@ -19419,8 +19659,7 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
     }
     # Name the TRACKED id, which is what the table shows - $id is MOLE's
     # per-frame rank and is a different number on most frames.
-    set _tid [_cavity_track_for $frame $id]
-    set _lbl [expr {$_tid ne "" ? $_tid : "$id (frame rank)"}]
+    set _lbl $_key_tid
     set state(status) "Pocket $_lbl lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red), $n residues on molecule $molid."
 }
 
@@ -19557,19 +19796,19 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         return
     }
     foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole
-                   cavity_prop none cavity_all_tracks 0 cavity_min_seen 25} {
+                   cavity_prop none cavity_all_tracks 0 cavity_min_seen 50
+                   cavity_shown_all 0} {
         if {![info exists state($k)]} { set state($k) $d }
     }
     set state(cavity_prop_disp) [_tunnel_prop_label_short $state(cavity_prop)]
 
     # ---- controls -------------------------------------------------------
     frame $t.ctl
-    button $t.ctl.all  -text "Show all"  -command [list ::VMDPathFinder::_cavity_show_all 1]
-    button $t.ctl.none -text "Hide all"  -command [list ::VMDPathFinder::_cavity_show_all 0]
-    checkbutton $t.ctl.solid -text "Solid" -variable ::VMDPathFinder::state(cavity_solid) \
-        -command ::VMDPathFinder::_tunnel_cavity_toggle
-    checkbutton $t.ctl.sph -text "Spheres" -variable ::VMDPathFinder::state(cavity_spheres) \
-        -command ::VMDPathFinder::_tunnel_cavity_toggle
+    # One checkbox over the per-row ones, as the tunnel list has - two buttons
+    # for the same pair of states was a control the checkbox already is.
+    checkbutton $t.ctl.allc -text "Show all" \
+        -variable ::VMDPathFinder::state(cavity_shown_all) \
+        -command ::VMDPathFinder::_cavity_show_all_toggle
     label $t.ctl.pl -text "  Colour by:"
     menubutton $t.ctl.pm -textvariable ::VMDPathFinder::state(cavity_prop_disp) \
         -relief raised -indicatoron 1 -menu $t.ctl.pm.m -width 14
@@ -19586,11 +19825,10 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     radiobutton $t.ctl.rc -text "largest sphere (CAVER)" -value caver \
         -variable ::VMDPathFinder::state(cavity_origin_rule) \
         -command ::VMDPathFinder::show_tunnel_cavities
-    pack $t.ctl.all $t.ctl.none $t.ctl.solid $t.ctl.sph $t.ctl.pl $t.ctl.pm \
+    pack $t.ctl.allc $t.ctl.pl $t.ctl.pm \
         $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
-    add_tooltip $t.ctl.solid "Draw cavities opaque instead of transparent (MOLE's \"Solid cavities\")."
-    add_tooltip $t.ctl.sph "Draw the clearance spheres themselves instead of a surface over them (CAVER Analyst's \"Locked Probes\")."
+    add_tooltip $t.ctl.allc "Show or hide every pocket listed below."
     add_tooltip $t.ctl.pm "Colour the cavity surface by a property of its lining residues, through the same recolour used for routes and the pore wall. The scale bar shows the range."
     add_tooltip $t.ctl.rm "MOLE's own automatic origin: the cavity's deepest point, read from the engine rather than recomputed. This is the point MOLE would search from."
     add_tooltip $t.ctl.rc "CAVER Analyst's rule: the centre of the largest sphere that fits in the cavity."
@@ -19604,12 +19842,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # frames. Listing them all buries the dozen pockets that persist, which is
     # what a trajectory is actually described by.
     if {$state(cavity_sort_col) eq "mean"} { set state(cavity_sort_col) vol }
-    set _tracks {}
-    foreach _tr $_every {
-        if {$state(cavity_all_tracks) || [dict get $_tr seen] >= $state(cavity_min_seen)} {
-            lappend _tracks $_tr
-        }
-    }
+    set _tracks [_cavity_visible_tracks]
     checkbutton $t.ctl.allt -text "All pockets" \
         -variable ::VMDPathFinder::state(cavity_all_tracks) \
         -command ::VMDPathFinder::show_tunnel_cavities
@@ -19624,12 +19857,15 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
     set _hmax 460
     set _th [expr {$_want < $_hmax ? $_want : $_hmax}]
+    frame $t.hdr
+    grid $t.hdr -row 1 -column 0 -sticky ew -padx 8 -pady {2 0}
     frame $t.sc
-    grid $t.sc -row 1 -column 0 -sticky nsew -padx 8 -pady {2 2}
-    grid rowconfigure $t 1 -weight 1
+    grid $t.sc -row 2 -column 0 -sticky nsew -padx 8 -pady {0 2}
+    grid rowconfigure $t 2 -weight 1
     grid columnconfigure $t 0 -weight 1
-    _scrollable_fixed $t.sc $_th 860
+    _scrollable_fixed $t.sc $_th 900
     set g $t.sc.c.inner
+    set hg $t.hdr
 
     # MOLE only exports a cavity that HAS boundary residues, so a Void - which by
     # definition has none - almost never survives to us (0 of 2108 records on a
@@ -19643,7 +19879,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         lappend _cols type "Type" "Cavity: opens to the surface. Void: fully enclosed, no boundary residues."
     }
     lappend _cols \
-        vol "Volume" "Volume in THIS frame, A^3. The trend button on the right plots it across the trajectory against the pocket's own mean +/- SD. Click to sort." \
+        vol "Volume" "Volume in THIS frame, A^3. Click to sort." \
+        plot "Trend" "Plots this pocket's volume across the trajectory against its own mean +/- SD, following the tracked pocket rather than MOLE's per-frame rank." \
         seen "Seen %" "Percentage of analysed frames this pocket was found in. Click to sort." \
         probe "Max probe" "Radius of the largest sphere that fits inside - whether your ligand fits at all. Click to sort." \
         depth "Depth" "How many tetrahedron layers deep the pocket sits below the surface." \
@@ -19657,13 +19894,13 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         if {$_sortable && $state(cavity_sort_col) eq $key} {
             append _txt [expr {$state(cavity_sort_dir) eq "asc" ? " \u25b2" : " \u25bc"}]
         }
-        label $g.h$c -text $_txt -font {Helvetica 9 bold} -anchor w
+        label $hg.h$c -text $_txt -font {Helvetica 9 bold} -anchor w
         if {$_sortable} {
-            $g.h$c configure -cursor hand2
-            bind $g.h$c <Button-1> [list ::VMDPathFinder::_cavity_sort $key]
+            $hg.h$c configure -cursor hand2
+            bind $hg.h$c <Button-1> [list ::VMDPathFinder::_cavity_sort $key]
         }
-        grid $g.h$c -row 0 -column $c -sticky w -padx 4 -pady {0 3}
-        add_tooltip $g.h$c $tip
+        grid $hg.h$c -row 0 -column $c -sticky w -padx 4 -pady {0 3}
+        add_tooltip $hg.h$c $tip
         incr c
     }
 
@@ -19684,6 +19921,9 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     set r 0
     foreach row $rows {
         incr r
+        # rows still start at grid row 1: _sync_cavity_header_columns measures
+        # the body on row 1, and row 0 stays empty so the two grids can be
+        # compared the way the tunnel list does it.
         lassign $row tid cv tr id
         if {![info exists tunnel_cavity_shown($tid)]} { set tunnel_cavity_shown($tid) 0 }
         checkbutton $g.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($tid) \
@@ -19705,23 +19945,41 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         set _right {id vol seen probe depth rank}
         set c 1
         foreach {key _lbl _tip} [lrange $_cols 3 end] {
+            if {$key eq "plot"} {
+                # The trend button IS the Trend column, so it lines up under its
+                # own heading next to Volume instead of floating past the data.
+                button $g.tr$r -text "\U0001F4C8" -font {Helvetica 9} -padx 2 -pady 0 \
+                    -command [list ::VMDPathFinder::_cavity_volume_plot $tid]
+                grid $g.tr$r -row $r -column $c -sticky w -padx 4
+                add_tooltip $g.tr$r [format "Pocket %s volume over time: mean %.0f +/- %.0f A^3 over the %d frame(s) it appears in. Opens a plot you can export." \
+                    $tid [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
+                incr c
+                continue
+            }
             set _num [expr {[lsearch -exact $_right $key] >= 0}]
+            # Absence is carried by the Seen colour, as the tunnel list does it -
+            # greying the whole row made every value look unreliable when only
+            # the per-frame ones are blank.
+            set _fg black
+            if {$key eq "seen"} {
+                set _fg [expr {$_here ? "#2a9d3f" : "#c0392b"}]
+            }
             label $g.v${r}_$c -text [dict get $_v $key] -anchor [expr {$_num ? "e" : "w"}] \
-                -font {Helvetica 9} -foreground [expr {$_here ? "black" : "gray50"}]
+                -font {Helvetica 9} -foreground $_fg
             grid $g.v${r}_$c -row $r -column $c -sticky [expr {$_num ? "e" : "w"}] -padx 4
             incr c
         }
-        button $g.tr$r -text "\U0001F4C8" -font {Helvetica 9} -padx 2 -pady 0 \
-            -command [list ::VMDPathFinder::_cavity_volume_plot $tid]
-        grid $g.tr$r -row $r -column $c -sticky w -padx {6 2}
-        add_tooltip $g.tr$r [format "Volume over time for this pocket: mean %.0f +/- %.0f A^3 over the %d frames it was seen in." \
-            [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
+        button $g.gear$r -text "\u2699" -font {Helvetica 10} -padx 2 -pady 0 -relief flat \
+            -command [list ::VMDPathFinder::show_cavity_gear_settings $tid]
+        grid $g.gear$r -row $r -column $c -sticky w -padx {6 2}
+        add_tooltip $g.gear$r "Per-pocket display: colour, material, and surface vs clearance spheres."
         incr c
         button $g.lin$r -text "Lining" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_cavity_show_lining $frame $id]
         if {!$_here} { $g.lin$r configure -state disabled }
+        _cavity_lining_btn_sync $g.lin$r $tid
         grid $g.lin$r -row $r -column $c -sticky w -padx {2 2}
-        add_tooltip $g.lin$r "Draw this pocket's lining on the structure: boundary residues yellow, inner residues red."
+        add_tooltip $g.lin$r "Draw this pocket's lining on the structure: boundary residues yellow, inner red. Click again to remove it."
         incr c
         button $g.use$r -text "Use as start" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_cavity_use_as_start $frame $id]
@@ -19742,8 +20000,9 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     grid $t.note -row 2 -column 0 -sticky ew -padx 8 -pady {4 8}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
-    _center_toplevel $t 900 [expr {$_th + 150}]
+    _center_toplevel $t 900 [expr {$_th + 180}]
     wm deiconify $t
+    _sync_cavity_header_columns $t
 }
 
 proc ::VMDPathFinder::_cavity_row_cmp {col a b} {
@@ -21679,50 +21938,8 @@ proc ::VMDPathFinder::build_run_panel {parent} {
     add_tooltip $parent.cp_box.stk "Move CPOINT with an on-screen stick or step buttons, relative to the\
         current view."
 
-    # Per-frame CPOINT handling (mutually exclusive; neither = static point). The scope
-    # row below changes to match the checked box (_update_cpoint_scope_row).
-    #   Stabilize = scoped rigid-body fit of nearby Cα carries CPOINT across frames
-    #   Track     = local centroid of HOLE-selection atoms within a radius of the estimate
-    # IMPORTANT Tk pattern: create the box FIRST and the controls AS CHILDREN of it.
-    # Packing siblings "-in" a later-created frame leaves them stacked below it
-    # and painted over (invisible). Mirror hs_box.
-    frame $parent.cpf_box
-    label       $parent.cpf_box.l  -text "Per-frame:"
-    checkbutton $parent.cpf_box.st -text "Stabilize" -variable ::VMDPathFinder::state(stabilize_cpoint) \
-        -command [list ::VMDPathFinder::_on_stabilize_toggled cpoint]
-    checkbutton $parent.cpf_box.tk -text "Track" -variable ::VMDPathFinder::state(track_cpoint) \
-        -command ::VMDPathFinder::_on_track_cpoint_toggled
-    pack $parent.cpf_box.l $parent.cpf_box.st $parent.cpf_box.tk -side left -padx {0 6}
-    grid $parent.cpf_box -row $row -column 0 -columnspan 3 -sticky w -padx 28 -pady {0 0}
-    add_tooltip $parent.cpf_box.st "Keeps CPOINT fixed relative to the local structure as it moves or rotates."
-    add_tooltip $parent.cpf_box.tk "Freezes a patch of atoms at the reference frame, then moves CPOINT by that\
-        patch's own translation each frame - drift-free, but rotation-blind. If the local structure also\
-        rotates, use Stabilize instead."
-    incr row
-
-    # Contextual scope row: BOTH widget sets are built as children of the box;
-    # _update_cpoint_scope_row packs only the set for the checked box (or none → the
-    # row collapses to nothing when neither Stabilize nor Track is on).
-    frame $parent.scope_box
-    label $parent.scope_box.sl   -text "fit"
-    entry $parent.scope_box.ri   -textvariable ::VMDPathFinder::state(stab_radius_inner) -width 4
-    label $parent.scope_box.ri_l -text "auto expand to"
-    entry $parent.scope_box.ro   -textvariable ::VMDPathFinder::state(stab_radius_outer) -width 4
-    label $parent.scope_box.ro_l -text "warn at"
-    entry $parent.scope_box.rw   -textvariable ::VMDPathFinder::state(stab_rmsd_warn) -width 4
-    label $parent.scope_box.tl   -text "patch radius"
-    entry $parent.scope_box.tr   -textvariable ::VMDPathFinder::state(track_radius) -width 4
-    label $parent.scope_box.tr_l -text "Å, at start"
-    grid $parent.scope_box -row $row -column 0 -columnspan 3 -sticky w -padx 28 -pady {0 2}
-    add_tooltip $parent.scope_box.ri "Cα atoms within this radius of CPOINT (at the reference frame) are used to\
-        fit the local rigid-body motion."
-    add_tooltip $parent.scope_box.ro "If fewer than 3 Cα atoms are found within the fit radius, search out to\
-        here instead."
-    add_tooltip $parent.scope_box.rw "Warn in the console if the fit's residual error exceeds this many Å."
-    add_tooltip $parent.scope_box.tr "Radius around CPOINT, at the reference frame only, used to pick the atom\
-        patch Track follows. Too few atoms found here expands the radius automatically."
-    incr row
-    _update_cpoint_scope_row $parent
+    # Per-frame CPOINT handling (Stabilize/Track and their scope fields) lives in
+    # the stick dialog only - the panel row duplicated it.
 
     label $parent.cv_l  -text "CVECT"
     entry $parent.cv_e  -textvariable ::VMDPathFinder::state(cvect) -width 14
@@ -23890,6 +24107,14 @@ proc ::VMDPathFinder::_clear_cvect_def {args} {
     variable state
     set state(cvect_def_p1) {}
     set state(cvect_def_p2) {}
+    # Redraw: the state is what Guess/Use Z invalidate, but the point 1 / point 2
+    # spheres and the axis are drawn geometry and stayed on screen showing a
+    # definition that no longer exists.
+    catch {_sync_cvect_handles}
+    variable w
+    if {[_have_tk] && [winfo exists $w.axisstick]} {
+        catch {_cvect_sync_stab_controls $w.axisstick}
+    }
 }
 
 proc ::VMDPathFinder::_on_track_cpoint_toggled {} {
@@ -23916,7 +24141,14 @@ proc ::VMDPathFinder::_update_cpoint_scope_row {{parent ""}} {
     #   Stabilize → inner/outer/RMSD-warn   |   Track → centroid radius   |   neither → empty
     variable state
     variable _runpanel
-    if {$parent eq ""} { set parent [expr {[info exists _runpanel] ? $_runpanel : ""}] }
+    variable w
+    if {$parent eq ""} {
+        # The panel row is gone; the stick dialog owns these now. Fall back to it
+        # so the checkbox handlers, which pass no parent, still drive the row.
+        foreach _cand [list [expr {[info exists _runpanel] ? $_runpanel : ""}] "$w.axisstick.pf"] {
+            if {$_cand ne "" && [winfo exists $_cand.scope_box]} { set parent $_cand; break }
+        }
+    }
     if {$parent eq "" || ![winfo exists $parent.scope_box]} { return }
     set sb $parent.scope_box
     foreach c [winfo children $sb] { catch {pack forget $c} }
@@ -24228,7 +24460,10 @@ proc ::VMDPathFinder::_draw_cvect_axis {molid ends} {
     if {$cone < 1.0} { set cone 1.0 }
     set f [expr {($len-$cone)/$len}]
     set base [list [expr {$x1+$dx*$f}] [expr {$y1+$dy*$f}] [expr {$z1+$dz*$f}]]
-    catch {graphics $molid color white}
+    # Yellow, not white: white disappears against a pale cartoon or surface, and
+    # every other pore-mode cue is taken - CPOINT magenta, point 1 cyan, point 2
+    # orange, tunnel start lime.
+    catch {graphics $molid color yellow}
     catch {graphics $molid cylinder $p1 $base radius 0.15 resolution 12 filled yes}
     catch {graphics $molid cone $base $p2 radius 0.4 resolution 12}
 }
@@ -25824,6 +26059,26 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     checkbutton $d.pf.cp.tk -text "Track" -variable ::VMDPathFinder::state(track_cpoint) -command ::VMDPathFinder::_on_track_cpoint_toggled
     pack $d.pf.cp.l $d.pf.cp.st $d.pf.cp.tk -side left -padx {0 6}
     grid $d.pf.cp -row 0 -column 0 -sticky w
+    # The scope fields for whichever of the two is checked. They used to sit in
+    # the left panel; they follow the checkboxes here, or they would be
+    # unreachable. Same widget names, so _update_cpoint_scope_row drives this
+    # one unchanged - it takes the PARENT of scope_box.
+    frame $d.pf.scope_box
+    label $d.pf.scope_box.sl   -text "fit"
+    entry $d.pf.scope_box.ri   -textvariable ::VMDPathFinder::state(stab_radius_inner) -width 4
+    label $d.pf.scope_box.ri_l -text "auto expand to"
+    entry $d.pf.scope_box.ro   -textvariable ::VMDPathFinder::state(stab_radius_outer) -width 4
+    label $d.pf.scope_box.ro_l -text "warn at"
+    entry $d.pf.scope_box.rw   -textvariable ::VMDPathFinder::state(stab_rmsd_warn) -width 4
+    label $d.pf.scope_box.tl   -text "patch radius"
+    entry $d.pf.scope_box.tr   -textvariable ::VMDPathFinder::state(track_radius) -width 4
+    label $d.pf.scope_box.tr_l -text "A, at start"
+    grid $d.pf.scope_box -row 1 -column 0 -sticky w -pady {2 0}
+    add_tooltip $d.pf.scope_box.ri "Ca atoms within this radius of CPOINT (at the reference frame) are used to fit the local rigid-body motion."
+    add_tooltip $d.pf.scope_box.ro "If fewer than 3 Ca atoms are found within the fit radius, search out to here instead."
+    add_tooltip $d.pf.scope_box.rw "Warn in the console if the fit's residual error exceeds this many A."
+    add_tooltip $d.pf.scope_box.tr "Radius around CPOINT, at the reference frame only, used to pick the atom patch Track follows."
+    _update_cpoint_scope_row $d.pf
     frame $d.vec -relief groove -borderwidth 1
     _build_vector_controls $d.vec
     grid $d.vec -row 6 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
