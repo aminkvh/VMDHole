@@ -54932,7 +54932,7 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     # the mesh GENERATION changes, so a mesh cached under the old code can't be served after a
     # code change (the files are otherwise keyed only by plot_data_version + settings, neither
     # of which changes on a code change). A different token is a cache miss, forcing a rebuild.
-    set _geomver "g9"
+    set _geomver "g10"
     set mean_tag_base "v${plot_data_version}_${_safe_key}_${_geomver}_${_mtag}"
     set mean_dir [file join [file dirname $run_dir] mean_profile]
     catch {file mkdir $mean_dir}
@@ -55054,7 +55054,25 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     }
     close $fh
     if {[llength $ref_centers] < 2} { error "reference frame has too few centerline spheres." }
-    lassign [oriented_axis $ref_centers] ux uy uz ax_x ax_y ax_z
+    # The axis HOLE actually measured against, when the run recorded one:
+    # every radius in the profile is indexed by distance along CVECT from
+    # CPOINT, so revolving them around anything else draws the curve along a
+    # different line than the one it was measured on. A PCA fit of one frame's
+    # centreline is not that line - on a tilted pore it came out 17.5 degrees
+    # away, and the range-remap below then squeezed the whole tube onto that one
+    # frame's span, so features landed at the wrong height and the end past its
+    # centreline was crushed inwards.
+    set _ax_declared 0
+    set _fa [_frame_axis_persisted [file dirname $sph_file]]
+    if {[llength $_fa] == 6} {
+        lassign $_fa ax_x ax_y ax_z ux uy uz
+        set _un [expr {sqrt($ux*$ux + $uy*$uy + $uz*$uz)}]
+        if {$_un > 1e-9} {
+            set ux [expr {$ux/$_un}]; set uy [expr {$uy/$_un}]; set uz [expr {$uz/$_un}]
+            set _ax_declared 1
+        }
+    }
+    if {!$_ax_declared} { lassign [oriented_axis $ref_centers] ux uy uz ax_x ax_y ax_z }
 
     # oriented_axis's origin (ax_x/y/z) is the CENTROID of the reference frame's
     # centerline spheres - NOT HOLE's own coord=0 (CPOINT). collect_binned_radii's
@@ -55079,7 +55097,9 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     set zmax [expr {$zmin + $nbins * $zstep}]
     set zspan [expr {$zmax - $zmin}]
     set t_ref_span [expr {$t_ref_max - $t_ref_min}]
-    if {$zspan < 1e-9 || $t_ref_span < 1e-9} { error "reference frame's channel axis is degenerate." }
+    if {$zspan < 1e-9 || (!$_ax_declared && $t_ref_span < 1e-9)} {
+        error "reference frame's channel axis is degenerate."
+    }
 
     # Color/Material/Property for this surface are EXCLUSIVE to the Mean Profile tab
     # (mean_surface_color/mean_surface_material/mean_hydro_scheme), separate from the main
@@ -55109,8 +55129,13 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
         if {$s eq {}} continue
         set mean [lindex $s 0]
         set z_raw [expr {$zmin + ($b + 0.5) * $zstep}]
-        set frac  [expr {($z_raw - $zmin) / $zspan}]
-        set t [expr {$t_ref_min + $frac * $t_ref_span}]
+        if {$_ax_declared} {
+            # coord IS distance along CVECT from CPOINT - place it, do not rescale.
+            set t $z_raw
+        } else {
+            set frac  [expr {($z_raw - $zmin) / $zspan}]
+            set t [expr {$t_ref_min + $frac * $t_ref_span}]
+        }
         set cx [expr {$ax_x + $t * $ux}]
         set cy [expr {$ax_y + $t * $uy}]
         set cz [expr {$ax_z + $t * $uz}]
