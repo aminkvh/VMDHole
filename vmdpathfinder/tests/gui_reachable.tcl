@@ -6048,34 +6048,43 @@ if {$ntun > 0} {
         # the window and its controls
         ::VMDPathFinder::show_tunnel_cavities
         update idletasks; update
-        # Header and rows must share ONE grid: two grids in two frames cannot
-        # share column widths, so every row drifted out of line with its
-        # heading as soon as a cell's text changed length. And the table has to
-        # scroll, or a structure with many pockets grows a window taller than
-        # the screen with no way to reach the last row.
-        set _g $w.tuncav.sc.c.inner
-        set _hrow {}; set _drow {}
-        if {[winfo exists $_g]} {
-            foreach _sl [grid slaves $_g] {
-                set _gi [grid info $_sl]
-                if {[dict get $_gi -row] == 0} { lappend _hrow [dict get $_gi -column] }
-                if {[dict get $_gi -row] == 1} { lappend _drow [dict get $_gi -column] }
+        # The header is FROZEN in its own frame so it stays visible while the body
+        # scrolls, which makes them two independent grids. Assert the property
+        # that actually matters - the columns line up - rather than the
+        # mechanism, which has now changed twice: they shared one grid to fix
+        # the drift, then had to be split again to pin the header.
+        set _hf $w.tuncav.hdr
+        set _bf $w.tuncav.sc.c.inner
+        set _ncol 0; set _aligned 0; set _off {}
+        if {[winfo exists $_hf] && [winfo exists $_bf]} {
+            for {set _c 0} {$_c < 20} {incr _c} {
+                if {![winfo exists $_hf.h$_c]} { continue }
+                incr _ncol
+                set _hb ""; set _bb ""
+                catch {set _hb [grid bbox $_hf $_c 0]}
+                catch {set _bb [grid bbox $_bf $_c 1]}
+                if {[llength $_hb] == 4 && [llength $_bb] == 4} {
+                    set _d [expr {abs([lindex $_hb 0] - [lindex $_bb 0])}]
+                    if {$_d <= 3} { incr _aligned } else { lappend _off "col$_c:${_d}px" }
+                }
             }
         }
-        report "cavity header and rows share one grid, so columns line up" \
-               [expr {[llength $_hrow] > 3 && [llength $_drow] > 3
-                      && [llength [lsort -unique $_hrow]] <= [llength [lsort -unique $_drow]]}] \
-               "(header cols [lsort -integer $_hrow], row cols [lsort -integer $_drow])"
+        report "the frozen header's columns line up with the body's" \
+               [expr {$_ncol > 3 && $_aligned == $_ncol}] \
+               "($_aligned of $_ncol within 3 px; off: $_off)"
         report "the cavity table scrolls and the window stays bounded" \
                [expr {[winfo exists $w.tuncav.sc.sb]
                       && [winfo reqheight $w.tuncav] < 700}] \
                "(height [winfo reqheight $w.tuncav] px)"
-        report "the cavities window offers show/hide all and both start-point rules" \
-               [expr {[winfo exists $w.tuncav.ctl.all] && [winfo exists $w.tuncav.ctl.none]
+        # One master checkbox replaced the Show all / Hide all button pair, and
+        # colour/material/spheres moved to a per-row gear.
+        report "the cavities window offers the master checkbox, both start-point rules and a per-row gear" \
+               [expr {[winfo exists $w.tuncav.ctl.allc]
                       && [winfo exists $w.tuncav.ctl.rm] && [winfo exists $w.tuncav.ctl.rc]
                       && [winfo exists $w.tuncav.ctl.pm]
+                      && [winfo exists $w.tuncav.sc.c.inner.gear1]
                       && [winfo exists $w.tuncav.sc.c.inner.use1]}] \
-               "(the row buttons live in the scrolling grid now)"
+               "(allc=[winfo exists $w.tuncav.ctl.allc] gear1=[winfo exists $w.tuncav.sc.c.inner.gear1])"
         # sorting actually reorders
         set ::VMDPathFinder::state(cavity_sort_col) vol
         set ::VMDPathFinder::state(cavity_sort_dir) desc
@@ -6086,10 +6095,14 @@ if {$ntun > 0} {
         # volume columns merged), and each time this read a different column and
         # "failed" for a reason that had nothing to do with sorting.
         proc _cav_volcol {w} {
-            set g $w.tuncav.sc.c.inner
+            # Headings live in the FROZEN header frame, not in the scrolling
+            # body - they moved there when the header was pinned. Both are
+            # checked so this keeps working either way.
             for {set c 0} {$c < 20} {incr c} {
-                if {![winfo exists $g.h$c]} { continue }
-                if {[string match "Volume*" [$g.h$c cget -text]]} { return $c }
+                foreach _h [list $w.tuncav.hdr.h$c $w.tuncav.sc.c.inner.h$c] {
+                    if {![winfo exists $_h]} { continue }
+                    if {[string match "Volume*" [$_h cget -text]]} { return $c }
+                }
             }
             return -1
         }
