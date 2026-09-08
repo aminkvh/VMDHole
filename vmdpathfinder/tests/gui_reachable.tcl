@@ -400,45 +400,125 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
         return $o
     }
     set _h0 [_cv_handle_centres]
+    proc _cv_midpoint {} {
+        set c [_cv_handle_centres]
+        if {[llength $c] != 2} { return {} }
+        set m {}
+        foreach a [lindex $c 0] b [lindex $c 1] { lappend m [expr {($a+$b)/2.0}] }
+        return $m
+    }
+    proc _cv_near {a b} {
+        if {[llength $a] != [llength $b] || ![llength $a]} { return 0 }
+        foreach x $a y $b { if {abs($x-$y) > 0.02} { return 0 } }
+        return 1
+    }
     report "the CVECT page draws a handle at each of its two points" \
            [expr {[llength $_h0] == 2}] "(centres: $_h0)"
+    set _cp_xyz {}
+    catch {set _cp_xyz [::VMDPathFinder::_resolve_point_input \
+        $::VMDPathFinder::state(cpoint) $mid [molinfo $mid get frame]]}
+    report "CPOINT is the midpoint of the drawn axis" \
+           [_cv_near [_cv_midpoint] $_cp_xyz] "(mid [_cv_midpoint] vs CPOINT $_cp_xyz)"
 
-    # The shaft runs 1 -> 2 at its TRUE length: the pair are the vector's ends,
-    # so their separation is part of what the user set, even though state(cvect)
-    # keeps only the normalised direction.
-    set _cyl {}; set _cone {}
+    # The two points are INDEPENDENT objects; the axis is a third. Each handle
+    # sits at its own point, moving one never moves the other, and the axis is
+    # the line through CPOINT along their direction - CPOINT is what HOLE
+    # searches out from, so the axis has to pass through it. Making the handles
+    # the axis's own ends is what forced them to move together.
+    proc _cv_on_line {p a b} {
+        if {[llength $p] != 3 || [llength $a] != 3 || [llength $b] != 3} { return 0 }
+        lassign $a ax ay az; lassign $b bx by bz; lassign $p px py pz
+        set dx [expr {$bx-$ax}]; set dy [expr {$by-$ay}]; set dz [expr {$bz-$az}]
+        set L [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]
+        if {$L < 1e-9} { return 0 }
+        set ex [expr {$px-$ax}]; set ey [expr {$py-$ay}]; set ez [expr {$pz-$az}]
+        set cx [expr {$ey*$dz-$ez*$dy}]; set cy [expr {$ez*$dx-$ex*$dz}]; set cz [expr {$ex*$dy-$ey*$dx}]
+        return [expr {sqrt($cx*$cx+$cy*$cy+$cz*$cz)/$L < 0.05}]
+    }
+    proc _cv_axis {} {
+        if {![dict exists $::VMDPathFinder::point_marker_mols cpoint]} { return {} }
+        set m [dict get $::VMDPathFinder::point_marker_mols cpoint]
+        set cyl {}; set cone {}
+        foreach it [graphics $m list] {
+            set i [graphics $m info $it]
+            if {[lindex $i 0] eq "cylinder"} { set cyl $i }
+            if {[lindex $i 0] eq "cone"}     { set cone $i }
+        }
+        if {$cyl eq "" || $cone eq ""} { return {} }
+        return [list [lindex $cyl 1] [lindex $cone 2]]
+    }
+    set ::VMDPathFinder::vec_p1 "60 30 20"
+    set ::VMDPathFinder::vec_p2 "80 30 30"
+    ::VMDPathFinder::show_axis_stick_dialog cvect
+    update idletasks; update
+    set _cp_xyz {}
+    catch {set _cp_xyz [::VMDPathFinder::_resolve_point_input \
+        $::VMDPathFinder::state(cpoint) $mid [molinfo $mid get frame]]}
+    set _hA [_cv_handle_centres]
+    report "each handle sits at its own point" \
+           [expr {[_cv_near [lindex $_hA 0] {60 30 20}] && [_cv_near [lindex $_hA 1] {80 30 30}]}] \
+           "(handles $_hA)"
+    report "the axis passes through CPOINT" \
+           [_cv_on_line $_cp_xyz [lindex [_cv_axis] 0] [lindex [_cv_axis] 1]] \
+           "(axis [_cv_axis] vs CPOINT $_cp_xyz)"
+    # independence, both ways round
+    set ::VMDPathFinder::state(axis_stick_vec_pt) p2
+    ::VMDPathFinder::_axis_stick_nudge cvect right
+    update idletasks; update
+    set _hB [_cv_handle_centres]
+    report "moving Point 2 leaves Point 1 exactly where it was" \
+           [expr {[_cv_near [lindex $_hA 0] [lindex $_hB 0]]
+                  && ![_cv_near [lindex $_hA 1] [lindex $_hB 1]]}] "($_hA -> $_hB)"
+    set ::VMDPathFinder::state(axis_stick_vec_pt) p1
+    ::VMDPathFinder::_axis_stick_nudge cvect up
+    update idletasks; update
+    set _hC [_cv_handle_centres]
+    report "moving Point 1 leaves Point 2 exactly where it was" \
+           [expr {[_cv_near [lindex $_hB 1] [lindex $_hC 1]]
+                  && ![_cv_near [lindex $_hB 0] [lindex $_hC 0]]}] "($_hB -> $_hC)"
+    report "the axis still passes through CPOINT after both moves" \
+           [_cv_on_line $_cp_xyz [lindex [_cv_axis] 0] [lindex [_cv_axis] 1]] \
+           "(axis [_cv_axis])"
+    # the axis direction is the pair's direction, and CVECT agrees with it
+    proc _cv_dir {a b} {
+        lassign $a x1 y1 z1; lassign $b x2 y2 z2
+        set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
+        set L [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]
+        if {$L < 1e-9} { return {} }
+        return [list [expr {$dx/$L}] [expr {$dy/$L}] [expr {$dz/$L}]]
+    }
+    report "the axis runs along Point 1 -> Point 2, and CVECT matches" \
+           [expr {[_cv_near [_cv_dir [lindex $_hC 0] [lindex $_hC 1]] \
+                            [_cv_dir [lindex [_cv_axis] 0] [lindex [_cv_axis] 1]]]
+                  && [_cv_near [::VMDPathFinder::_normalize_dir $::VMDPathFinder::state(cvect)] \
+                               [_cv_dir [lindex $_hC 0] [lindex $_hC 1]]]}] \
+           "(CVECT $::VMDPathFinder::state(cvect))"
+    # exactly one axis: the handles contribute no shaft of their own
+    set _h_shaft 0
     if {[dict exists $::VMDPathFinder::point_marker_mols cvect_pts]} {
-        set _cm2 [dict get $::VMDPathFinder::point_marker_mols cvect_pts]
-        foreach _it [graphics $_cm2 list] {
-            set _inf [graphics $_cm2 info $_it]
-            if {[lindex $_inf 0] eq "cylinder"} { set _cyl $_inf }
-            if {[lindex $_inf 0] eq "cone"}     { set _cone $_inf }
+        set _hm [dict get $::VMDPathFinder::point_marker_mols cvect_pts]
+        foreach _it [graphics $_hm list] {
+            if {[lindex [graphics $_hm info $_it] 0] in {cone cylinder}} { incr _h_shaft }
         }
     }
-    report "the vector is drawn 1 -> 2 at true length (shaft + head)" \
-           [expr {$_cyl ne {} && $_cone ne {}
-                  && [lindex $_cyl 1] eq [lindex $_h0 0]
-                  && [lindex $_cone 2] eq [lindex $_h0 1]}] \
-           "(shaft from [lindex $_cyl 1], tip at [lindex $_cone 2])"
+    report "only one axis is drawn (the handles add no second shaft)" \
+           [expr {$_h_shaft == 0}] "(handles mol drew $_h_shaft shaft parts)"
 
     # The Value readout duplicates the Point entry above it on this page, so it
-    # reports what the entries cannot: length, and the unit direction the length
-    # is discarded in favour of.
+    # reports what the entries cannot: length, and the unit direction.
     set _val ""
     catch {set _val [$_sd.sv.val_v cget -text]}
     report "the stick's Value shows CVECT's length and unit direction" \
            [expr {[string match "len *" $_val] && [string match "*dir *" $_val]}] "($_val)"
 
-    # Exact re-resolves the two definitions literally per frame, so with two
-    # x,y,z constants it re-derives the identical vector every frame - a live
-    # control that cannot do anything. Stabilize fits a local atom context and
-    # is meaningful for a literal point too, so only Exact is gated.
-    set ::VMDPathFinder::vec_p1 "70 30 25"
-    set ::VMDPathFinder::vec_p2 "70 30 35"
+    # Exact re-resolves both definitions literally per frame, so with two x,y,z
+    # constants it re-derives an identical vector every frame - a live control
+    # that cannot do anything. Stabilize fits a local atom context and is
+    # meaningful for a literal point, so only Exact is gated.
+    set _ex_lit ""; set _st_lit ""
     catch {::VMDPathFinder::compute_vector $_sd.vec}
     catch {::VMDPathFinder::_cvect_sync_stab_controls $_sd.vec}
     update idletasks; update
-    set _ex_lit ""; set _st_lit ""
     catch {set _ex_lit [$_sd.vec.sb.ex cget -state]}
     catch {set _st_lit [$_sd.vec.sb.cv cget -state]}
     set ::VMDPathFinder::vec_p2 "index 120"
@@ -452,15 +532,8 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
            "(two literals: Exact $_ex_lit / Stabilize $_st_lit; with a selection: Exact $_ex_sel)"
     set ::VMDPathFinder::vec_p1 ""
     set ::VMDPathFinder::vec_p2 ""
-    # Moving one end moves that handle and leaves the other alone.
-    set ::VMDPathFinder::state(axis_stick_vec_pt) p2
-    ::VMDPathFinder::_axis_stick_nudge cvect right
-    update idletasks; update
-    set _h1 [_cv_handle_centres]
-    report "moving Point 2 moves only Point 2's handle" \
-           [expr {[llength $_h1] == 2 && [lindex $_h0 0] eq [lindex $_h1 0]
-                  && [lindex $_h0 1] ne [lindex $_h1 1]}] "($_h0 -> $_h1)"
-    # Leaving the page takes them off screen; Close leaves no marker mol.
+
+    # Leaving the page takes the handles off screen; Close leaves nothing behind.
     set ::VMDPathFinder::state(axis_stick_mode) cpoint
     ::VMDPathFinder::_axis_stick_sync_mode $_sd
     update idletasks; update
@@ -5944,6 +6017,86 @@ if {[file readable $_pdb] && [file readable $_rad] \
 # greps for this, so a run that dies anywhere above is a FAILURE rather than a
 # silent pass. Deliberately not the trailing summary below: VMD segfaults in its
 # own exit path on this file, so nothing after the catch is reliably reached.
+
+# ---- Cavities: cross-frame tracking, the table, and the two start-point rules
+# The cavity data is computed for EVERY analysed frame and was previously only
+# ever read for the displayed one. These checks cover the parts that turn it
+# into something a trajectory can be described with, and the action that makes
+# a cavity useful as an input rather than a report.
+if {$ntun > 0} {
+    set _cfr [::VMDPathFinder::_tunnel_display_frame]
+    set _cavs [::VMDPathFinder::_tunnel_cavities $_cfr]
+    if {[dict size $_cavs]} {
+        set _cid [lindex [dict keys $_cavs] 0]
+        set _cv  [dict get $_cavs $_cid]
+        report "the engine's own automatic origins (O records) are parsed" \
+               [expr {[llength [dict get $_cv origins]] > 0}] \
+               "([llength [dict get $_cv origins]] origins on cavity $_cid)"
+        set _om [::VMDPathFinder::_cavity_origin $_cv mole]
+        set _oc [::VMDPathFinder::_cavity_origin $_cv caver]
+        report "the two start-point rules are distinct points, not one dressed as two" \
+               [expr {[llength $_om] == 3 && [llength $_oc] == 3 && $_om ne $_oc}] \
+               "(MOLE $_om / CAVER $_oc)"
+        set _tracks [::VMDPathFinder::_cavity_tracks]
+        report "cavities are tracked across frames, not just the landed one" \
+               [expr {[llength $_tracks] > 0
+                      && [dict get [lindex $_tracks 0] nframes] >= 1
+                      && [dict get [lindex $_tracks 0] seen] > 0}] \
+               "([llength $_tracks] tracks over [dict get [lindex $_tracks 0] nframes] frames)"
+        report "max probe is a real radius" \
+               [expr {[::VMDPathFinder::_cavity_max_probe $_cv] > 0}] ""
+        # the window and its controls
+        ::VMDPathFinder::show_tunnel_cavities
+        update idletasks; update
+        report "the cavities window offers show/hide all and both start-point rules" \
+               [expr {[winfo exists $w.tuncav.ctl.all] && [winfo exists $w.tuncav.ctl.none]
+                      && [winfo exists $w.tuncav.ctl.rm] && [winfo exists $w.tuncav.ctl.rc]
+                      && [winfo exists $w.tuncav.b.use0]}] ""
+        # sorting actually reorders
+        set ::VMDPathFinder::state(cavity_sort_col) vol
+        set ::VMDPathFinder::state(cavity_sort_dir) desc
+        ::VMDPathFinder::show_tunnel_cavities
+        update idletasks; update
+        set _fd ""; catch {set _fd [$w.tuncav.b.v0_3 cget -text]}
+        ::VMDPathFinder::_cavity_sort vol
+        update idletasks; update
+        set _fa ""; catch {set _fa [$w.tuncav.b.v0_3 cget -text]}
+        report "clicking a cavity column header reverses the sort" \
+               [expr {$_fd ne "" && $_fa ne "" && $_fd != $_fa}] "(desc $_fd, asc $_fa)"
+        # cavities draw on their OWN molecule, not the routes'
+        ::VMDPathFinder::_cavity_show_all 1
+        update idletasks; update
+        # ask the RENDER which molecule it used, rather than creating one here
+        # and hoping the two agree
+        set _cm [::VMDPathFinder::_render_cavities_for_frame $_cfr]
+        update idletasks; update
+        set _tm [::VMDPathFinder::ensure_tunnel_surface_mol $mid]
+        set _cg [expr {$_cm ne "" ? [llength [graphics $_cm list]] : -1}]
+        report "cavities draw on their own track, not the routes'" \
+               [expr {$_cm ne "" && $_cm != $_tm && $_cg > 0}] \
+               "(cavity mol $_cm with $_cg primitives, route mol $_tm)"
+        ::VMDPathFinder::_cavity_show_all 0
+        update idletasks; update
+        report "Hide all clears the cavity track" \
+               [expr {$_cm eq "" || [llength [graphics $_cm list]] == 0}] ""
+        # "use as start point" fills the field and says which rule it used
+        set _saved_start $::VMDPathFinder::state(tunnel_start)
+        set ::VMDPathFinder::state(cavity_origin_rule) mole
+        ::VMDPathFinder::_cavity_use_as_start $_cfr $_cid
+        set _s1 $::VMDPathFinder::state(tunnel_start)
+        set _st1 $::VMDPathFinder::state(status)
+        set ::VMDPathFinder::state(cavity_origin_rule) caver
+        ::VMDPathFinder::_cavity_use_as_start $_cfr $_cid
+        report "a cavity can seed the search, and reports which rule it used" \
+               [expr {[llength $_s1] == 3 && [string match "*MOLE*" $_st1]
+                      && $::VMDPathFinder::state(tunnel_start) ne $_s1
+                      && [string match "*CAVER*" $::VMDPathFinder::state(status)]}] \
+               "(MOLE $_s1 / CAVER $::VMDPathFinder::state(tunnel_start))"
+        set ::VMDPathFinder::state(tunnel_start) $_saved_start
+        catch {destroy $w.tuncav}
+    }
+}
+
 say "  ---- ALL CHECKS COMPLETE"
 
 

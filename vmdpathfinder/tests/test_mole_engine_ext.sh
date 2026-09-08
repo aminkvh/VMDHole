@@ -1,5 +1,5 @@
 #!/bin/sh
-# The three additions to the C MOLE engine (native/mole/mole_main.c) that the
+# The additions to the C MOLE engine (native/mole/mole_main.c) that the
 # plugin reads or drives:
 #
 #   VP records   - a cavity's geometry, one "VP id x y z r" per member
@@ -11,6 +11,11 @@
 #                  auto-origin loop already merges them.
 #   --exit=      - repeatable; every exit joins CustomExits.
 #   --vdw=El:r   - per-element vdW radius overrides.
+#   O records    - "O id rank x y z depthlength", MOLE's OWN automatic origins
+#                  for every cavity, deepest-first, emitted on every run so the
+#                  plugin can offer the start point MOLE would have chosen
+#                  instead of reimplementing the rule. Computed even when the
+#                  run was pinned, and inert to the search when it was.
 #
 # test_mole_tcl_port pins the engine to MOLE's own numbers; nothing there
 # exercises these flags, and the byte-parity checks there only see that the
@@ -231,6 +236,122 @@ fi
 cavs=$(awk '$1=="T"{print $7}' "$TMP/xs.txt" | sort -n | uniq | tr '\n' ' ')
 if [ "$cavs" = "0 1 " ]; then ok "surface exit + cavity exit: tunnels from C0 and C1 (cavities: $cavs)"
 else bad "surface exit + cavity exit: cavities [$cavs], expected 0 and 1"; fi
+
+# ---- 5. O: MOLE's own automatic origins ---------------------------------------
+# "O id rank x y z depthlength" - TunnelOriginCollection.FromCavity's start
+# points for every cavity, so a caller can offer "start here" as the point MOLE
+# would have chosen instead of reimplementing the rule. Emitted on EVERY run,
+# pinned or not; the id is the V/VP cavity id, the coordinates are that
+# tetrahedron's circumcentre (a VP sphere centre) and depthlength is the
+# real-valued DepthLength the rule ranks on. $TMP/auto.txt is the auto-origin
+# run and $TMP/ori.txt the pinned one, both already on disk.
+if grep -q '^# O id rank x y z depthlength ' "$TMP/auto.txt"; then
+    ok "header documents the O record"
+else
+    bad "no '# O id rank x y z depthlength ...' header line"
+fi
+no=$(grep -c '^O ' "$TMP/auto.txt")
+[ "$no" -gt 0 ] && ok "the auto-origin run emits $no O lines" \
+    || bad "the auto-origin run emitted no O records"
+# (a) ranks contiguous from 1 per cavity, and never more than --maxorigins (5
+# by default) of them. Every V cavity carries at least one origin, which is
+# what makes the suggestion offerable everywhere.
+if awk '$1=="O"{ n[$2]++; if ($3+0 != n[$2]) rk=1 }
+        END{ for (i in n) if (n[i] > 5) cap=1
+             exit (rk || cap) ? 1 : 0 }' "$TMP/auto.txt"; then
+    ok "every cavity's O ranks run 1..n contiguously, n <= maxorigins (5)"
+else
+    bad "O ranks are not contiguous from 1, or a cavity has more than 5"
+fi
+ncav=$(grep -c '^V ' "$TMP/auto.txt")
+noc=$(awk '$1=="O"{c[$2]=1} END{print length(c)}' "$TMP/auto.txt")
+[ "$noc" -eq "$ncav" ] && ok "all $ncav cavities carry at least one O record" \
+    || bad "$noc of $ncav cavities carry an O record"
+# (b) each origin lies inside its OWN cavity: it is one of that cavity's VP
+# spheres, or at worst within one's radius. Both are counted - the coincidence
+# is the real claim, the radius is only the tolerance it is stated with.
+set -- $(awk '$1=="VP"{ vpr[$2" "$3" "$4" "$5]=$6
+                        i=nv[$2]++; vx[$2,i]=$3; vy[$2,i]=$4; vz[$2,i]=$5; vr[$2,i]=$6 }
+              $1=="O"{ tot++
+                        if (($2" "$4" "$5" "$6) in vpr) { exact++; next }
+                        best=1e300
+                        for (i=0; i<nv[$2]; i++) {
+                            dx=$4-vx[$2,i]; dy=$5-vy[$2,i]; dz=$6-vz[$2,i]
+                            d=sqrt(dx*dx+dy*dy+dz*dz)-vr[$2,i]
+                            if (d<best) best=d }
+                        if (best<=0) inside++; else out++ }
+              END{ print tot+0, exact+0, inside+0, out+0 }' "$TMP/auto.txt")
+if [ "$1" -gt 0 ] && [ "$4" -eq 0 ]; then
+    ok "every O point lies in its own cavity ($2 of $1 are a VP centre exactly, $3 within a VP radius)"
+else
+    bad "$4 of $1 O points are outside every VP sphere of their own cavity"
+fi
+# (c) the origins the SEARCH used are among them. A tunnel's profile starts at
+# its first control tetrahedron, so its first P point is the origin's
+# circumcentre - UNLESS CalculateProfile's leading skip advanced past the
+# origin, which it does while the raw clearance is under the interior threshold
+# ($DEF's second field). Both outcomes are checked: the coincidence where it
+# holds, and where it does not, that EVERY origin of that cavity is under the
+# threshold - so no origin that could have started the tunnel survived the skip.
+# Per-cavity "some origin is thin" would pass a cavity that also has a thick one.
+IT=$(echo $DEF | cut -d' ' -f2)
+set -- $(awk -v it="$IT" '$1=="VP"{ vpr[$2" "$3" "$4" "$5]=$6 }
+              $1=="O"{ o[$2" "$4" "$5" "$6]=1
+                        if (vpr[$2" "$4" "$5" "$6] >= it+0) thick[$2]=1 }
+              $1=="T"{ cav[$2]=$7; first[$2]=1 }
+              $1=="P" && first[$2]{ first[$2]=0
+                        if (cav[$2]+0 <= 0) next
+                        tot++
+                        if ((cav[$2]" "$3" "$4" "$5) in o) { hit++; next }
+                        miss++; if (cav[$2] in thick) unex++ }
+              END{ print tot+0, hit+0, miss+0, unex+0 }' "$TMP/auto.txt")
+if [ "$1" -gt 0 ] && [ "$2" -gt 0 ] && [ "$4" -eq 0 ]; then
+    ok "each tunnel starts at an O point of its cavity ($2 of $1; $3 skipped past an origin thinner than the interior threshold)"
+else
+    bad "tunnel starts vs O points: $2 of $1 matched, $3 missed, $4 of those unexplained"
+fi
+# ...and the point round-trips: pinned at a cavity's own rank-1 origin, that
+# cavity's tunnels are exactly the ones the automatic run found there. Run with
+# --maxorigins=1 so the cavity has that one origin on both sides.
+"$E" "$FIX" "$TMP/m1.txt" $DEF --maxorigins=1 > /dev/null 2>&1
+O1=$(awk '$1=="O" && $2==1 && $3==1 {print $4","$5","$6}' "$TMP/m1.txt")
+"$E" "$FIX" "$TMP/m1pin.txt" $DEF --origin=$O1 > /dev/null 2>&1
+awk '$1=="T" && $7==1 {printf "%.4f\n", $4}' "$TMP/m1.txt" | sort > "$TMP/m1c1.txt"
+awk '$1=="T" && $7==1 {printf "%.4f\n", $4}' "$TMP/m1pin.txt" | sort > "$TMP/m1pinc1.txt"
+n1c=$(wc -l < "$TMP/m1c1.txt")
+if [ -n "$O1" ] && [ "$n1c" -gt 0 ] && cmp -s "$TMP/m1c1.txt" "$TMP/m1pinc1.txt"; then
+    ok "pinning cavity 1's rank-1 O point reproduces its automatic tunnels ($n1c)"
+else
+    bad "pinning cavity 1's rank-1 O point ($O1) gave $(wc -l < "$TMP/m1pinc1.txt") tunnels, not the $n1c automatic ones"
+fi
+# (d) a PINNED run still carries the suggestion, and computing it cannot steer
+# the search: the auto-origin knobs move the O lines and nothing else.
+nop=$(grep -c '^O ' "$TMP/ori.txt")
+[ "$nop" -gt 0 ] && ok "the pinned run emits $nop O records too" \
+    || bad "the pinned run emitted no O records"
+grep -v -e '^O ' -e '^# O ' "$TMP/ori.txt" > "$TMP/s_ori.txt"
+"$E" "$FIX" "$TMP/ori_m1.txt" $DEF $ORI 5.0 --maxorigins=1 > /dev/null 2>&1
+"$E" "$FIX" "$TMP/ori_ac.txt" $DEF $ORI 5.0 --autocover=30 > /dev/null 2>&1
+grep -v -e '^O ' -e '^# O ' "$TMP/ori_m1.txt" > "$TMP/s_m1.txt"
+grep -v -e '^O ' -e '^# O ' "$TMP/ori_ac.txt" > "$TMP/s_ac.txt"
+ntp=$(grep -c -e '^T ' -e '^P ' -e '^L ' "$TMP/ori.txt")
+if [ "$ntp" -gt 0 ] && cmp -s "$TMP/s_ori.txt" "$TMP/s_m1.txt" \
+        && cmp -s "$TMP/s_ori.txt" "$TMP/s_ac.txt"; then
+    ok "a pinned run's T/P/L output is untouched by the auto-origin knobs ($ntp records)"
+else
+    bad "--maxorigins/--autocover changed a pinned run's non-O output"
+fi
+nom1=$(grep -c '^O ' "$TMP/ori_m1.txt")
+[ "$nom1" -lt "$nop" ] && ok "and those knobs do move the O lines ($nop -> $nom1)" \
+    || bad "--maxorigins=1 left the pinned run's O lines untouched ($nop -> $nom1)"
+# (e) --maxorigins=1: one origin per cavity, still one for every cavity.
+set -- $(awk '$1=="O"{ n[$2]++ } $1=="V"{ v++ }
+              END{ m=0; for (i in n) if (n[i]>m) m=n[i]; print length(n), m+0, v+0 }' "$TMP/m1.txt")
+if [ "$2" -eq 1 ] && [ "$1" -eq "$3" ] && [ "$3" -gt 0 ]; then
+    ok "--maxorigins=1 gives exactly one O per cavity ($1 cavities)"
+else
+    bad "--maxorigins=1: $1 cavities with O (of $3), at most $2 each"
+fi
 
 echo "  -> $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

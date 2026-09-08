@@ -137,18 +137,68 @@ Water free-energy and density properties require a pore-mode hydration result.
 
 ## 8. Cavities
 
-**Cavities** lists the pockets MOLE found in the displayed frame: type
-(*Cavity*, or *Void* when nothing lines it), volume, depth in tetrahedron
-layers and in Å, and the boundary and inner residue counts. **Residues** opens
-a cavity's two residue sets with their MOLE properties and a ready-made VMD
+A **cavity** is the pocket itself - a volume - as distinct from a route, which
+is a path out of one. Routes start inside cavities, so the two are views of the
+same search: the room and the corridor leaving it.
+
+**Cavities** lists what MOLE found in the displayed frame: type (*Cavity*, or
+*Void* when nothing lines it), this frame's volume, the mean and spread over the
+frames the cavity was tracked through, how often it was seen, its **max probe**
+(the largest sphere that fits inside - whether your ligand fits at all), depth,
+and the boundary/inner residue counts. Click a column header to sort. **Residues**
+opens the two residue sets with their MOLE properties and a ready-made VMD
 selection string.
 
-Ticking **Draw** meshes that cavity as a transparent sphere-union surface on the
-same track the routes are drawn on, so a route can be seen passing through the
-pocket it starts from. Cavity ids are per-frame ranks — MOLE recomputes cavities
-independently in each frame — so a tick means "cavity *N* of whichever frame is
-shown", unlike the routes, which are tracked across frames. The surface cavity
-the tunnels exit through is not listed.
+### Using a cavity to start a search
+
+The hard part of a tunnel run is choosing the origin: a poor one returns no
+routes, or routes from the wrong cavity. **Use as start** puts a cavity's start
+point into the **Start point** field, so the next run searches from that pocket.
+
+The natural loop is therefore: run once with **Auto-detect origins** (which needs
+no start point and returns every cavity), inspect the list, pick the pocket you
+care about, then re-run pinned to it.
+
+Two rules are offered, and the status line always says which one was used:
+
+| Rule | Point | Source |
+|---|---|---|
+| **deepest (MOLE)** | the cavity's deepest point by `DepthLength` | MOLE's own automatic origin, read from the engine rather than recomputed - the point it would have searched from itself |
+| **largest sphere (CAVER)** | centre of the largest sphere that fits inside | the rule CAVER Analyst's *Create Starting Point* uses |
+
+Under MD the more robust origin is often not a coordinate at all but a **VMD
+selection** in the Start point field, which is re-evaluated every frame and so
+follows the protein; the cavity's residue list is a good place to find one.
+
+### Display
+
+Ticking **Draw** meshes the cavity as a sphere-union surface on a **track of its
+own**, separate from the routes, so route display settings and cavity ticks do
+not disturb each other. **Solid** switches from transparent to opaque, and
+**Spheres** draws the clearance spheres themselves instead of a surface over
+them. **Show all** / **Hide all** apply to every cavity in the frame.
+
+### What the numbers mean, and what they are not
+
+*Id* is a **tracked** id: the same pocket keeps the same number, the same
+colour and the same tick in every frame, matched across frames by centroid
+proximity. This matters because MOLE recomputes cavities independently in each
+frame and ranks them by volume, so two pockets that swap volume order swap
+ranks - keying anything on the rank would mean a ticked cavity silently became
+a different pocket on the next frame. That per-frame rank is still shown, in
+**Rank here**, and a row reading *absent* is a pocket the displayed frame does
+not have (check its *Seen %*). The tracking is this plugin's own: neither MOLE
+nor CAVER reports cavity behaviour over a trajectory at all.
+
+Two caveats worth carrying into a figure caption:
+
+- The drawn surface is a **marching-cubes sphere union**. MOLE triangulates the
+  boundary facets of its tetrahedra with the corners at *atom centres*, and
+  CAVER Analyst renders an analytic solvent-excluded surface. These are three
+  different surfaces of the same pocket, so areas and volumes are not
+  interchangeable between the programs.
+- MOLE's own *Volume* column is not the volume of anything it draws either: it
+  is the tetrahedra minus van der Waals caps.
 
 Cavities require the compiled engine; a run made with the pure-Tcl fallback has
 none, and the window says so.

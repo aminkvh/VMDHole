@@ -397,6 +397,7 @@ namespace eval ::VMDPathFinder:: {
         _conn_unroll_memo         {form dict  tags {run results}}
         _2dmap_memo               {form array tags {results}}
         _tunnel_esp_cache         {form array tags {run results}}
+        _cavity_track_cache       {form dict  tags {run results}}
         hydro_topo_cache          {form dict  tags {run} free _free_hydro_topo_cache}
         sphere_atom_cache         {form dict  tags {run}}
         hydro3d_props_cache       {form dict  tags {run}}
@@ -700,6 +701,12 @@ namespace eval ::VMDPathFinder:: {
         mole_path_a ""
         mole_path_b ""
         mole_vdw ""
+        cavity_solid 0
+        cavity_spheres 0
+        cavity_origin_rule mole
+        cavity_sort_col vol
+        cavity_sort_dir desc
+        cavity_track_cutoff 6.0
         tunnel_prop kd
         tunnel_selected_id {}
         tunnel_lining_show_all 0
@@ -1036,6 +1043,7 @@ proc ::VMDPathFinder::save_config {} {
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
         conn_lobe_sort_col conn_lobe_sort_dir
         mole_exit mole_path_a mole_path_b mole_vdw tunnel_cluster
+        cavity_solid cavity_spheres cavity_origin_rule cavity_track_cutoff
         tunnel_align tunnel_render_maxr bottleneck_shell tunnel_hydro3d_accurate
         tunnel_display_mode tunnel_display_material tunnel_display_color
         mean_tunnel_display_mode
@@ -18681,7 +18689,7 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
                 dict set out cav.$id [dict create type [lindex $f 2] \
                     volume [lindex $f 3] depth [lindex $f 4] depthlen [lindex $f 5] \
                     nboundary [lindex $f 6] ninner [lindex $f 7] \
-                    bprops {} iprops {} bres {} ires {} spheres {}]
+                    bprops {} iprops {} bres {} ires {} spheres {} origins {}]
             }
             VB - VI {
                 # Boundary / inner residue set of cavity $id with its properties:
@@ -18707,6 +18715,16 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
                 set _sp [dict get $out cav.$id spheres]
                 lappend _sp [lrange $f 2 5]
                 dict set out cav.$id spheres $_sp
+            }
+            O {
+                # "O id rank x y z depthlength" - an origin MOLE itself would
+                # pick for that cavity (local DepthLength maxima, deepest
+                # first). Emitted on every run, so "start the search here" can
+                # offer the engine's OWN answer rather than a lookalike.
+                if {[llength $f] < 7 || ![dict exists $out cav.$id]} { continue }
+                set _og [dict get $out cav.$id origins]
+                lappend _og [list [lindex $f 2] [lrange $f 3 5] [lindex $f 6]]
+                dict set out cav.$id origins $_og
             }
             H {
                 # Tunnel.FindHetResidues - the HET residues the tunnel passes
@@ -18761,42 +18779,342 @@ proc ::VMDPathFinder::_tunnel_cavities {frame} {
     return $out
 }
 
-proc ::VMDPathFinder::_tunnel_cavity_shown {id} {
-    variable tunnel_cavity_shown
-    return [expr {[info exists tunnel_cavity_shown($id)] && $tunnel_cavity_shown($id)}]
+proc ::VMDPathFinder::_cavity_centroid {cv} {
+    # Mean of the cavity's tetrahedra centres - its position, for matching the
+    # same cavity across frames. Cheaper and steadier than the origin, which
+    # can hop between two nearly equal DepthLength maxima from frame to frame.
+    set n 0; set sx 0.0; set sy 0.0; set sz 0.0
+    foreach sp [dict get $cv spheres] {
+        lassign $sp x y z
+        set sx [expr {$sx+$x}]; set sy [expr {$sy+$y}]; set sz [expr {$sz+$z}]
+        incr n
+    }
+    if {$n == 0} { return {} }
+    return [list [expr {$sx/$n}] [expr {$sy/$n}] [expr {$sz/$n}]]
 }
 
-proc ::VMDPathFinder::_render_cavities_for_frame {frame m fd} {
-    # Draw every ticked cavity of $frame onto the tunnel track mol $m. One
-    # .sph + mesh per cavity beside the frame's tunnel files, reused on the
-    # mtime rule tunnels use. Transparent so a cavity reads as a volume the
-    # opaque tunnel tubes pass through, in its own colour past the tunnel
-    # palette's first entries.
+proc ::VMDPathFinder::_cavity_max_probe {cv} {
+    # The largest clearance sphere the cavity holds - CAVER Analyst's "Max.
+    # Probe". An upper bound on what fits inside the pocket at all.
+    set m 0.0
+    foreach sp [dict get $cv spheres] {
+        set r [lindex $sp 3]
+        if {[string is double -strict $r] && $r > $m} { set m $r }
+    }
+    return $m
+}
+
+proc ::VMDPathFinder::_cavity_origin {cv {rule ""}} {
+    # Where a search started from this cavity would begin.
+    #   mole  - the engine's OWN first automatic origin (deepest point by
+    #           DepthLength). This is the point MOLE would have used in
+    #           automatic mode, read from its O record, not recomputed here.
+    #   caver - centre of the cavity's largest inscribed sphere, which is what
+    #           CAVER Analyst's "Create Starting Point" uses.
+    # Falls back to the other rule when one is unavailable, so the button
+    # always has something to give.
+    variable state
+    if {$rule eq ""} {
+        set rule [expr {[info exists state(cavity_origin_rule)] \
+            ? $state(cavity_origin_rule) : "mole"}]
+    }
+    set og [dict get $cv origins]
+    set mole {}
+    if {[llength $og]} {
+        set best {}; set brank 1e30
+        foreach o $og {
+            lassign $o rank pt _dl
+            if {[string is integer -strict $rank] && $rank < $brank} { set brank $rank; set best $pt }
+        }
+        set mole $best
+    }
+    set caver {}
+    set bestr -1.0
+    foreach sp [dict get $cv spheres] {
+        set r [lindex $sp 3]
+        if {[string is double -strict $r] && $r > $bestr} { set bestr $r; set caver [lrange $sp 0 2] }
+    }
+    if {$rule eq "caver"} { return [expr {[llength $caver] == 3 ? $caver : $mole}] }
+    return [expr {[llength $mole] == 3 ? $mole : $caver}]
+}
+
+proc ::VMDPathFinder::_cavity_tracks {} {
+    # Cavities followed ACROSS FRAMES, each with a STABLE id of its own.
+    #
+    # MOLE recomputes cavities independently per frame and ranks them by
+    # volume, so a rank is not an identity: two pockets that swap volume order
+    # swap ids between frames. Keying anything user-facing on the rank has the
+    # defect the routes already had - tick a cavity, step a frame, and the tick
+    # lands on a different pocket. So each cavity gets a track, and the track
+    # is what the panel, the checkbox and the colour key on.
+    #
+    # Identity is by CENTROID PROXIMITY, frame by frame: a cavity joins the
+    # nearest existing track whose running centroid is within the cutoff, else
+    # it starts one. Track ids are assigned by mean volume once every frame has
+    # been walked, so the largest pocket is track 1 in every frame.
+    #
+    # Memoised: this walks every frame's cavities and is called from the
+    # renderer, which runs on every frame change.
+    variable tunnel_lining
+    variable tunnel_result_frames
+    variable state
+    variable plot_data_version
+    variable _cavity_track_cache
+    set cut [expr {[info exists state(cavity_track_cutoff)] \
+        ? $state(cavity_track_cutoff) : 6.0}]
+    if {![string is double -strict $cut] || $cut <= 0} { set cut 6.0 }
+    set key "[llength $tunnel_result_frames]|$plot_data_version|$cut"
+    if {[info exists _cavity_track_cache] && [dict exists $_cavity_track_cache $key]} {
+        return [dict get $_cavity_track_cache $key]
+    }
+    set tracks {}
+    set nfr 0
+    foreach fr $tunnel_result_frames {
+        if {![info exists tunnel_lining($fr)]} { continue }
+        incr nfr
+        foreach {id cv} [_tunnel_cavities $fr] {
+            set c [_cavity_centroid $cv]
+            if {[llength $c] != 3} { continue }
+            set best -1; set bestd $cut
+            set i -1
+            foreach t $tracks {
+                incr i
+                # one cavity per track per frame - the nearest wins
+                if {[dict exists $t ids $fr]} { continue }
+                set tc [dict get $t centroid]
+                set d [expr {sqrt(pow([lindex $c 0]-[lindex $tc 0],2)
+                                + pow([lindex $c 1]-[lindex $tc 1],2)
+                                + pow([lindex $c 2]-[lindex $tc 2],2))}]
+                if {$d < $bestd} { set bestd $d; set best $i }
+            }
+            if {$best < 0} {
+                lappend tracks [dict create frames [list $fr] \
+                    ids [dict create $fr $id] centroid $c \
+                    volumes [list [dict get $cv volume]] \
+                    maxprobe [_cavity_max_probe $cv] type [dict get $cv type]]
+            } else {
+                set t [lindex $tracks $best]
+                dict lappend t frames $fr
+                dict set t ids $fr $id
+                dict lappend t volumes [dict get $cv volume]
+                set mp [_cavity_max_probe $cv]
+                if {$mp > [dict get $t maxprobe]} { dict set t maxprobe $mp }
+                # running centroid, so a slowly drifting cavity keeps matching
+                set n [llength [dict get $t frames]]
+                set tc [dict get $t centroid]
+                set nc {}
+                foreach a $tc b $c { lappend nc [expr {$a + ($b-$a)/double($n)}] }
+                dict set t centroid $nc
+                lset tracks $best $t
+            }
+        }
+    }
+    # statistics, then a stable id by mean volume (largest = 1) so the same
+    # pocket carries the same number and colour in every frame
+    set stat {}
+    foreach t $tracks {
+        set v [dict get $t volumes]
+        set n [llength $v]
+        set sum 0.0
+        foreach x $v { set sum [expr {$sum+$x}] }
+        set mean [expr {$n ? $sum/$n : 0.0}]
+        set sd 0.0
+        if {$n > 1} {
+            set acc 0.0
+            foreach x $v { set acc [expr {$acc + ($x-$mean)*($x-$mean)}] }
+            set sd [expr {sqrt($acc/($n-1))}]
+        }
+        dict set t vol_mean $mean
+        dict set t vol_sd $sd
+        dict set t seen [expr {$nfr ? 100.0*$n/$nfr : 0.0}]
+        dict set t nframes $nfr
+        lappend stat $t
+    }
+    # No lmap here: VMD ships stock Tcl 8.5, where it does not exist.
+    set _pairs {}
+    foreach t $stat { lappend _pairs [list $t [dict get $t vol_mean]] }
+    set stat [lsort -real -decreasing -index 1 $_pairs]
+    set out {}
+    set tid 0
+    foreach pair $stat {
+        incr tid
+        set t [lindex $pair 0]
+        dict set t tid $tid
+        lappend out $t
+    }
+    if {![info exists _cavity_track_cache]} { set _cavity_track_cache [dict create] }
+    dict set _cavity_track_cache $key $out
+    return $out
+}
+
+proc ::VMDPathFinder::_cavity_track_by_tid {tid} {
+    foreach t [_cavity_tracks] { if {[dict get $t tid] == $tid} { return $t } }
+    return {}
+}
+
+proc ::VMDPathFinder::_cavity_rank_in_frame {tid frame} {
+    # The per-frame cavity RANK belonging to track $tid, or "" when that track
+    # has no cavity in this frame - the cavity counterpart of
+    # _tunnel_rank_in_frame, and for the same reason.
+    set t [_cavity_track_by_tid $tid]
+    if {![llength $t] || ![dict exists $t ids $frame]} { return "" }
+    return [dict get $t ids $frame]
+}
+
+proc ::VMDPathFinder::_cavity_track_for {frame id} {
+    # The cross-frame track a given frame's cavity belongs to, or {}.
+    foreach t [_cavity_tracks] {
+        if {[dict exists $t ids $frame] && [dict get $t ids $frame] == $id} { return $t }
+    }
+    return {}
+}
+
+proc ::VMDPathFinder::_tunnel_cavity_shown {tid} {
+    # Keyed on the TRACK id, so ticking a cavity keeps that same pocket drawn
+    # as the trajectory plays. Keyed on the per-frame rank it would have
+    # followed whatever pocket happened to hold that rank next frame.
     variable tunnel_cavity_shown
-    if {![array exists tunnel_cavity_shown]} { return }
+    return [expr {[info exists tunnel_cavity_shown($tid)] && $tunnel_cavity_shown($tid)}]
+}
+
+proc ::VMDPathFinder::ensure_cavity_mol {protein_mol} {
+    # Cavities get a track of their OWN, not the routes'. Routes are cross-frame
+    # tracked objects and cavity ids are per-frame ranks: sharing one molecule
+    # meant a route display change or a hide-all also disturbed the cavities,
+    # and neither could be given its own material.
+    variable cavity_mols
+    if {![info exists cavity_mols]} { array set cavity_mols {} }
+    if {[info exists cavity_mols($protein_mol)] && \
+            ![catch {molinfo $cavity_mols($protein_mol) get name}]} {
+        set m $cavity_mols($protein_mol)
+        catch {sync_surface_view $m $protein_mol}
+        return $m
+    }
+    set pv {}
+    catch {set pv [molinfo $protein_mol get \
+        {center_matrix rotate_matrix scale_matrix global_matrix}]}
+    set prev [molinfo top]
+    set m [mol new]
+    mol rename $m "Cavities (mol $protein_mol)"
+    set cavity_mols($protein_mol) $m
+    if {$pv ne ""} {
+        catch {molinfo $m set {center_matrix rotate_matrix scale_matrix global_matrix} $pv}
+    }
+    catch {sync_surface_view $m $protein_mol}
+    # `mol new` steals top, and VMD drives playback off top - see
+    # ensure_tunnel_surface_mol's own note.
+    catch {mol top $prev}
+    return $m
+}
+
+proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
+    # Draw every ticked cavity of $frame onto the CAVITY track. One .sph + mesh
+    # per cavity beside the frame's tunnel files, reused on the mtime rule the
+    # routes use. Drawn transparent by default so a route can be seen passing
+    # through the pocket it starts from; Solid is a per-window toggle.
+    variable state
+    variable tunnel_cavity_shown
+    variable tunnel_root
+    # resolve_molid_or, not the raw field: state(molid) defaults to "top", and
+    # keying the cavity track on the literal string would make a second,
+    # graphics-less molecule the moment anything asked for it by number.
+    set molid [resolve_molid_or -1]
+    if {$molid < 0} { return "" }
     set cavs [_tunnel_cavities $frame]
-    if {![llength $cavs]} { return }
-    foreach {id cv} $cavs {
-        if {![_tunnel_cavity_shown $id]} continue
-        set sph [file join $fd [format "cavity_%02d.sph" $id]]
+    set any 0
+    foreach t [_cavity_tracks] { if {[_tunnel_cavity_shown [dict get $t tid]]} { set any 1; break } }
+    if {!$any} {
+        # nothing ticked: clear the track rather than leave the last frame's
+        variable cavity_mols
+        if {[info exists cavity_mols($molid)] && ![catch {molinfo $cavity_mols($molid) get name}]} {
+            catch {graphics $cavity_mols($molid) delete all}
+            return $cavity_mols($molid)
+        }
+        return ""
+    }
+    set cm [ensure_cavity_mol $molid]
+    catch {graphics $cm delete all}
+    if {$fd eq ""} { set fd [file join $tunnel_root [format "tunnel_%05d" $frame]] }
+    set mat [expr {[info exists state(cavity_solid)] && $state(cavity_solid) \
+        ? "Opaque" : "Transparent"}]
+    foreach t [_cavity_tracks] {
+        set tid [dict get $t tid]
+        if {![_tunnel_cavity_shown $tid]} continue
+        # the ticked TRACK's cavity in THIS frame - absent from some frames is
+        # normal, and simply means nothing to draw here
+        set id [_cavity_rank_in_frame $tid $frame]
+        if {$id eq "" || ![dict exists $cavs $id]} continue
+        set cv [dict get $cavs $id]
         set spheres [dict get $cv spheres]
         if {![llength $spheres]} continue
+        set sph [file join $fd [format "cavity_%02d.sph" $id]]
         if {![file exists $sph]} {
             if {[catch {write_stock_sph_file $spheres $sph}]} continue
+        }
+        if {[info exists state(cavity_spheres)] && $state(cavity_spheres)} {
+            # CAVER Analyst's "Locked Probes": the clearance spheres themselves
+            # rather than a surface over them, which is the cavity as the
+            # engine actually represents it.
+            catch {render_sph_points_to_mol $sph $cm [_tunnel_color [expr {$tid+11}]] 0.6}
+            continue
         }
         set plot [surface_plot_name $fd [format "cavity_%02d" $id] draw 1]
         if {![_tunnel_mesh_current $plot $sph]} {
             if {![surface_mesh $sph $plot draw 6 1 1]} continue
         }
-        set col [_tunnel_color [expr {$id + 11}]]
-        catch {render_vmd_plot_to_mol $plot $m 1 $col "" Transparent 0 0}
+        catch {render_vmd_plot_to_mol $plot $cm 1 [_tunnel_color [expr {$tid+11}]] "" $mat 0 0}
     }
+    return $cm
 }
 
 proc ::VMDPathFinder::_tunnel_cavity_toggle {} {
     # A tick changed: redraw the shown frame's track (tunnels + cavities).
     set fr [_tunnel_display_frame]
     if {$fr ne ""} { catch {render_tunnels_for_frame $fr} }
+}
+
+proc ::VMDPathFinder::_cavity_sort {col} {
+    variable state
+    if {[info exists state(cavity_sort_col)] && $state(cavity_sort_col) eq $col} {
+        set state(cavity_sort_dir) [expr {[info exists state(cavity_sort_dir)] \
+            && $state(cavity_sort_dir) eq "asc" ? "desc" : "asc"}]
+    } else {
+        set state(cavity_sort_col) $col
+        set state(cavity_sort_dir) [expr {$col eq "id" ? "asc" : "desc"}]
+    }
+    show_tunnel_cavities
+}
+
+proc ::VMDPathFinder::_cavity_show_all {on} {
+    variable tunnel_cavity_shown
+    foreach t [_cavity_tracks] { set tunnel_cavity_shown([dict get $t tid]) $on }
+    _tunnel_cavity_toggle
+    show_tunnel_cavities
+}
+
+proc ::VMDPathFinder::_cavity_use_as_start {frame id} {
+    # Put this cavity's start point in the tunnel Start point field, so the
+    # next run searches from THIS pocket. The point comes from the rule the
+    # user picked: MOLE's own automatic origin (its O record - the point the
+    # engine itself would have used), or CAVER Analyst's centre-of-largest-
+    # inscribed-sphere. Whichever it is, it is reported in the status line, so
+    # what went into the field is never a mystery.
+    variable state
+    set cavs [_tunnel_cavities $frame]
+    if {![dict exists $cavs $id]} { return }
+    set cv [dict get $cavs $id]
+    set rule [expr {[info exists state(cavity_origin_rule)] ? $state(cavity_origin_rule) : "mole"}]
+    set pt [_cavity_origin $cv $rule]
+    if {[llength $pt] != 3} {
+        set state(status) "Cavity $id has no usable start point (no origins and no spheres)."
+        return
+    }
+    set state(tunnel_start) [format_triplet $pt]
+    set state(tunnel_auto_origin) 0
+    set _lbl [expr {$rule eq "caver" ? "largest inscribed sphere (CAVER Analyst rule)" \
+                                     : "deepest point (MOLE's own automatic origin)"}]
+    set state(status) "Start point set from cavity $id of frame $frame: $_lbl."
+    catch {_sync_point_marker tunnel_start show_tunnel_start_marker}
 }
 
 proc ::VMDPathFinder::show_tunnel_cavities {} {
@@ -18817,50 +19135,145 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         wm deiconify $t
         return
     }
-    # Table: draw, id, type, volume, depth, boundary/inner counts, residues.
+    foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole} {
+        if {![info exists state($k)]} { set state($k) $d }
+    }
+
+    # ---- controls -------------------------------------------------------
+    frame $t.ctl
+    button $t.ctl.all  -text "Show all"  -command [list ::VMDPathFinder::_cavity_show_all 1]
+    button $t.ctl.none -text "Hide all"  -command [list ::VMDPathFinder::_cavity_show_all 0]
+    checkbutton $t.ctl.solid -text "Solid" -variable ::VMDPathFinder::state(cavity_solid) \
+        -command ::VMDPathFinder::_tunnel_cavity_toggle
+    checkbutton $t.ctl.sph -text "Spheres" -variable ::VMDPathFinder::state(cavity_spheres) \
+        -command ::VMDPathFinder::_tunnel_cavity_toggle
+    label $t.ctl.rl -text "  Start point:"
+    radiobutton $t.ctl.rm -text "deepest (MOLE)" -value mole \
+        -variable ::VMDPathFinder::state(cavity_origin_rule)
+    radiobutton $t.ctl.rc -text "largest sphere (CAVER)" -value caver \
+        -variable ::VMDPathFinder::state(cavity_origin_rule)
+    pack $t.ctl.all $t.ctl.none $t.ctl.solid $t.ctl.sph $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
+    grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
+    add_tooltip $t.ctl.solid "Draw cavities opaque instead of transparent (MOLE's \"Solid cavities\")."
+    add_tooltip $t.ctl.sph "Draw the clearance spheres themselves instead of a surface over them (CAVER Analyst's \"Locked Probes\")."
+    add_tooltip $t.ctl.rm "MOLE's own automatic origin: the cavity's deepest point, read from the engine rather than recomputed. This is the point MOLE would search from."
+    add_tooltip $t.ctl.rc "CAVER Analyst's rule: the centre of the largest sphere that fits in the cavity."
+
+    # ---- table ----------------------------------------------------------
     frame $t.h
-    foreach {c txt tip} {
-        0 "Draw" "Draw this cavity on the tunnel track as a transparent sphere-union surface."
-        1 "Id" "MOLE cavity rank in this frame (1 = largest)."
-        2 "Type" "Cavity: has boundary residues (open to solvent through them). Void: fully enclosed."
-        3 "Volume (Å³)" "Volume of the cavity's tetrahedra."
-        4 "Depth" "Depth in tetrahedron layers from the surface."
-        5 "Depth (Å)" "Depth length in Å."
-        6 "Bnd" "Boundary residues (line the cavity's outer layer)."
-        7 "Inner" "Inner residues."
-    } {
-        label $t.h.c$c -text $txt -font {Helvetica 9 bold} -anchor w
+    set _cols {draw "Draw" "Draw this cavity, in every frame it appears in."
+               id "Id" "Tracked cavity id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."
+               type "Type" "Cavity: has boundary residues. Void: fully enclosed."
+               vol "Volume (A^3)" "Volume of this frame's cavity. Click to sort."
+               mean "Mean +/- SD" "Mean volume over the frames this cavity was tracked through, and its spread. Click to sort."
+               seen "Seen %" "Percentage of analysed frames this cavity was found in. Click to sort."
+               probe "Max probe" "Radius of the largest sphere that fits inside - does your ligand fit at all. Click to sort."
+               depth "Depth" "Depth in tetrahedron layers from the surface."
+               res "Bnd/Inner" "Boundary and inner residue counts in this frame."
+               rank "Rank here" "What MOLE ranked this cavity in the displayed frame - per frame, unlike Id."}
+    set c 0
+    foreach {key label tip} $_cols {
+        set _sortable [expr {$key in {id vol mean seen probe depth}}]
+        set _txt $label
+        if {$_sortable && $state(cavity_sort_col) eq $key} {
+            append _txt [expr {$state(cavity_sort_dir) eq "asc" ? " \u25b2" : " \u25bc"}]
+        }
+        label $t.h.c$c -text $_txt -font {Helvetica 9 bold} -anchor w
+        if {$_sortable} {
+            $t.h.c$c configure -cursor hand2
+            bind $t.h.c$c <Button-1> [list ::VMDPathFinder::_cavity_sort $key]
+        }
         grid $t.h.c$c -row 0 -column $c -sticky w -padx 5
         add_tooltip $t.h.c$c $tip
+        incr c
     }
-    grid $t.h -row 0 -column 0 -sticky ew -padx 6 -pady {8 2}
+    grid $t.h -row 1 -column 0 -sticky ew -padx 8 -pady {4 2}
+
+    # rows are TRACKS, not this frame's ranks: the row means the same pocket in
+    # every frame, which is what makes the checkbox and the colour stable. A
+    # track absent from the displayed frame still gets a row - that absence is
+    # information (see its Seen %) - with this frame's columns blank.
+    set rows {}
+    foreach tr [_cavity_tracks] {
+        set tid [dict get $tr tid]
+        set id [_cavity_rank_in_frame $tid $frame]
+        set cv [expr {$id ne "" && [dict exists $cavs $id] ? [dict get $cavs $id] : {}}]
+        lappend rows [list $tid $cv $tr $id]
+    }
+    set _col $state(cavity_sort_col)
+    set rows [lsort -command [list ::VMDPathFinder::_cavity_row_cmp $_col] $rows]
+    if {$state(cavity_sort_dir) eq "desc"} { set rows [lreverse $rows] }
+
     frame $t.b
     set r 0
-    foreach {id cv} $cavs {
-        if {![info exists tunnel_cavity_shown($id)]} { set tunnel_cavity_shown($id) 0 }
-        checkbutton $t.b.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($id) \
+    foreach row $rows {
+        lassign $row tid cv tr id
+        if {![info exists tunnel_cavity_shown($tid)]} { set tunnel_cavity_shown($tid) 0 }
+        checkbutton $t.b.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($tid) \
             -command ::VMDPathFinder::_tunnel_cavity_toggle
         grid $t.b.d$r -row $r -column 0 -sticky w -padx 5
-        set vals [list $id [dict get $cv type] [format %.1f [dict get $cv volume]] \
-            [dict get $cv depth] [format %.1f [dict get $cv depthlen]] \
-            [dict get $cv nboundary] [dict get $cv ninner]]
+        set _mean [format "%.0f +/- %.0f" [dict get $tr vol_mean] [dict get $tr vol_sd]]
+        set _seen [format "%.0f" [dict get $tr seen]]
+        set _here [expr {[llength $cv] > 0}]
+        set vals [list $tid \
+            [expr {$_here ? [dict get $cv type] : [dict get $tr type]}] \
+            [expr {$_here ? [format %.1f [dict get $cv volume]] : "-"}] \
+            $_mean $_seen \
+            [format %.2f [dict get $tr maxprobe]] \
+            [expr {$_here ? [dict get $cv depth] : "-"}] \
+            [expr {$_here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
+            [expr {$_here ? $id : "absent"}]]
         set c 1
         foreach v $vals {
-            label $t.b.v${r}_$c -text $v -anchor w -font {Helvetica 9}
+            label $t.b.v${r}_$c -text $v -anchor w -font {Helvetica 9} \
+                -foreground [expr {$_here ? "black" : "gray50"}]
             grid $t.b.v${r}_$c -row $r -column $c -sticky w -padx 5
             incr c
         }
+        button $t.b.use$r -text "Use as start" -font {Helvetica 8} \
+            -command [list ::VMDPathFinder::_cavity_use_as_start $frame $id]
+        if {!$_here} { $t.b.use$r configure -state disabled }
+        grid $t.b.use$r -row $r -column $c -sticky w -padx 5
+        add_tooltip $t.b.use$r "Put this cavity's start point into the tunnel Start point field, by the rule chosen above."
+        incr c
         button $t.b.res$r -text "Residues" -font {Helvetica 8} \
             -command [list ::VMDPathFinder::_tunnel_cavity_residues $frame $id]
-        grid $t.b.res$r -row $r -column 8 -sticky w -padx 5
+        if {!$_here} { $t.b.res$r configure -state disabled }
+        grid $t.b.res$r -row $r -column $c -sticky w -padx 5
         incr r
     }
-    grid $t.b -row 1 -column 0 -sticky ew -padx 6
-    label $t.note -justify left -wraplength 460 -foreground gray40 -font {Helvetica 8} -text \
-        "Ids are per-frame ranks: MOLE recomputes cavities independently in each frame, so a tick means \"cavity N of the frame shown\". Tunnels start from the surface cavity (C0), which is not listed here."
-    grid $t.note -row 2 -column 0 -sticky w -padx 8 -pady {6 8}
-    _center_toplevel $t 560 [expr {120 + 26*$r}]
+    grid $t.b -row 2 -column 0 -sticky ew -padx 8
+
+    set _nfr 0
+    set _tr0 [_cavity_tracks]
+    if {[llength $_tr0]} { set _nfr [dict get [lindex $_tr0 0] nframes] }
+    label $t.note -justify left -wraplength 720 -foreground gray40 -font {Helvetica 8} -text \
+        "Id is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have - see its Seen %. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps). The surface cavity the tunnels exit through is not listed."
+    grid $t.note -row 3 -column 0 -sticky w -padx 8 -pady {6 8}
+    _center_toplevel $t 900 [expr {170 + 26*$r}]
     wm deiconify $t
+}
+
+proc ::VMDPathFinder::_cavity_row_cmp {col a b} {
+    # Sort helper: {id cv track} rows by one column, numerically where the
+    # column is a number and by string otherwise.
+    lassign $a tida cva tra ranka
+    lassign $b tidb cvb trb rankb
+    switch -- $col {
+        id    { set x $tida; set y $tidb }
+        vol   { set x [expr {[llength $cva] ? [dict get $cva volume] : -1}]
+                set y [expr {[llength $cvb] ? [dict get $cvb volume] : -1}] }
+        depth { set x [expr {[llength $cva] ? [dict get $cva depth] : -1}]
+                set y [expr {[llength $cvb] ? [dict get $cvb depth] : -1}] }
+        probe { set x [dict get $tra maxprobe]; set y [dict get $trb maxprobe] }
+        mean  { set x [dict get $tra vol_mean]; set y [dict get $trb vol_mean] }
+        seen  { set x [dict get $tra seen];     set y [dict get $trb seen] }
+        default { set x $tida; set y $tidb }
+    }
+    if {[string is double -strict $x] && [string is double -strict $y]} {
+        return [expr {$x < $y ? -1 : ($x > $y ? 1 : 0)}]
+    }
+    return [string compare $x $y]
 }
 
 proc ::VMDPathFinder::_tunnel_cavity_residues {frame id} {
@@ -19385,6 +19798,19 @@ proc ::VMDPathFinder::_write_tunnel_manifest {root molid frames cfg seed auto_or
     puts $fh "origin_mode       = [expr {$auto_origin ? {auto-detect} : {explicit}}]"
     puts $fh "origin_point      = $seed"
     puts $fh "start_point_field = [expr {[info exists state(tunnel_start)] ? $state(tunnel_start) : {}}]"
+    # The field can be a VMD selection or a ";" list, re-evaluated per frame, so
+    # the text alone no longer reproduces the run. Record what it actually
+    # resolved to, per frame - CAVER 3.0 (Chovancova 2012, s1.3) makes the point
+    # that the start point must be reported with the results for the run to be
+    # reproducible, and that is exactly the case a moving origin breaks.
+    if {!$auto_origin && $seed ne ""} {
+        foreach _f $frames {
+            set _pts [_mole_points_from_text $seed $molid $_f]
+            if {[llength $_pts]} {
+                puts $fh "origin_resolved_f$_f = [join $_pts { ; }]"
+            }
+        }
+    }
     puts $fh "align_trajectory  = [expr {[info exists state(tunnel_align)] ? $state(tunnel_align) : {}}]"
     puts $fh "align_selection   = [expr {[info exists state(align_sel)] ? $state(align_sel) : {}}]"
     puts $fh "cluster_on        = [expr {[info exists state(tunnel_cluster_on)] ? $state(tunnel_cluster_on) : {}}]"
@@ -20335,7 +20761,7 @@ proc ::VMDPathFinder::render_tunnels_for_frame {frame {draft 0}} {
     # ones for the NEW frame here. Cavity ids are per-frame ranks - MOLE
     # recomputes them independently each frame - so a tick means "cavity N
     # of whichever frame is shown".
-    catch {_render_cavities_for_frame $frame $m $fd}
+    catch {_render_cavities_for_frame $frame}
 }
 
 # Per-triangle color for a tunnel, from its MOLE lining properties.
@@ -23218,33 +23644,103 @@ proc ::VMDPathFinder::_sync_point_marker {key show_key args} {
     # CVECT arrow, HOLE mode only (a branching MOLE tunnel has no single axis).
     # Drawn into the SAME marker mol so one checkbox governs both cues and both
     # inherit the view matrices aligned above.
+    # The axis, drawn ONCE and here: white shaft, length taken from CVECT's two
+    # points when they are set (a length the user chose, whose ends are the
+    # points Stabilize/Exact carry) and from the selection's span otherwise.
+    # The stick adds grab handles at these same ends while its CVECT page is
+    # open; it never draws a second axis of its own.
     if {$key eq "cpoint" && $_pm_ref ne ""} {
-        catch {
-            # frame_axis' own CVECT for this frame (Exact > Stabilize > Static)
-            # when it produced one; the literal field otherwise.
-            set _pm_u [_normalize_dir $_pm_cv]
-            if {[llength $_pm_u] != 3} { set _pm_u [_resolve_cvect_now $_pm_ref $_pm_at] }
-            if {[llength $_pm_u] == 3} {
-                _draw_axis_arrow $molid $_pm_ref $_pm_at $pt $_pm_u $_pm_col
-            }
-        }
+        catch { _draw_cvect_axis $molid [_cvect_axis_ends] }
     }
 }
 
+proc ::VMDPathFinder::_cvect_page_open {} {
+    # Is the stick showing its CVECT page right now? Both the handles and
+    # _sync_point_marker's axis arrow ask, so the two cannot disagree about
+    # which one is drawing the axis.
+    variable w
+    variable state
+    if {![_have_tk]} { return 0 }
+    set d $w.axisstick
+    if {![winfo exists $d] || [catch {wm state $d} _st] || $_st ne "normal"} { return 0 }
+    return [expr {[info exists state(axis_stick_mode)] && $state(axis_stick_mode) eq "cvect"}]
+}
+
+proc ::VMDPathFinder::_cvect_axis_ends {} {
+    # THE axis, as its two end points. One definition, used by the cue and by
+    # the stick's handles, so there is exactly one axis on screen and the
+    # handles always sit on it.
+    #
+    # Position and direction come from frame_axis - the same per-frame resolver
+    # the run uses (CPOINT: Track > Stabilize > Static; CVECT: Exact >
+    # Stabilize > Static) - so the drawing follows the axis the search will
+    # actually use at this frame rather than the static fields.
+    #
+    # LENGTH comes from the two points when they are set: that is a length the
+    # user chose, and its ends are the points Stabilize/Exact carry. Without a
+    # pair there is no chosen length, so it falls back to spanning the analysis
+    # selection, which is what makes it read as "the axis the search runs
+    # along" instead of an arbitrary stick.
+    variable state
+    variable vec_p1
+    variable vec_p2
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return {} }
+    set frame 0; catch {set frame [molinfo $molid get frame]}
+    set c {}; set u {}
+    catch {
+        lassign [frame_axis $molid $frame] _fa_cp _fa_cv
+        set c [_resolve_point_input $_fa_cp $molid $frame]
+        set u [_normalize_dir $_fa_cv]
+    }
+    if {[llength $c] != 3} { catch {set c [_resolve_point_input $state(cpoint) $molid $frame]} }
+    if {[llength $u] != 3} { catch {set u [_normalize_dir $state(cvect)]} }
+    if {[llength $c] != 3 || [llength $u] != 3} { return {} }
+    lassign $c cx cy cz
+    lassign $u ux uy uz
+    set a {}; set b {}
+    catch {set a [_resolve_point_input $vec_p1 $molid $frame]}
+    catch {set b [_resolve_point_input $vec_p2 $molid $frame]}
+    if {[llength $a] == 3 && [llength $b] == 3} {
+        lassign $a ax ay az
+        lassign $b bx by bz
+        set len [expr {sqrt(($bx-$ax)*($bx-$ax)+($by-$ay)*($by-$ay)+($bz-$az)*($bz-$az))}]
+        if {$len > 1e-9} {
+            set h [expr {$len/2.0}]
+            return [list [list [expr {$cx-$h*$ux}] [expr {$cy-$h*$uy}] [expr {$cz-$h*$uz}]] \
+                         [list [expr {$cx+$h*$ux}] [expr {$cy+$h*$uy}] [expr {$cz+$h*$uz}]]]
+        }
+    }
+    lassign [_axis_bbox_span $molid $frame $c $u] tmin tmax
+    return [list [list [expr {$cx+$ux*$tmin}] [expr {$cy+$uy*$tmin}] [expr {$cz+$uz*$tmin}]] \
+                 [list [expr {$cx+$ux*$tmax}] [expr {$cy+$uy*$tmax}] [expr {$cz+$uz*$tmax}]]]
+}
+
+proc ::VMDPathFinder::_draw_cvect_axis {molid ends} {
+    # The axis itself: a white shaft with a head at end 2. Drawn once, by
+    # whichever cue is up - never by two drawers at the same time.
+    if {[llength $ends] != 2} { return }
+    lassign $ends p1 p2
+    lassign $p1 x1 y1 z1
+    lassign $p2 x2 y2 z2
+    set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
+    set len [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]
+    if {$len < 1e-6} { return }
+    set cone [expr {$len*0.18 < 3.0 ? $len*0.18 : 3.0}]
+    if {$cone < 1.0} { set cone 1.0 }
+    set f [expr {($len-$cone)/$len}]
+    set base [list [expr {$x1+$dx*$f}] [expr {$y1+$dy*$f}] [expr {$z1+$dz*$f}]]
+    catch {graphics $molid color white}
+    catch {graphics $molid cylinder $p1 $base radius 0.15 resolution 12 filled yes}
+    catch {graphics $molid cone $base $p2 radius 0.4 resolution 12}
+}
+
 proc ::VMDPathFinder::_sync_cvect_handles {args} {
-    # Draw CVECT's two points as handles - a sphere each, joined by a line,
-    # labelled 1 and 2 - while the stick's CVECT page is open.
-    #
-    # CVECT is a DIRECTION, not a place: compute_vector keeps only the
-    # normalised (P2-P1) and discards the positions, and the search axis is
-    # drawn at CPOINT - so nothing on screen marks the pair the stick moves.
-    # These are that pair, drawn while the stick can move them and removed as
-    # soon as it cannot (page switched away, dialog closed).
-    #
-    # Its own marker mol, deliberately not folded into _sync_point_marker: that
-    # proc is one point plus an optional axis arrow driven by a checkbox the
-    # user owns, whereas these two are transient and owned by the dialog. args
-    # swallows the (name1 name2 op) Tcl appends when called as a trace.
+    # Grab handles for CVECT's two points, drawn while the stick's CVECT page
+    # is open. The AXIS itself is not drawn here - the cue draws it, once,
+    # from the same _cvect_axis_ends - so the two can never disagree or put a
+    # second arrow on screen. These are just the ends made grabbable, and the
+    # labels saying which end is which.
     variable w
     variable state
     variable vec_p1
@@ -23254,31 +23750,33 @@ proc ::VMDPathFinder::_sync_cvect_handles {args} {
     if {![info exists point_marker_mols]} { set point_marker_mols [dict create] }
     set key cvect_pts
     set molid [expr {[dict exists $point_marker_mols $key] ? [dict get $point_marker_mols $key] : ""}]
-    set d $w.axisstick
-    set want [expr {[winfo exists $d] && ![catch {wm state $d} _st] && $_st eq "normal" \
-        && [info exists state(axis_stick_mode)] && $state(axis_stick_mode) eq "cvect"}]
-    set p1 {}; set p2 {}; set ref ""
-    if {$want} {
-        catch {
-            set _m [resolve_molid]
-            set _f [molinfo $_m get frame]
-            # Same resolution the run uses, so a selection-defined end tracks
-            # the structure frame by frame instead of sitting where it started.
-            catch {set p1 [_resolve_point_input $vec_p1 $_m $_f]}
-            catch {set p2 [_resolve_point_input $vec_p2 $_m $_f]}
-            set ref $_m
+    # The handles are the two POINTS, at their own positions - independent of
+    # each other and of the axis. The axis is a separate object: the line
+    # through CPOINT along their direction (see _cvect_axis_ends). Making the
+    # handles the axis's ends is what forced them to move together.
+    set ends {}
+    if {[_cvect_page_open]} {
+        set _m ""; catch {set _m [resolve_molid]}
+        if {$_m ne ""} {
+            set _f 0; catch {set _f [molinfo $_m get frame]}
+            set _a {}; set _b {}
+            catch {set _a [_resolve_point_input $vec_p1 $_m $_f]}
+            catch {set _b [_resolve_point_input $vec_p2 $_m $_f]}
+            if {[llength $_a] == 3 && [llength $_b] == 3} { set ends [list $_a $_b] }
         }
     }
-    if {!$want || [llength $p1] != 3 || [llength $p2] != 3} {
+    if {[llength $ends] != 2} {
         if {$molid ne "" && ![catch {molinfo $molid get name}]} { catch {mol delete $molid} }
         catch {dict unset point_marker_mols $key}
         return
     }
+    lassign $ends p1 p2
+    set ref ""; catch {set ref [resolve_molid]}
     if {$molid eq "" || [catch {molinfo $molid get name}]} {
-        # Same two hazards _sync_point_marker documents at length: `mol new`
-        # steals top (and state(molid) defaults to "top"), and a fresh molecule
-        # carries IDENTITY view matrices, so anything drawn into it renders in
-        # a different frame than the structure and lands off-screen.
+        # Same two hazards _sync_point_marker documents: `mol new` steals top
+        # (and state(molid) defaults to "top"), and a fresh molecule carries
+        # IDENTITY view matrices, so anything drawn into it renders in another
+        # coordinate frame and lands off-screen.
         set _prev_top [molinfo top]
         set _pv {}
         if {$ref ne ""} {
@@ -23299,43 +23797,14 @@ proc ::VMDPathFinder::_sync_cvect_handles {args} {
     catch {graphics $molid delete all}
     catch {graphics $molid materials on}
     catch {graphics $molid material Glossy}
-    # Not magenta (CPOINT) and not lime (tunnel start): all three cues can be
-    # on screen together, and which handle is which is the whole point of
-    # drawing them. Point 2 is the end the vector points AT, so it takes the
-    # warmer colour and the line runs 1 -> 2.
+    # Point 2 is the end the vector points AT, so it takes the warmer colour.
     catch {graphics $molid color cyan}
     catch {graphics $molid sphere $p1 radius 0.7 resolution 18}
-    catch {graphics $molid color orange}
-    catch {graphics $molid sphere $p2 radius 0.7 resolution 18}
-    # The shaft runs 1 -> 2 at its TRUE length: these two are the vector's ends,
-    # so how far apart they are is part of what the user set, even though
-    # state(cvect) keeps only the normalised direction (HOLE's CVECT card is a
-    # direction; the magnitude never reaches the search). The CPOINT arrow is
-    # drawn separately by _sync_point_marker and is the line HOLE searches
-    # along - parallel to this one, and offset from it whenever CPOINT is not
-    # on it.
-    lassign $p1 _x1 _y1 _z1
-    lassign $p2 _x2 _y2 _z2
-    set _dx [expr {$_x2-$_x1}]; set _dy [expr {$_y2-$_y1}]; set _dz [expr {$_z2-$_z1}]
-    set _len [expr {sqrt($_dx*$_dx + $_dy*$_dy + $_dz*$_dz)}]
-    catch {graphics $molid color white}
-    if {$_len > 1e-6} {
-        # Cone no longer than a quarter of the shaft, so a short vector still
-        # reads as an arrow instead of one solid cone.
-        set _cone [expr {$_len*0.25 < 1.5 ? $_len*0.25 : 1.5}]
-        set _f [expr {($_len-$_cone)/$_len}]
-        set _base [list [expr {$_x1+$_dx*$_f}] [expr {$_y1+$_dy*$_f}] [expr {$_z1+$_dz*$_f}]]
-        catch {graphics $molid cylinder $p1 $_base radius 0.15 resolution 12 filled yes}
-        catch {graphics $molid cone $_base $p2 radius 0.4 resolution 12}
-    } else {
-        catch {graphics $molid line $p1 $p2 width 2 style dashed}
-    }
-    catch {graphics $molid color cyan}
     catch {graphics $molid text $p1 " 1" size 0.8 thickness 2}
     catch {graphics $molid color orange}
+    catch {graphics $molid sphere $p2 radius 0.7 resolution 18}
     catch {graphics $molid text $p2 " 2" size 0.8 thickness 2}
 }
-
 proc ::VMDPathFinder::_normalize_dir {v} {
     # "x y z" -> unit direction, or {} if it is not three real numbers.
     set p [normalize_triplet_value $v]
@@ -23377,14 +23846,12 @@ proc ::VMDPathFinder::_resolve_cvect_now {molid frame} {
     return [list [expr {$vx/$len}] [expr {$vy/$len}] [expr {$vz/$len}]]
 }
 
-proc ::VMDPathFinder::_draw_axis_arrow {molid refmol frame origin u color} {
-    # PCA-style arrow (cylinder shaft + cone head), spanning the analysis
-    # selection along u and centred on the origin point, so it reads as "this
-    # is the axis the search runs along" rather than an arbitrary stick.
-    #
-    # The span comes from the selection's bounding box projected onto u - eight
-    # corner dot products off one `measure minmax`, not a per-atom scan, because
-    # this redraws on every keystroke while CPOINT is being typed.
+proc ::VMDPathFinder::_axis_bbox_span {refmol frame origin u} {
+    # {tmin tmax}: how far the analysis selection reaches along u either side of
+    # origin, from the eight corners of one `measure minmax` rather than a
+    # per-atom scan - this redraws on every keystroke while CPOINT is typed.
+    # Falls back to a symmetric default when the span is degenerate (origin
+    # outside the box, or a one-atom selection).
     variable state
     lassign $u ux uy uz
     lassign $origin ox oy oz
@@ -23408,19 +23875,8 @@ proc ::VMDPathFinder::_draw_axis_arrow {molid refmol frame origin u color} {
             }
         }
     }
-    # A degenerate span (origin outside the box, or a one-atom selection) would
-    # draw a zero-length or inverted arrow; fall back to a symmetric default.
     if {$tmax - $tmin < 2.0} { set tmin -10.0; set tmax 10.0 }
-    set head [expr {($tmax-$tmin) * 0.18}]
-    if {$head < 2.0} { set head 2.0 }
-    if {$head > 5.0} { set head 5.0 }
-    set tail  [list [expr {$ox+$ux*$tmin}] [expr {$oy+$uy*$tmin}] [expr {$oz+$uz*$tmin}]]
-    set tip   [list [expr {$ox+$ux*$tmax}] [expr {$oy+$uy*$tmax}] [expr {$oz+$uz*$tmax}]]
-    set neck_t [expr {$tmax - $head}]
-    set neck [list [expr {$ox+$ux*$neck_t}] [expr {$oy+$uy*$neck_t}] [expr {$oz+$uz*$neck_t}]]
-    catch {graphics $molid color $color}
-    catch {graphics $molid cylinder $tail $neck radius 0.35 resolution 16 filled yes}
-    catch {graphics $molid cone $neck $tip radius 1.0 resolution 16}
+    return [list $tmin $tmax]
 }
 
 proc ::VMDPathFinder::_within_dist_sel {hsel cx cy cz r} {
@@ -24681,9 +25137,15 @@ proc ::VMDPathFinder::_cvect_ensure_two_point {} {
         if {[llength $p1] != 3} { return 0 }
     }
     if {[llength $p1] == 3 && [llength $p2] != 3} {
-        set p2 [list [expr {[lindex $p1 0]+$L*[lindex $dir 0]}] \
-                     [expr {[lindex $p1 1]+$L*[lindex $dir 1]}] \
-                     [expr {[lindex $p1 2]+$L*[lindex $dir 2]}]]
+        # Symmetric about the seed point, matching how the axis is drawn
+        # (CPOINT-centred): P1 half a length back, P2 half a length on.
+        set _h [expr {$L/2.0}]
+        set p2 [list [expr {[lindex $p1 0]+$_h*[lindex $dir 0]}] \
+                     [expr {[lindex $p1 1]+$_h*[lindex $dir 1]}] \
+                     [expr {[lindex $p1 2]+$_h*[lindex $dir 2]}]]
+        set p1 [list [expr {[lindex $p1 0]-$_h*[lindex $dir 0]}] \
+                     [expr {[lindex $p1 1]-$_h*[lindex $dir 1]}] \
+                     [expr {[lindex $p1 2]-$_h*[lindex $dir 2]}]]
     } elseif {[llength $p2] == 3 && [llength $p1] != 3} {
         set p1 [list [expr {[lindex $p2 0]-$L*[lindex $dir 0]}] \
                      [expr {[lindex $p2 1]-$L*[lindex $dir 1]}] \
@@ -24696,21 +25158,22 @@ proc ::VMDPathFinder::_cvect_ensure_two_point {} {
 
 proc ::VMDPathFinder::_axis_stick_apply {mode dx dy dz} {
     # Add a screen-relative displacement (dx dy dz, in world units) to the
-    # target point. For CVECT's endpoints this also recomputes CVECT from the
-    # pair, live, the same as pressing Compute; the CPOINT marker's arrow is
-    # what shows the result, since CVECT itself is no longer moved directly.
+    # target point. For CVECT's endpoints this moves one END OF THE DRAWN AXIS
+    # and recomputes CVECT from the pair, live, the same as pressing Compute.
     variable state
+    variable vec_p1
+    variable vec_p2
     if {$mode eq "cvect" && ![_cvect_ensure_two_point]} {
         set state(status) "CVECT stick: set CPOINT (or a selection) first - there is no point to move yet."
         return
     }
+    set key [_axis_stick_key $mode]
     set cur [_axis_stick_current $mode]
     if {$cur eq {}} {
         set state(status) "Stick: the [_axis_stick_key $mode] entry is not a point (x y z or a VMD selection)."
         return
     }
     lassign $cur cx cy cz
-    set key [_axis_stick_key $mode]
     _axis_stick_setvar $key [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
     if {$key in {vec_p1 vec_p2}} {
         variable w
@@ -24801,7 +25264,15 @@ proc ::VMDPathFinder::_axis_stick_sync_mode {d} {
             # Fill the two points in the moment the page opens, so the entries
             # show the ends the stick is about to move (and the stick works on
             # a CVECT that was typed/guessed rather than built from points).
-            if {[_cvect_ensure_two_point]} { catch {_sync_point_marker cpoint show_cpoint_marker} }
+            if {[_cvect_ensure_two_point]} {
+                # The two points ARE the definition, so bring CVECT in line with
+                # them as the page opens - the same thing Compute does, and what
+                # every later move does. Without it a pair typed into the entries
+                # left the drawn axis pointing along a stale CVECT until the user
+                # happened to nudge something.
+                catch {compute_vector $d.vec}
+                catch {_sync_point_marker cpoint show_cpoint_marker}
+            }
         } else { grid remove $d.vec; grid remove $d.pt2; grid $d.pc }
     }
     # Draws the two handles on the CVECT page, clears them on any other - so

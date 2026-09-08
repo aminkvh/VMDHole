@@ -879,6 +879,9 @@ int main(int argc, char **argv)
                  " VB/VI id charge ionizable npos nneg hydropathy hydrophobicity"
                  " polarity logp logd logs mutability nres resn:seq:chain...\n");
     fprintf(out, "# VP id x y z r  (cavity tetrahedra as centre+clearance spheres)\n");
+    fprintf(out, "# O id rank x y z depthlength  (the origins MOLE itself would pick for"
+                 " that cavity: local DepthLength maxima, deepest-first, spread by autocover,"
+                 " capped by maxorigins; emitted on every run, pinned or not)\n");
     fprintf(out, "# freeradius %s ; bradius %s\n",
             MA.has_names ? "vs backbone+het" : "= radius (no atom-name column in the atom table)",
             "from B-factors (0 where absent)");
@@ -966,6 +969,28 @@ int main(int argc, char **argv)
                sequential counter over whatever survived the depth filters. */
             write_cavity(out, crank[c] + 1, &M, c, &cav[c], mres, np);
         }
+    }
+    /* O: TunnelOriginCollection.FromCavity's own start points, so a caller can
+       offer "start here" as the point MOLE would have chosen rather than a
+       reimplementation of the rule. Its own walk, not a by-product of the
+       search loop above, for two reasons: a PINNED run replaces the origins the
+       search USES but must still be able to offer the computed ones, and the
+       search loop skips cavities that yielded no tunnel. Ungated by
+       MA.has_names - unlike V/VB/VI this is pure geometry - but filtered by the
+       same depth conditions, so the ids line up with the V/VP records.
+       mole_auto_origins is read-only, so this cannot move the search.
+       Coordinates are the tetrahedron's CIRCUMCENTRE, exactly as VP writes it:
+       an O point is then one of that cavity's VP spheres, digit for digit, and
+       feeding it back as --origin= lands on the tetrahedron it names. */
+    for (c = 0; c < nc; c++) {
+        int aorig[MOLE_MAX_ORIGINS], naor, ao;
+        if (!(cav[c].has_boundary && cav[c].depth_length > P.min_depth_length
+              && cav[c].depth > P.min_depth)) continue;
+        naor = mole_auto_origins(&M, c, auto_cover, max_origins, aorig);
+        for (ao = 0; ao < naor; ao++)
+            fprintf(out, "O %d %d %.4f %.4f %.4f %.17g\n", crank[c] + 1, ao + 1,
+                    M.vcenter[3*aorig[ao]], M.vcenter[3*aorig[ao]+1],
+                    M.vcenter[3*aorig[ao]+2], M.depthlen[aorig[ao]]);
     }
     for (i = 0; i < nres; i++) {
         int ns = (int)(res[i].length * 8.0), q;

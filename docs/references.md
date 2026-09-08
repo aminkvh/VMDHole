@@ -109,3 +109,31 @@ the MOLE 2.0 citation above.
 The screen-space hydrophobicity scale bar adapts techniques from VMD's
 `colorscalebar.tcl`, by Wuwei Liang, Dan Wright, John Stone, and Axel
 Kohlmeyer.
+
+## Where each idea comes from
+
+Tunnel mode ports MOLE 2's algorithm, and its cavity view borrows interface
+ideas from both MOLE and CAVER. This table records which is which, so a method
+section can be written without guesswork. Nothing here changes what must be
+cited: MOLE for Tunnel mode, CAVER additionally when route clustering is used.
+
+| Feature | Whose idea | Whose algorithm |
+|---|---|---|
+| Cavity / Void as distinct objects | MOLE | MOLE (Delaunay tetrahedra, depth) |
+| Volume and depth columns | MOLE (the only two its own GUI showed) | MOLE |
+| Boundary/Inner residues with physicochemical properties | MOLE (present only in its XML, never on screen) | MOLE |
+| The drawn cavity surface | both draw one | **this plugin** - marching-cubes sphere union; MOLE uses atom-centre facets, CAVER Analyst an analytic SES |
+| "Use as start point" | CAVER Analyst (*Create Starting Point*) | selectable: **MOLE**'s own automatic origin, or **CAVER**'s largest inscribed sphere |
+| Max probe column | CAVER Analyst | max radius over the cavity's own spheres |
+| Sortable table, Show/Hide all | CAVER Analyst | interface only |
+| Solid / transparent toggle | MOLE (*Solid cavities*) | interface only |
+| Spheres view | CAVER Analyst (*Locked Probes*) | the engine's own clearance spheres |
+| Snapping a user origin into the cavity | both (MOLE `OriginRadius`, CAVER `rmin`/`dmax`) | MOLE's |
+| Reporting the origin actually used | CAVER 3.0 requires it for reproducibility | recorded per frame in the run manifest |
+| Cavity tracked across a trajectory | **neither program does this** | this plugin (centroid proximity) |
+| Cavity coloured by a property | **neither program does this** | this plugin |
+
+Two numerical caveats follow from the third row: our cavity volume is the volume
+of the meshed sphere union, MOLE's is its tetrahedra minus van der Waals caps,
+and CAVER Analyst's is a Monte-Carlo estimate over filling balls. They are three
+different quantities and should not be compared directly.

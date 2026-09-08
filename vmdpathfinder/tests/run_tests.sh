@@ -107,7 +107,7 @@ if [ -z "${VMDPATHFINDER_CONFIG_FILE:-}" ]; then
     trap 'rm -f "$VMDPATHFINDER_CONFIG_FILE"' EXIT INT TERM
 fi
 
-TEST_GROUPS="test_headless_smoke test_accel_parity test_hydro_qco_parity test_hole_tcl_fallback test_hole_tcl_pore_methods test_hole_tcl_fallback_e2e test_hole_fast_coord test_capsule_incomplete test_ellipse_parity test_h2dmap_parity test_release_integrity test_tcl_pitfalls test_tunnel_separation test_tunnel_clustering test_tunnel_import test_mole_tcl_port test_mole_engine_ext test_hcapen_cache test_inline_current test_adapter_schema test_gui_reachable test_nm_engine test_conn_lobes_engine test_mesh_csg_engine"
+TEST_GROUPS="test_headless_smoke test_accel_parity test_hydro_qco_parity test_hole_tcl_fallback test_hole_tcl_pore_methods test_hole_tcl_fallback_e2e test_hole_fast_coord test_capsule_incomplete test_ellipse_parity test_h2dmap_parity test_release_integrity test_tcl_pitfalls test_tunnel_separation test_tunnel_clustering test_tunnel_import test_mole_tcl_port test_mole_engine_ext test_cavity_tracking test_hcapen_cache test_inline_current test_adapter_schema test_gui_reachable test_nm_engine test_conn_lobes_engine test_mesh_csg_engine"
 EXPECTED=$(echo $TEST_GROUPS | wc -w)
 for t in $TEST_GROUPS; do
     # A group whose file is gone or lost its exec bit used to vanish silently -

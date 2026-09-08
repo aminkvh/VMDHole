@@ -100,6 +100,20 @@ if {$nvp_c > 0 && $nvp_t == 0} {
     set la [lsearch -all -inline -not -regexp $la $vp_re]
     set a "[join $la "\n"]\n"
 }
+# The same for the O records - MOLE's own automatic origin points, which the C
+# engine emits for every cavity on every run and the Tcl engine does not write.
+# Set aside and REPORTED on the same terms as VP: the day the Tcl side writes
+# one, every O line is compared like the others. test_mole_engine_ext.sh checks
+# the O records themselves.
+set o_re {^(O |# O )}
+set no_c [llength [lsearch -all -regexp $la $o_re]]
+set no_t [llength [lsearch -all -regexp $lb $o_re]]
+if {$no_c > 0 && $no_t == 0} {
+    puts [format "  %-52s %s" "O records (Tcl engine writes none yet)" \
+              "PENDING ($no_c C lines set aside)"]
+    set la [lsearch -all -inline -not -regexp $la $o_re]
+    set a "[join $la "\n"]\n"
+}
 report "line count [llength $la]" [expr {[llength $la] == [llength $lb]}] \
        "(Tcl wrote [llength $lb])"
 set nbad 0

@@ -96,6 +96,15 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Custom path start/end | blank | Directed path constraint |
 | Use custom exits only | off | Exclude automatically found exits |
 | vdW radii | blank | Per-element van der Waals overrides, `C:1.7, ZN:1.39`; blank keeps MOLE's table |
+
+### Cavities
+
+| Parameter | Default | Definition |
+|---|---:|---|
+| Start-point rule | deepest (MOLE) | Which point **Use as start** takes from a cavity: MOLE's own automatic origin (deepest by `DepthLength`), or CAVER Analyst's centre of the largest inscribed sphere |
+| Solid | off | Draw cavities opaque instead of transparent (MOLE's *Solid cavities*) |
+| Spheres | off | Draw the clearance spheres instead of a surface over them (CAVER Analyst's *Locked Probes*) |
+| Cavity tracking cutoff | 6 Å | Centroid distance within which a cavity in the next frame is taken to be the same cavity |
 | Cluster within frame | on | Merge similar routes in one frame |
 | Within-frame cutoff | 3 Å | Distance threshold for within-frame route clustering |
 | Cross-frame maximum deviation | 12 Å | Largest geometric deviation accepted as one tracked route |

@@ -96,6 +96,16 @@ if {$nvp_c > 0 && $nvp_t == 0} {
     set ct [join [lsearch -all -inline -not -regexp [split $ct "\n"] $vp_re] "\n"]
 }
 puts $out "vp_pending [expr {$nvp_c > 0 && $nvp_t == 0 ? $nvp_c : 0}]"
+# Set aside on exactly the same terms as VP: the C engine emits the automatic
+# origins (O, and their '# O' header line) and the Tcl engine writes none yet.
+# The day it does, every O line is compared like the rest.
+set o_re {^(O |# O )}
+set no_c [llength [lsearch -all -regexp [split $ct "\n"] $o_re]]
+set no_t [llength [lsearch -all -regexp [split $tt "\n"] $o_re]]
+if {$no_c > 0 && $no_t == 0} {
+    set ct [join [lsearch -all -inline -not -regexp [split $ct "\n"] $o_re] "\n"]
+}
+puts $out "o_pending [expr {$no_c > 0 && $no_t == 0 ? $no_c : 0}]"
 puts $out "identical [expr {$ct eq $tt}]"
 puts $out "timing $cms $tms"
 puts $out "tcl_diag [lindex $t 2]"
