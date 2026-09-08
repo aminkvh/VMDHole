@@ -11,6 +11,8 @@
   <a href="https://doi.org/10.5281/zenodo.22089390"><img src="https://zenodo.org/badge/1284504875.svg" alt="DOI"></a>
 </p>
 
+> **Formerly VMDHole.** The project was renamed in September 2026 once it outgrew HOLE - it now carries its own Nelder-Mead search, marching-cubes mesher and a MOLE-based tunnel mode. Settings from `~/.vmdhole_config` are carried over automatically.
+
 VMDPathFinder is a [VMD](https://www.ks.uiuc.edu/Research/vmd/) plugin for analysing
 pores and molecular tunnels. **Pore mode** runs
 [HOLE](https://www.holeprogram.org/) along a specified channel axis. **Tunnel

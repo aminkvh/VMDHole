@@ -42,8 +42,11 @@ selection's centre of geometry (**COG**), or use VMD's centre of rotation
 
 `CVECT` is the channel direction. Enter a vector, or open the **⌖** dialog,
 whose CVECT page can also infer a direction with **Guess**, use the Z axis, or
-compute it from two points given as coordinates, VMD selections, or labelled
-atoms. HOLE searches in planes normal to the resulting vector. A poor direction can produce a valid
+compute it from two points given as coordinates, VMD selections, or atoms
+picked in the 3D view - **Pick** beside a point arms one click in the VMD
+window, and the vector is computed as soon as both points are set (**Label ▾**
+lists atoms you already labelled with VMD's `1` key). HOLE searches in planes
+normal to the resulting vector. A poor direction can produce a valid
 calculation through the wrong cavity, so always inspect the centreline.
 
 The **⌖** button beside either field opens an on-screen stick: drag the pad or

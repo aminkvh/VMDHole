@@ -859,6 +859,19 @@ proc ::VMDPathFinder::load_config {} {
     variable config_file
     variable state
     variable _loading_config
+    # One-time carry-over from the pre-rename config (VMDHole -> VMDPathFinder):
+    # a user upgrading in place keeps their settings instead of silently
+    # starting from the defaults. Only when the new file does not exist yet,
+    # and only the default location - an explicit VMDPATHFINDER_CONFIG_FILE
+    # means the user already chose where their config lives.
+    if {![file exists $config_file] && ![info exists ::env(VMDPATHFINDER_CONFIG_FILE)]} {
+        set _old [file join [file normalize ~] .vmdhole_config]
+        if {[file isfile $_old]} {
+            if {![catch {file copy $_old $config_file}]} {
+                catch {vmdcon -info "VMDPathFinder: settings carried over from $_old."}
+            }
+        }
+    }
     if {![file exists $config_file]} { return }
     set _loading_config 1
     # Keys that must NOT be restored from disk even if an older config wrote them:
@@ -3882,12 +3895,12 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
             [format %.2f [dict get $row len]] $hphob]
         set col 2
         foreach v $vals {
-            _rw_widget label $f.rv${r}_$col -text $v -anchor e -font {Helvetica 8} -background $rowbg
+            _rw_widget label $f.rv${r}_$col -text $v -anchor e -font {Helvetica 9} -background $rowbg
             grid $f.rv${r}_$col -row $r -column $col -sticky e -padx 2
             bind $f.rv${r}_$col <Button-1> [list ::VMDPathFinder::_tunnel_select_row $cid]
             incr col
         }
-        _rw_widget label $f.rv${r}_$col -text $chgtxt -anchor e -font {Helvetica 8} -background $rowbg
+        _rw_widget label $f.rv${r}_$col -text $chgtxt -anchor e -font {Helvetica 9} -background $rowbg
         grid $f.rv${r}_$col -row $r -column $col -sticky e -padx 2
         bind $f.rv${r}_$col <Button-1> [list ::VMDPathFinder::_tunnel_select_row $cid]
         if {$_cov_col >= 0} {
@@ -3904,7 +3917,7 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
             # same "reconfigure in place" trick it always used.
             set _cvtxt [format "%.0f%%" [dict get $row seen]]
             set _present [_tunnel_cluster_present $cid $frame]
-            _rw_widget label $f.rv${r}_$_cov_col -text $_cvtxt -anchor e -font {Helvetica 8} \
+            _rw_widget label $f.rv${r}_$_cov_col -text $_cvtxt -anchor e -font {Helvetica 9} \
                 -foreground [expr {$_present ? "#2a9d3f" : "#c0392b"}] -background $rowbg
             grid $f.rv${r}_$_cov_col -row $r -column $_cov_col -sticky e -padx 2
             bind $f.rv${r}_$_cov_col <Button-1> [list ::VMDPathFinder::_tunnel_select_row $cid]
@@ -4009,6 +4022,42 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
     add_tooltip $hf.h4 "Len: tunnel length, in Å - mean over this route's own frames. Click to sort."
     add_tooltip $hf.h5 "Phob: length-weighted hydrophobicity (MOLE) - mean over this route's own frames. Click to sort."
     add_tooltip $hf.hchg "Chg: net formal charge of the lining residues - mean over this route's own frames. Click to sort."
+    # The sidebar was pinned at build time, before any result rows existed
+    # (show_gui's measure-both-tabs step). A populated list can ask for a few
+    # px more than that pin (measured 423 vs 413 on a 3-frame run) and the
+    # excess is clipped at the right edge. Grow-only, so the window never
+    # shrinks back and forth between runs.
+    after idle ::VMDPathFinder::_sidebar_grow_to_fit
+}
+
+proc ::VMDPathFinder::_sidebar_grow_to_fit {} {
+    variable w
+    if {![_have_tk] || ![winfo exists $w.sidebar.nb]} { return }
+    catch {
+        set nb $w.sidebar.nb
+        # A pinned notebook reports its pinned width, not what its pane asks
+        # for - so measure the PANE and add the notebook's own chrome.
+        set pane [$nb select]
+        if {$pane eq "" || ![winfo exists $pane]} { return }
+        set _chrome [expr {[winfo width $nb] - [winfo width $pane]}]
+        if {$_chrome < 0} { set _chrome 0 }
+        set _want [expr {[winfo reqwidth $pane] + $_chrome}]
+        set _have [$nb cget -width]
+        if {[string is integer -strict $_have] && $_have > 0 && $_want > $_have} {
+            $nb configure -width $_want
+            update idletasks
+            # The tunnel list's canvas carries its own explicit width (see
+            # show_gui's tunlist note) - re-stretch it to the wider panel so the
+            # scrollbar stays at the panel edge instead of 4 px short of it.
+            variable _tunnelpanel
+            set _tp $_tunnelpanel
+            if {[winfo exists $_tp.tunlist.c] && [winfo exists $_tp.tunlist.sb]} {
+                set _tl [expr {[winfo rootx $_tp] + [winfo width $_tp] \
+                    - [winfo rootx $_tp.tunlist.c] - 8 - [winfo width $_tp.tunlist.sb]}]
+                if {$_tl > 200} { $_tp.tunlist.c configure -width $_tl }
+            }
+        }
+    }
 }
 
 proc ::VMDPathFinder::_tunnel_cluster_toggle_clicked {} {
@@ -23662,22 +23711,36 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
     # with Guess, Use Z and the per-frame endpoint modes, built into frame $d.
     label $d.orl -text "Or define CVECT from two points:" -foreground gray40
     grid $d.orl -row 0 -column 0 -columnspan 3 -sticky w -padx 6 -pady {6 2}
+    # Two ways to fill a point without typing: "Pick" arms one click in the VMD
+    # window (the next atom clicked lands here - no labelling step), "Label"
+    # lists atoms already labelled with VMD's own '1' key. Pick is what people
+    # reach for; Label stays for a point chosen earlier.
     label $d.l1 -text "Point 1"
-    entry $d.e1 -textvariable ::VMDPathFinder::vec_p1 -width 26
+    entry $d.e1 -textvariable ::VMDPathFinder::vec_p1 -width 22
+    button $d.p1 -text "Pick" \
+        -command [list ::VMDPathFinder::_cvect_pick_3d ::VMDPathFinder::vec_p1 1 $d]
     button $d.b1 -text "Label \u25be" \
         -command [list ::VMDPathFinder::_cvect_pick_label $d.e1 ::VMDPathFinder::vec_p1 $d]
     label $d.l2 -text "Point 2"
-    entry $d.e2 -textvariable ::VMDPathFinder::vec_p2 -width 26
+    entry $d.e2 -textvariable ::VMDPathFinder::vec_p2 -width 22
+    button $d.p2 -text "Pick" \
+        -command [list ::VMDPathFinder::_cvect_pick_3d ::VMDPathFinder::vec_p2 2 $d]
     button $d.b2 -text "Label \u25be" \
         -command [list ::VMDPathFinder::_cvect_pick_label $d.e2 ::VMDPathFinder::vec_p2 $d]
     grid $d.l1 -row 1 -column 0 -sticky e  -padx {6 4} -pady 2
     grid $d.e1 -row 1 -column 1 -sticky ew -padx 2     -pady 2
-    grid $d.b1 -row 1 -column 2 -sticky w  -padx {4 6} -pady 2
+    grid $d.p1 -row 1 -column 2 -sticky w  -padx {4 0} -pady 2
+    grid $d.b1 -row 1 -column 3 -sticky w  -padx {2 6} -pady 2
     grid $d.l2 -row 2 -column 0 -sticky e  -padx {6 4} -pady 2
     grid $d.e2 -row 2 -column 1 -sticky ew -padx 2     -pady 2
-    grid $d.b2 -row 2 -column 2 -sticky w  -padx {4 6} -pady 2
+    grid $d.p2 -row 2 -column 2 -sticky w  -padx {4 0} -pady 2
+    grid $d.b2 -row 2 -column 3 -sticky w  -padx {2 6} -pady 2
     grid columnconfigure $d 1 -weight 1
-    label $d.hint -text "x,y,z or a VMD selection; the vector points from Point 1 to Point 2." \
+    add_tooltip $d.p1 "Click an atom in the VMD window; it becomes Point 1. When both points are set the vector is computed at once."
+    add_tooltip $d.p2 "Click an atom in the VMD window; it becomes Point 2. When both points are set the vector is computed at once."
+    add_tooltip $d.b1 "Choose an atom you already labelled in VMD (press '1' and click atoms)."
+    add_tooltip $d.b2 "Choose an atom you already labelled in VMD (press '1' and click atoms)."
+    label $d.hint -text "x,y,z, a VMD selection, or Pick an atom in the 3D view; the vector points from Point 1 to Point 2." \
         -foreground gray -wraplength 340 -justify left
     grid $d.hint -row 3 -column 0 -columnspan 3 -sticky w -padx 6 -pady {0 4}
     frame $d.sb
@@ -23784,6 +23847,55 @@ proc ::VMDPathFinder::_cvect_pick_label {entry_widget var_name parent} {
 proc ::VMDPathFinder::_cvect_fill_entry {var_name atomid} {
     set $var_name "index $atomid"
     catch {destroy .vmdpathfinder_labelpick_m}
+}
+
+proc ::VMDPathFinder::_cvect_pick_3d {var_name which parent} {
+    # Arm ONE click in the VMD window for Point $which: the next atom picked
+    # fills the entry, then the mouse goes back to rotate. The vmd_pick_event
+    # trace is the idiom VMD's own plugins (paratool, contactmap) use; it is
+    # removed on the first pick so a stray click later never rewrites the
+    # point, and re-arming replaces any pick still pending.
+    variable state
+    variable _cvect_pick_trace
+    _cvect_pick_disarm
+    if {[catch {mouse mode pick; mouse callback on} _err]} {
+        set state(status) "Could not enter VMD's pick mode: $_err"
+        return
+    }
+    set _cvect_pick_trace [list ::VMDPathFinder::_cvect_picked $var_name $which $parent]
+    trace add variable ::vmd_pick_event write $_cvect_pick_trace
+    set state(status) "Click an atom in the VMD window for Point $which."
+}
+
+proc ::VMDPathFinder::_cvect_pick_disarm {} {
+    variable _cvect_pick_trace
+    if {[info exists _cvect_pick_trace] && $_cvect_pick_trace ne ""} {
+        catch {trace remove variable ::vmd_pick_event write $_cvect_pick_trace}
+    }
+    set _cvect_pick_trace ""
+}
+
+proc ::VMDPathFinder::_cvect_picked {var_name which parent args} {
+    variable state
+    variable vec_p1
+    variable vec_p2
+    _cvect_pick_disarm
+    catch {mouse mode rotate}
+    if {![info exists ::vmd_pick_atom] || ![string is integer -strict $::vmd_pick_atom]} { return }
+    set $var_name "index $::vmd_pick_atom"
+    set _pm [expr {[info exists ::vmd_pick_mol] ? $::vmd_pick_mol : ""}]
+    set _note ""
+    if {$_pm ne "" && [string trim $state(molid)] ne "" && $_pm != [string trim $state(molid)]} {
+        # The selection is evaluated on the analysis molecule, so an atom index
+        # from another molecule would silently mean a different atom.
+        set _note " - NOTE: picked in mol $_pm, but the analysis molecule is $state(molid)"
+    }
+    set state(status) "Point $which = atom index $::vmd_pick_atom$_note"
+    # Both ends set: compute straight away, so pick-pick needs no third click.
+    if {[string trim $vec_p1] ne "" && [string trim $vec_p2] ne "" \
+            && [winfo exists $parent] && [winfo exists $parent.result]} {
+        catch {compute_vector $parent}
+    }
 }
 
 proc ::VMDPathFinder::_autofill_start_points {topmol {allow_view_fallback 1}} {
@@ -41410,11 +41522,22 @@ proc ::VMDPathFinder::_ion_flow_scan {molid frame_ref {with_water 0}} {
             set _mcovmin [expr {[dict exists $_mpd nframes] ? [dict get $_mpd nframes]*0.05 : 1e30}]
             if {$_mcovmin < 2} { set _mcovmin 2 }
         }
+        # A tunnel's binned wall is pooled on SIGNED DISTANCE FROM THE BOTTLENECK
+        # (_tunnel_signed_profile: 0 at the narrowest point), but everything else
+        # in this proc - the ion traces, zmin/zmax, zc - is ARC LENGTH FROM THE
+        # ROUTE'S START (_ion_flow_path_spheres). Left as-is the wall sat shifted
+        # by the bottleneck's own arc length: a bare gap at one end of the plot,
+        # the wall cut off at the other, and the constriction line off the
+        # wall's narrowest point. zc IS that bottleneck arc length in the
+        # reference frame, so adding it puts the wall's zero where the traces
+        # measure it. Zero off tunnel mode: HOLE's binned wall is already in
+        # `coord`.
+        set _rz0 [expr {$_flow_tunnel ? $zc : 0.0}]
         set _mi 0
         foreach _ms $_mstats {
             if {[llength $_ms]} {
                 set _mnfr [llength [lindex $_mbins $_mi]]
-                lappend rprof [list [expr {$_mzmin + ($_mi + 0.5)*$_mzstep}] [lindex $_ms 0] \
+                lappend rprof [list [expr {$_rz0 + $_mzmin + ($_mi + 0.5)*$_mzstep}] [lindex $_ms 0] \
                     [expr {[lindex $_mfb $_mi] eq "" ? 0 : [lindex $_mfb $_mi]}] \
                     [expr {$_mnfr >= $_mcovmin ? 1 : 0}]]
             }
@@ -41853,7 +41976,10 @@ proc ::VMDPathFinder::_ion_flow_scan {molid frame_ref {with_water 0}} {
     #
     # Applied to EVERY axial quantity at once, so internal consistency is
     # untouched by construction - this only relabels the axis.
-    set _coff [_ion_flow_coord_offset]
+    # Tunnel mode has no HOLE `coord` to relabel into - and a HOLE run left in
+    # the same session would otherwise lend its own offset to a route that
+    # never used that axis.
+    set _coff [expr {$_flow_tunnel ? 0.0 : [_ion_flow_coord_offset]}]
     if {$_coff != 0.0} {
         set zmin [expr {$zmin + $_coff}]; set zmax [expr {$zmax + $_coff}]
         set zc   [expr {$zc + $_coff}]
