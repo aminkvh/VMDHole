@@ -57,7 +57,12 @@ Close.
 
 `CVECT` has no single point of its own, so its page moves one end of the
 two-point definition at a time - a **Point 1 / Point 2** selector above the
-pad chooses which. CVECT is recomputed from the pair after every move, live,
+pad chooses which. While that page is open both points are drawn in the 3D
+view as handles joined by an arrow running 1 -> 2 at its true length, and the
+stick's **Value** reports that length and the resulting unit direction. The
+arrow shows what you defined; the search axis itself is drawn from `CPOINT`
+and is parallel to it, so the two coincide only when `CPOINT` lies on the
+segment. CVECT is recomputed from the pair after every move, live,
 the same as pressing **Compute** below. The two entry fields, **Guess**,
 **Use Z** and **Compute** still work as typed alternatives to dragging. The
 same dialog holds the per-frame modes described below, and the cue is shown

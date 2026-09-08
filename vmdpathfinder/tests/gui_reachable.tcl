@@ -402,6 +402,56 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
     set _h0 [_cv_handle_centres]
     report "the CVECT page draws a handle at each of its two points" \
            [expr {[llength $_h0] == 2}] "(centres: $_h0)"
+
+    # The shaft runs 1 -> 2 at its TRUE length: the pair are the vector's ends,
+    # so their separation is part of what the user set, even though state(cvect)
+    # keeps only the normalised direction.
+    set _cyl {}; set _cone {}
+    if {[dict exists $::VMDPathFinder::point_marker_mols cvect_pts]} {
+        set _cm2 [dict get $::VMDPathFinder::point_marker_mols cvect_pts]
+        foreach _it [graphics $_cm2 list] {
+            set _inf [graphics $_cm2 info $_it]
+            if {[lindex $_inf 0] eq "cylinder"} { set _cyl $_inf }
+            if {[lindex $_inf 0] eq "cone"}     { set _cone $_inf }
+        }
+    }
+    report "the vector is drawn 1 -> 2 at true length (shaft + head)" \
+           [expr {$_cyl ne {} && $_cone ne {}
+                  && [lindex $_cyl 1] eq [lindex $_h0 0]
+                  && [lindex $_cone 2] eq [lindex $_h0 1]}] \
+           "(shaft from [lindex $_cyl 1], tip at [lindex $_cone 2])"
+
+    # The Value readout duplicates the Point entry above it on this page, so it
+    # reports what the entries cannot: length, and the unit direction the length
+    # is discarded in favour of.
+    set _val ""
+    catch {set _val [$_sd.sv.val_v cget -text]}
+    report "the stick's Value shows CVECT's length and unit direction" \
+           [expr {[string match "len *" $_val] && [string match "*dir *" $_val]}] "($_val)"
+
+    # Exact re-resolves the two definitions literally per frame, so with two
+    # x,y,z constants it re-derives the identical vector every frame - a live
+    # control that cannot do anything. Stabilize fits a local atom context and
+    # is meaningful for a literal point too, so only Exact is gated.
+    set ::VMDPathFinder::vec_p1 "70 30 25"
+    set ::VMDPathFinder::vec_p2 "70 30 35"
+    catch {::VMDPathFinder::compute_vector $_sd.vec}
+    catch {::VMDPathFinder::_cvect_sync_stab_controls $_sd.vec}
+    update idletasks; update
+    set _ex_lit ""; set _st_lit ""
+    catch {set _ex_lit [$_sd.vec.sb.ex cget -state]}
+    catch {set _st_lit [$_sd.vec.sb.cv cget -state]}
+    set ::VMDPathFinder::vec_p2 "index 120"
+    catch {::VMDPathFinder::compute_vector $_sd.vec}
+    catch {::VMDPathFinder::_cvect_sync_stab_controls $_sd.vec}
+    update idletasks; update
+    set _ex_sel ""
+    catch {set _ex_sel [$_sd.vec.sb.ex cget -state]}
+    report "Exact is offered only when an endpoint is a selection" \
+           [expr {$_ex_lit eq "disabled" && $_st_lit eq "normal" && $_ex_sel eq "normal"}] \
+           "(two literals: Exact $_ex_lit / Stabilize $_st_lit; with a selection: Exact $_ex_sel)"
+    set ::VMDPathFinder::vec_p1 ""
+    set ::VMDPathFinder::vec_p2 ""
     # Moving one end moves that handle and leaves the other alone.
     set ::VMDPathFinder::state(axis_stick_vec_pt) p2
     ::VMDPathFinder::_axis_stick_nudge cvect right

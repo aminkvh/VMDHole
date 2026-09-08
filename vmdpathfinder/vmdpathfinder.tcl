@@ -23307,8 +23307,29 @@ proc ::VMDPathFinder::_sync_cvect_handles {args} {
     catch {graphics $molid sphere $p1 radius 0.7 resolution 18}
     catch {graphics $molid color orange}
     catch {graphics $molid sphere $p2 radius 0.7 resolution 18}
+    # The shaft runs 1 -> 2 at its TRUE length: these two are the vector's ends,
+    # so how far apart they are is part of what the user set, even though
+    # state(cvect) keeps only the normalised direction (HOLE's CVECT card is a
+    # direction; the magnitude never reaches the search). The CPOINT arrow is
+    # drawn separately by _sync_point_marker and is the line HOLE searches
+    # along - parallel to this one, and offset from it whenever CPOINT is not
+    # on it.
+    lassign $p1 _x1 _y1 _z1
+    lassign $p2 _x2 _y2 _z2
+    set _dx [expr {$_x2-$_x1}]; set _dy [expr {$_y2-$_y1}]; set _dz [expr {$_z2-$_z1}]
+    set _len [expr {sqrt($_dx*$_dx + $_dy*$_dy + $_dz*$_dz)}]
     catch {graphics $molid color white}
-    catch {graphics $molid line $p1 $p2 width 2 style dashed}
+    if {$_len > 1e-6} {
+        # Cone no longer than a quarter of the shaft, so a short vector still
+        # reads as an arrow instead of one solid cone.
+        set _cone [expr {$_len*0.25 < 1.5 ? $_len*0.25 : 1.5}]
+        set _f [expr {($_len-$_cone)/$_len}]
+        set _base [list [expr {$_x1+$_dx*$_f}] [expr {$_y1+$_dy*$_f}] [expr {$_z1+$_dz*$_f}]]
+        catch {graphics $molid cylinder $p1 $_base radius 0.15 resolution 12 filled yes}
+        catch {graphics $molid cone $_base $p2 radius 0.4 resolution 12}
+    } else {
+        catch {graphics $molid line $p1 $p2 width 2 style dashed}
+    }
     catch {graphics $molid color cyan}
     catch {graphics $molid text $p1 " 1" size 0.8 thickness 2}
     catch {graphics $molid color orange}
@@ -24281,13 +24302,24 @@ proc ::VMDPathFinder::_cvect_sync_stab_controls {d} {
     if {![winfo exists $d.sb]} { return }
     set has_def [expr {[string trim $state(cvect_def_p1)] ne "" && \
                        [string trim $state(cvect_def_p2)] ne ""}]
-    set st [expr {$has_def ? "normal" : "disabled"}]
-    catch {$d.sb.cv configure -state $st}
-    catch {$d.sb.ex configure -state $st}
+    # EXACT needs a SELECTION endpoint. It re-resolves the two definitions
+    # literally at each frame (frame_axis' own Exact branch), so with two
+    # x,y,z constants it re-derives the identical vector every frame - a live
+    # control that provably cannot do anything. Stabilize is different: it fits
+    # a local atom context around each endpoint, which is meaningful for a
+    # literal point too, so it stays enabled on the two-point definition alone.
+    set has_sel [expr {$has_def && \
+        ([normalize_triplet_value $state(cvect_def_p1)] eq {} || \
+         [normalize_triplet_value $state(cvect_def_p2)] eq {})}]
+    catch {$d.sb.cv configure -state [expr {$has_def ? "normal" : "disabled"}]}
+    catch {$d.sb.ex configure -state [expr {$has_sel ? "normal" : "disabled"}]}
     if {!$has_def} {
         set state(stabilize_cvect) 0
         set state(cvect_exact) 0
         catch {$d.sb.note configure -text "(define two points to enable)"}
+    } elseif {!$has_sel} {
+        set state(cvect_exact) 0
+        catch {$d.sb.note configure -text "(Exact needs a selection endpoint)"}
     } else {
         catch {$d.sb.note configure -text ""}
     }
@@ -24879,7 +24911,7 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right \
         -textvariable ::VMDPathFinder::state(axis_stick_step_cpoint)
     label   $d.sv.val_l -text "Value"
-    label   $d.sv.val_v -width 20 -anchor w -relief sunken
+    label   $d.sv.val_v -width 34 -anchor w -relief sunken
     pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
     pack $d.sv.val_l -side left -padx {10 4}
     pack $d.sv.val_v -side left
@@ -24955,7 +24987,33 @@ proc ::VMDPathFinder::_axis_stick_sync_val_label {d} {
     # bound once.
     variable state
     if {![winfo exists $d.sv.val_v]} { return }
-    catch {$d.sv.val_v configure -text [_axis_stick_getvar [_axis_stick_key $state(axis_stick_mode)]]}
+    # On the CVECT page the raw target text is already in the Point 1/Point 2
+    # entry right above, so echoing it says nothing. Report instead what the
+    # entries cannot: how long the vector between the two points is, and the
+    # unit direction that length is discarded in favour of.
+    if {[info exists state(axis_stick_mode)] && $state(axis_stick_mode) eq "cvect"} {
+        set _txt [_axis_stick_getvar [_axis_stick_key $state(axis_stick_mode)]]
+        catch {
+            variable vec_p1
+            variable vec_p2
+            set _m [resolve_molid]
+            set _f [molinfo $_m get frame]
+            set _a [_resolve_point_input $vec_p1 $_m $_f]
+            set _b [_resolve_point_input $vec_p2 $_m $_f]
+            if {[llength $_a] == 3 && [llength $_b] == 3} {
+                lassign $_a _ax _ay _az
+                lassign $_b _bx _by _bz
+                set _l [expr {sqrt(($_bx-$_ax)*($_bx-$_ax) + ($_by-$_ay)*($_by-$_ay)
+                                   + ($_bz-$_az)*($_bz-$_az))}]
+                set _u [expr {$_l > 1e-9 ? [format "%.3f %.3f %.3f" \
+                    [expr {($_bx-$_ax)/$_l}] [expr {($_by-$_ay)/$_l}] [expr {($_bz-$_az)/$_l}]] : "-"}]
+                set _txt [format "len %.2f Å   dir %s" $_l $_u]
+            }
+        }
+        catch {$d.sv.val_v configure -text $_txt}
+    } else {
+        catch {$d.sv.val_v configure -text [_axis_stick_getvar [_axis_stick_key $state(axis_stick_mode)]]}
+    }
     # vec_p1/vec_p2 are traced onto this proc already, so typing an endpoint
     # moves its handle live without a second set of traces to install and tear
     # down.
