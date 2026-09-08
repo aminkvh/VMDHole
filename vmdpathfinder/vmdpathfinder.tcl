@@ -36630,7 +36630,7 @@ proc ::VMDPathFinder::_read_accel_manifest {} {
     #   present 0/1  openmp 0/1  built <iso>  opt <flags>  patches {{file feat}..}
     # A stock (unpatched) hole has no manifest -> present 0 (the plugin still
     # runs it, just without parallel CONNOLLY / the green checks).
-    set out [dict create present 0 openmp 0 built {} opt {} patches {}]
+    set out [dict create present 0 openmp 0 built {} opt {} coordfmt {} patches {}]
     set path [_accel_manifest_path]
     if {$path eq "" || ![file exists $path]} { return $out }
     if {[catch {set fh [open $path r]}]} { return $out }
@@ -36642,6 +36642,7 @@ proc ::VMDPathFinder::_read_accel_manifest {} {
         set kw [lindex $line 0]
         switch -- $kw {
             openmp { dict set out openmp [expr {[lindex $line 1] eq "yes"}] }
+            coordfmt { dict set out coordfmt [lindex $line 1] }
             built  { dict set out built [lindex $line 1] }
             opt    { dict set out opt   [lrange $line 1 end] }
             patch  { dict lappend out patches \
@@ -46468,10 +46469,24 @@ proc ::VMDPathFinder::_hole_fast_coord_available {} {
     if {[info exists state(keep_input_pdb)] && $state(keep_input_pdb)} { return 0 }
     set m [_read_accel_manifest]
     if {![dict get $m present]} { return 0 }
+    set has 0
     foreach p [dict get $m patches] {
-        if {[lindex $p 1] eq "fast-coord-read"} { return 1 }
+        if {[lindex $p 1] eq "fast-coord-read"} { set has 1 }
     }
-    return 0
+    if {!$has} { return 0 }
+    # The binary must read the record this plugin WRITES. A manifest naming only
+    # the patch let a binary built before a format change accept the new record:
+    # its reader falls through to PDB parsing rather than erroring, so the run
+    # would have been silently wrong rather than failed. A manifest predating the
+    # stamp has no coordfmt and is refused - a rebuild is the fix.
+    return [expr {[dict get $m coordfmt] eq [_hole_coord_magic]}]
+}
+
+proc ::VMDPathFinder::_hole_coord_magic {} {
+    # The packed coordinate record's 8-byte magic. ONE definition: the writer
+    # stamps it, the accel gate compares the binary's manifest against it, and
+    # connolly_patches/tsatr_fast.f carries the matching reader.
+    return "VMDPFC01"
 }
 
 proc ::VMDPathFinder::_hole_coord_identity {sel tmp_pdb} {
@@ -46517,7 +46532,7 @@ proc ::VMDPathFinder::_write_hole_coord_bin {sel path natoms idblob} {
     # identity half never changes between frames, so it is appended verbatim.
     set fh [open $path w]
     fconfigure $fh -translation binary
-    puts -nonewline $fh "VMDPFC01"
+    puts -nonewline $fh [_hole_coord_magic]
     puts -nonewline $fh [binary format ii 1 $natoms]
     puts -nonewline $fh $idblob
     puts -nonewline $fh [binary format d* [$sel get x]]

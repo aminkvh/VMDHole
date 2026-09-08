@@ -135,11 +135,16 @@ echo ">> Building sos_triangle_fast ($OPT) ..."
 # functionally missing - but "which sos_triangle is running?" is not a question
 # a user following the docs should have to ask, and only build.sh's output is the
 # one the test suite checks.
-if $CC $OPT -fopenmp -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" \
+# Same multicall build as build.sh: the Nelder-Mead pore search, the
+# marching-cubes mesher and the Connolly lobe classifier ride INSIDE
+# sos_triangle. Omitting them here built a binary that answered no to every
+# sos_triangle_has_feature probe, so the plugin silently took its slow paths.
+MULTI="-DVMDPATHFINDER_MULTICALL $HERE/nm/nm_search.c $HERE/nm/mesh_csg.c $HERE/conn_lobes.c"
+if $CC $OPT -fopenmp -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" $MULTI \
         "$HERE/voronoi/vor_predicates.c" "$HERE/voronoi/vor_delaunay.c" -lm -lpthread 2>/dev/null; then
   echo "   (OpenMP enabled)"
 else
-  $CC $OPT -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" \
+  $CC $OPT -o "$HERE/sos_triangle_fast" "$HERE/sos_triangle_fast.c" $MULTI \
         "$HERE/voronoi/vor_predicates.c" "$HERE/voronoi/vor_delaunay.c" -lm -lpthread
   echo "   (serial, no OpenMP)"
 fi
@@ -182,6 +187,12 @@ if ldd "$OUT/hole" 2>/dev/null | grep -qi "libgomp"; then OMP_OK=yes; fi
   # 18.7k atoms, and that is the rate the whole tunnel search is fed at.
   echo "patch mole_atoms_bin fast-atoms-read"
   echo "patch tsatr_fast.f fast-coord-read"
+  # The packed-record magic, read out of the READER's own source so it cannot
+  # drift from the binary this manifest describes. The plugin refuses the
+  # packed path unless this matches what its writer emits: a manifest that
+  # only named the patch let a stale binary accept a record it could not read.
+  echo "coordfmt $(sed -n "s/.*VHMAG\.NE\.'\([A-Z0-9]*\)'.*/\1/p" \
+                     "$HERE/connolly_patches/tsatr_fast.f" | head -1)"
   echo "patch sos_triangle fast-surface"
   # Provenance: which upstream tree these patches were applied to, and what
   # came out. Without these a manifest recorded only patch NAMES, so two
