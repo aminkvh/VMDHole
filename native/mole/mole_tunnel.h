@@ -44,6 +44,9 @@ void mole_spline_init(mole_spline *s, const double *t, const double *y, int n);
 double mole_spline_eval(const mole_spline *s, double x);
 void mole_spline_free(mole_spline *s);
 double mole_radius_at_raw(const double *p, const double *axyz, const double *arad, int na);
+/* The CLAMPED radius (>= 0.01) that the profile's r samples use - the same
+   quantity a tunnel's P record carries. Exposed for the cavity VP records. */
+double mole_radius_at(const double *p, const double *axyz, const double *arad, int na);
 /* The five nearest atoms to p, nearest first; returns how many (<5 only when
    the structure has fewer atoms). sel must hold 5. */
 int  mole_nearest5(const double *p, const double *axyz, const double *arad,

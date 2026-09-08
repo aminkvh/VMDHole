@@ -70,7 +70,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Start point | blank | Buried origin coordinate; may be derived from a selection's centre of geometry (COG) or VMD's centre of rotation (COR) |
+| Start point | blank | Buried origin: coordinates, a VMD selection (its centre, re-evaluated per frame), or a `;` list of them for pinned multi-origin runs; may be derived from a selection's centre of geometry (COG) or VMD's centre of rotation (COR) |
 | Auto-detect origins | off | Detect candidate internal cavities rather than use only the entered point |
 | Probe | 3.0 Å | Probe used in accessible-space construction |
 | Interior threshold | 1.25 Å | Minimum clearance used to classify interior voids |
@@ -92,9 +92,10 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Custom exit point | blank | User-defined surface target |
+| Custom exit point | blank | User-defined surface target: coordinates, a VMD selection (its centre, per frame), or a `;` list of them |
 | Custom path start/end | blank | Directed path constraint |
 | Use custom exits only | off | Exclude automatically found exits |
+| vdW radii | blank | Per-element van der Waals overrides, `C:1.7, ZN:1.39`; blank keeps MOLE's table |
 | Cluster within frame | on | Merge similar routes in one frame |
 | Within-frame cutoff | 3 Å | Distance threshold for within-frame route clustering |
 | Cross-frame maximum deviation | 12 Å | Largest geometric deviation accepted as one tracked route |

@@ -17,6 +17,29 @@
 #include "mole_rng.h"
 #include "../xalloc.h"
 
+/* Per-element radius overrides, uppercase symbols. A later call for the same
+   symbol replaces the earlier one. */
+static struct { char e[8]; double r; } VDW_OVR[MOLE_VDW_MAX_OVERRIDES];
+static int n_vdw_ovr;
+
+int mole_vdw_override(const char *elem, double r)
+{
+    size_t i;
+    char u[8];
+    if (!elem || !*elem || !(r > 0.0) || !isfinite(r)) return -1;
+    for (i = 0; i + 1 < sizeof u && elem[i]; i++)
+        u[i] = (elem[i] >= 'a' && elem[i] <= 'z') ? (char)(elem[i] - 32) : elem[i];
+    if (elem[i]) return -1;            /* symbol longer than the atom table's field */
+    u[i] = 0;
+    for (i = 0; i < (size_t)n_vdw_ovr; i++)
+        if (!strcmp(u, VDW_OVR[i].e)) { VDW_OVR[i].r = r; return 0; }
+    if (n_vdw_ovr >= MOLE_VDW_MAX_OVERRIDES) return -1;
+    strcpy(VDW_OVR[n_vdw_ovr].e, u);
+    VDW_OVR[n_vdw_ovr].r = r;
+    n_vdw_ovr++;
+    return 0;
+}
+
 /* MOLE's own table (TunnelVdwRadii.cs). NOT AMBER, despite both papers saying
    so. Anything absent falls back to a general element table; 1tqn uses only
    C/N/O/S/FE, all of which are listed here. */
@@ -63,6 +86,10 @@ double mole_vdw_radius(const char *elem)
     for (i = 0; i + 1 < sizeof u && elem[i]; i++)
         u[i] = (elem[i] >= 'a' && elem[i] <= 'z') ? (char)(elem[i] - 32) : elem[i];
     u[i] = 0;
+    /* User overrides (--vdw=) win over both tables, for the elements named
+       and no others. Empty unless mole_vdw_override was called. */
+    for (i = 0; i < (size_t)n_vdw_ovr; i++)
+        if (!strcmp(u, VDW_OVR[i].e)) return VDW_OVR[i].r;
     for (i = 0; i < sizeof TUN / sizeof TUN[0]; i++)
         if (!strcmp(u, TUN[i].e)) return TUN[i].r;
     for (i = 0; i < sizeof GEN / sizeof GEN[0]; i++)

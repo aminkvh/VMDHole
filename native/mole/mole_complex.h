@@ -94,6 +94,12 @@ typedef struct {
 } mole_cavity;
 
 double mole_vdw_radius(const char *elem);
+/* --vdw=: replace the table radius for ONE element (case-insensitive symbol),
+   consulted before both built-in tables by mole_vdw_radius. Returns -1 for an
+   empty/overlong symbol, a non-positive or non-finite radius, or a full table.
+   Call before mole_pivots, which is where radii are assigned. */
+#define MOLE_VDW_MAX_OVERRIDES 32
+int    mole_vdw_override(const char *elem, double r);
 /* PdbEx.IsBackboneAtom: an amino OR nucleic backbone atom NAME. */
 int    mole_is_backbone_name(const char *name);
 /* PdbResidue.IsAminoName: one of the 20 standard residues. */

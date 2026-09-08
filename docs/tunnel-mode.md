@@ -29,7 +29,16 @@ routes or routes from the wrong cavity. The **⌖** button opens the on-screen
 stick described under pore mode, step 3, to nudge the start point relative to
 the current view.
 
-Custom exits restrict the search toward known surface regions. A custom path is
+The start point also accepts a **VMD selection** instead of coordinates — its
+centre is re-evaluated in every frame, so a residue-defined origin (for example
+`resname HEM`) follows the trajectory rather than staying where it was in frame
+0. Several origins are given as a `;` list mixing both forms
+(`73.8 26.5 26.6; resid 74 and chain A`); each is pinned separately and the
+routes found from all of them are merged and de-duplicated, which is MOLE's
+pinned multi-origin mode.
+
+Custom exits restrict the search toward known surface regions, and take the same
+three forms — coordinates, a selection, or a `;` list of them. A custom path is
 defined by start and end points. **Use custom exits only** excludes other exit
 candidates; use it only when the biological exit is independently known.
 
@@ -112,7 +121,10 @@ controls step through routes. **Show all** displays the routes that remain after
 the current filters.
 
 The lining window exports the selected route's lining data. The standard plot
-tabs and CSV exports operate on the selected tracked route.
+tabs and CSV exports operate on the selected tracked route. The exported
+`tunnel_N.csv` carries per-point `FreeRadius` and `BRadius` alongside the
+radius, and the lining window reports the positive and negative residue counts
+next to the net charge.
 
 ## 7. Available downstream analyses
 
@@ -122,3 +134,21 @@ selected route along itself, as distance along the route and distance from
 it, so a bent tunnel plots as it is. It does not provide
 tunnel hydration, tunnel ellipse fitting, or pore-mode bulk-to-bulk permeation.
 Water free-energy and density properties require a pore-mode hydration result.
+
+## 8. Cavities
+
+**Cavities** lists the pockets MOLE found in the displayed frame: type
+(*Cavity*, or *Void* when nothing lines it), volume, depth in tetrahedron
+layers and in Å, and the boundary and inner residue counts. **Residues** opens
+a cavity's two residue sets with their MOLE properties and a ready-made VMD
+selection string.
+
+Ticking **Draw** meshes that cavity as a transparent sphere-union surface on the
+same track the routes are drawn on, so a route can be seen passing through the
+pocket it starts from. Cavity ids are per-frame ranks — MOLE recomputes cavities
+independently in each frame — so a tick means "cavity *N* of whichever frame is
+shown", unlike the routes, which are tracked across frames. The surface cavity
+the tunnels exit through is not listed.
+
+Cavities require the compiled engine; a run made with the pure-Tcl fallback has
+none, and the window says so.

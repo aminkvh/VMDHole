@@ -344,6 +344,101 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
     report "the marker shares the structure's view matrices (or it renders off-screen)" \
            $_pm_aligned "($_pm_adetail)"
 
+    # Closing the stick must clear EVERY cue it turned on, not just the one it
+    # was first opened with. The dialog is shared and re-targeted in place (the
+    # CPOINT, CVECT and tunnel-start buttons all call show_axis_stick_dialog on
+    # the same toplevel), and it used to remember a single cue variable - so
+    # opening on one point and then re-targeting to the other left the first
+    # cue on, with its marker molecule still in the scene, after Close. A cue
+    # the USER had already switched on must survive Close either way.
+    set _cue_saved [list $::VMDPathFinder::state(show_cpoint_marker) \
+                         $::VMDPathFinder::state(show_tunnel_start_marker)]
+    set ::VMDPathFinder::state(show_cpoint_marker) 0
+    set ::VMDPathFinder::state(show_tunnel_start_marker) 0
+    set _sd $w.axisstick
+    ::VMDPathFinder::show_axis_stick_dialog cpoint
+    update idletasks; update
+    ::VMDPathFinder::show_axis_stick_dialog tunnel_start
+    update idletasks; update
+    set _both_on [expr {$::VMDPathFinder::state(show_cpoint_marker)
+                        && $::VMDPathFinder::state(show_tunnel_start_marker)}]
+    ::VMDPathFinder::_axis_stick_close $_sd
+    update idletasks; update
+    set _left [list]
+    foreach _k {show_cpoint_marker show_tunnel_start_marker} {
+        if {$::VMDPathFinder::state($_k)} { lappend _left $_k }
+    }
+    foreach _k {cpoint tunnel_start} {
+        if {[info exists ::VMDPathFinder::point_marker_mols] && \
+                [dict exists $::VMDPathFinder::point_marker_mols $_k]} { lappend _left "mol:$_k" }
+    }
+    report "closing the re-targeted stick clears every cue it turned on" \
+           [expr {$_both_on && [llength $_left] == 0}] \
+           "(both cues on while open: $_both_on; left behind: $_left)"
+
+    # CVECT's two points are drawn as handles while its stick page is open.
+    # CVECT is a DIRECTION - compute_vector keeps the normalised (P2-P1) and
+    # discards the positions, and the search axis is drawn at CPOINT - so the
+    # pair the stick actually moves had nothing on screen at all. They are
+    # drawn exactly while the stick can move them: not on another page, not
+    # after Close.
+    set ::VMDPathFinder::state(cpoint) "70 30 25"
+    set ::VMDPathFinder::state(cvect) "0 0 1"
+    set ::VMDPathFinder::vec_p1 ""
+    set ::VMDPathFinder::vec_p2 ""
+    ::VMDPathFinder::show_axis_stick_dialog cvect
+    update idletasks; update
+    proc _cv_handle_centres {} {
+        if {![info exists ::VMDPathFinder::point_marker_mols]} { return {} }
+        if {![dict exists $::VMDPathFinder::point_marker_mols cvect_pts]} { return {} }
+        set m [dict get $::VMDPathFinder::point_marker_mols cvect_pts]
+        set o {}
+        foreach it [graphics $m list] {
+            set inf [graphics $m info $it]
+            if {[lindex $inf 0] eq "sphere"} { lappend o [lindex $inf 1] }
+        }
+        return $o
+    }
+    set _h0 [_cv_handle_centres]
+    report "the CVECT page draws a handle at each of its two points" \
+           [expr {[llength $_h0] == 2}] "(centres: $_h0)"
+    # Moving one end moves that handle and leaves the other alone.
+    set ::VMDPathFinder::state(axis_stick_vec_pt) p2
+    ::VMDPathFinder::_axis_stick_nudge cvect right
+    update idletasks; update
+    set _h1 [_cv_handle_centres]
+    report "moving Point 2 moves only Point 2's handle" \
+           [expr {[llength $_h1] == 2 && [lindex $_h0 0] eq [lindex $_h1 0]
+                  && [lindex $_h0 1] ne [lindex $_h1 1]}] "($_h0 -> $_h1)"
+    # Leaving the page takes them off screen; Close leaves no marker mol.
+    set ::VMDPathFinder::state(axis_stick_mode) cpoint
+    ::VMDPathFinder::_axis_stick_sync_mode $_sd
+    update idletasks; update
+    report "leaving the CVECT page clears the handles" \
+           [expr {[llength [_cv_handle_centres]] == 0}] ""
+    ::VMDPathFinder::_axis_stick_close $_sd
+    update idletasks; update
+    set _stray {}
+    foreach _mm [molinfo list] {
+        if {[string match "VMDPathFinder*" [molinfo $_mm get name]]} { lappend _stray [molinfo $_mm get name] }
+    }
+    report "closing the stick leaves no marker molecule behind" \
+           [expr {[llength $_stray] == 0}] "(left: $_stray)"
+
+    # ...but a cue the user set themselves is not cleared by Close.
+    set ::VMDPathFinder::state(show_cpoint_marker) 1
+    update idletasks; update
+    ::VMDPathFinder::show_axis_stick_dialog cpoint
+    update idletasks; update
+    ::VMDPathFinder::_axis_stick_close $_sd
+    update idletasks; update
+    report "...but a cue the user had already on stays on" \
+           $::VMDPathFinder::state(show_cpoint_marker) \
+           "(show_cpoint_marker=$::VMDPathFinder::state(show_cpoint_marker))"
+    set ::VMDPathFinder::state(show_cpoint_marker) [lindex $_cue_saved 0]
+    set ::VMDPathFinder::state(show_tunnel_start_marker) [lindex $_cue_saved 1]
+    update idletasks; update
+
     # The CVECT arrow: a cue for the search AXIS, not just its start point.
     # Drawn into the same marker mol, so one "Show cues" checkbox governs both.
     set ::VMDPathFinder::state(cvect) "0 0 1"

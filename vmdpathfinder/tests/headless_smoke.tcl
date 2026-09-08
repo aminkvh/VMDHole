@@ -1136,13 +1136,25 @@ foreach _t {kd ww lipophilicity} {
     chk "...labelled exactly as in pore mode" \
         [::VMDPathFinder::_tunnel_prop_label $_t] [::VMDPathFinder::scheme_display_label $_t]
 }
-# Water G(z) needs a Hydration run tunnel mode cannot produce, and esp needs
-# charges it does not have - offering either puts a control on screen that can
-# never resolve, which is the defect batch item 13 already fixed once.
-foreach _t {gz esp} {
+# Water G(z) needs a Hydration run tunnel mode cannot produce - offering it
+# puts a control on screen that can never resolve, which is the defect batch
+# item 13 already fixed once.
+foreach _t {gz} {
     chk "tunnel mode does NOT offer '$_t' (it can never resolve there)" \
         [expr {$_t in [::VMDPathFinder::_tunnel_prop_tokens]}] 0
 }
+# esp WAS in that list for the same reason and no longer is: it never needed
+# MOLE's tables, only the structure's formal charges (_esp_formal_charges, the
+# same set pore mode's readout and overlay use), evaluated at the route's own
+# points rather than per lining residue.
+chk "tunnel mode offers 'esp'" \
+    [expr {"esp" in [::VMDPathFinder::_tunnel_prop_tokens]}] 1
+chk "...routed to the per-point evaluator, not the layer table" \
+    [expr {[string first {_tunnel_esp_spheres} \
+        [info body ::VMDPathFinder::_tunnel_property_spheres]] >= 0}] 1
+chk "...on its own adaptive range, like pore mode's esp" \
+    [expr {[string first {_esp_percentile_range} \
+        [info body ::VMDPathFinder::_tunnel_property_range]] >= 0}] 1
 # The averaging itself: two residues, so the layer value is their mean.
 set _ly [dict create start 0.0 end 1.0 \
     residues [list [dict create resname ILE resid 1 chain A] \

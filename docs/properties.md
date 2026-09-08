@@ -26,8 +26,10 @@ figure.
 | Water density | Water depletion field | Requires Hydration Compute |
 
 Tunnel mode offers Kyte–Doolittle, Wimley–White, Kapcha–Rossky,
-Fauchère–Pliska, and the MOLE properties in the table. Electrostatic potential
-and hydration-derived properties are pore-only.
+Fauchère–Pliska, the MOLE properties in the table, and electrostatic potential.
+In tunnel mode the potential is evaluated at the route's own points rather than
+per lining residue, from the same formal charges pore mode uses, and is coloured
+on the frame's own value spread. Hydration-derived properties are pore-only.
 
 ### Non-protein residues in the selection
 

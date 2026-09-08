@@ -112,6 +112,9 @@ namespace eval ::VMDPathFinder:: {
     # way as tunnel_results. Populated only when the engine emitted them.
     variable tunnel_lining
     array set tunnel_lining {}
+    # Per-cavity draw ticks (show_tunnel_cavities), keyed by per-frame cavity id.
+    variable tunnel_cavity_shown
+    array set tunnel_cavity_shown {}
     variable tunnel_result_frames {}
     # Cross-snapshot clusters (CAVER-style) + the {cid,frame -> rank} lookup that
     # gives a tunnel an identity across the trajectory. See _tunnel_xframe_build.
@@ -393,6 +396,7 @@ namespace eval ::VMDPathFinder:: {
         _conn_cls_memo            {form dict  tags {run results}}
         _conn_unroll_memo         {form dict  tags {run results}}
         _2dmap_memo               {form array tags {results}}
+        _tunnel_esp_cache         {form array tags {run results}}
         hydro_topo_cache          {form dict  tags {run} free _free_hydro_topo_cache}
         sphere_atom_cache         {form dict  tags {run}}
         hydro3d_props_cache       {form dict  tags {run}}
@@ -695,6 +699,7 @@ namespace eval ::VMDPathFinder:: {
         mole_exits_only 0
         mole_path_a ""
         mole_path_b ""
+        mole_vdw ""
         tunnel_prop kd
         tunnel_selected_id {}
         tunnel_lining_show_all 0
@@ -1030,7 +1035,7 @@ proc ::VMDPathFinder::save_config {} {
         mean_3d_mode mean_display_mode conn_lobe_tolz conn_lobe_tola conn_lobe_minseen
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
         conn_lobe_sort_col conn_lobe_sort_dir
-        mole_exit mole_path_a mole_path_b tunnel_cluster
+        mole_exit mole_path_a mole_path_b mole_vdw tunnel_cluster
         tunnel_align tunnel_render_maxr bottleneck_shell tunnel_hydro3d_accurate
         tunnel_display_mode tunnel_display_material tunnel_display_color
         mean_tunnel_display_mode
@@ -6936,7 +6941,7 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     grid $parent.sp_l -row $row -column 0 -sticky w  -padx 8 -pady 2
     grid $parent.sp_e -row $row -column 1 -sticky ew -padx 8 -pady 2
     grid $parent.sp_box -row $row -column 2 -sticky ew -padx 8 -pady 2
-    add_tooltip $parent.sp_e "x y z of a point inside the buried cavity the tunnels lead out of."
+    add_tooltip $parent.sp_e "Where the tunnels lead out of: \"x y z\" inside the buried cavity, a VMD selection (its centre, re-evaluated every frame - e.g. \"resname HEM\"), or several of either separated by \";\" for pinned multi-origin runs."
     incr row
 
     add_tooltip $parent.sp_box.com "Fill with the centre of geometry of the selection typed here. Blank\
@@ -7101,6 +7106,9 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
         -variable ::VMDPathFinder::state(show_tunnel_lining) \
         -command ::VMDPathFinder::toggle_tunnel_lining
     button $parent.tunctl.lining -text "Lining" -command ::VMDPathFinder::show_tunnel_lining
+    # MOLE's cavities (buried pockets + the surface cavity the tunnels start
+    # from): a table with volume/depth/residues and a draw toggle per cavity.
+    button $parent.tunctl.cav -text "Cavities" -command ::VMDPathFinder::show_tunnel_cavities
     # "Show all" belongs BELOW the list it filters, not above it, and it
     # is meaningless before a run - it is packed by _sync_tunlist_showall_vis
     # once there are tracked routes, not here.
@@ -7114,6 +7122,8 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     # Order the user asked for: Lining, the step arrows, Show lining, Show all
     # (_sync_tunlist_showall_vis packs Show all after Show lining).
     pack $parent.tunctl.lining -side left
+    pack $parent.tunctl.cav -side left -padx {4 0}
+    add_tooltip $parent.tunctl.cav "MOLE's cavities in this frame: type, volume, depth and lining residues, with a draw toggle per cavity."
     pack $parent.tunctl.prev $parent.tunctl.next -side left -padx {6 0}
     pack $parent.tunctl.tlin -side left -padx {10 0}
     add_tooltip $parent.tunctl.tlin "Draw the selected tunnel's lining residues in Licorice (MOLE's own per-layer lining). Different measurement from Pore mode's \"Show nearby\"."
@@ -7212,7 +7222,7 @@ proc ::VMDPathFinder::show_tunnel_advanced_settings {} {
     # destination; the two path ends sit beside each other.
     foreach {_k _lab _col _tip} {
         mole_exit "Exit point" 0
-            "CustomExits. A point tunnels are computed to, as \"x y z\". Blank disables it."
+            "CustomExits. Where tunnels are computed to: \"x y z\", a VMD selection (its centre, per frame), or several of either separated by \";\". Blank disables it."
         mole_path_a "Path start" 0
             "Shortest path directly between two points, as \"x y z\". Needs Path end too."
         mole_path_b "Path end" 2
@@ -7230,7 +7240,15 @@ proc ::VMDPathFinder::show_tunnel_advanced_settings {} {
     checkbutton $d.exonly_c -text "Use custom exits only" \
         -variable ::VMDPathFinder::state(mole_exits_only) -anchor w
     grid $d.exonly_c -row [expr {$row-2}] -column 2 -columnspan 2 -sticky w -padx {16 8} -pady 1
-    add_tooltip $d.exonly_c "Only the exit point counts as a destination, instead of adding it to the computed ones."
+    add_tooltip $d.exonly_c "Only the exit point(s) count as destinations, instead of adding them to the computed ones."
+
+    # CustomVdw: per-element radius overrides for the engine's table.
+    label $d.vdw_l -text "vdW radii"
+    entry $d.vdw_e -textvariable ::VMDPathFinder::state(mole_vdw) -width 30
+    grid $d.vdw_l -row $row -column 0 -sticky w -padx {8 4} -pady 1
+    grid $d.vdw_e -row $row -column 1 -columnspan 3 -sticky w -padx {0 8} -pady 1
+    add_tooltip $d.vdw_e "CustomVdw: override the engine's van der Waals radius per element, e.g. \"C:1.7, ZN:1.39\". Blank keeps MOLE's own table."
+    incr row
 
     # Clustering is NOT a MOLE 2 parameter - MOLE's C engine has none. It is a
     # VMDPathFinder post-process modeled on CAVER's PUBLISHED clustering method
@@ -7796,6 +7814,7 @@ proc ::VMDPathFinder::_tunnel_prop_label_short {tok} {
         logd           { return "M logD" }
         logs           { return "M logS" }
         mutability     { return "M mutability" }
+        esp            { return "ESP" }
     }
     return [_tunnel_prop_label $tok]
 }
@@ -7821,9 +7840,10 @@ proc ::VMDPathFinder::_tunnel_prop_tokens {} {
     # from the same layer's residue list - see _tunnel_layer_scale.
     #
     # Deliberately NOT offered: "gz" (water G(z)) needs a Hydration run tunnel
-    # mode cannot produce, and "esp" needs charges it does not have. Offering
-    # either would put a control on screen that can never resolve - the defect
-    # a defect already fixed once.
+    # mode cannot produce. "esp" IS offered now: it never needed MOLE's tables,
+    # only the structure's formal charges, which pore mode's helefi model
+    # (_esp_formal_charges) already supplies - evaluated at the route's own
+    # points (_tunnel_property_spheres), not per lining residue.
     # ORDER matches pore mode's own picker: the shared HOLE scales first,
     # in the same sequence pore mode lists them, then MOLE's own tables. A user
     # comparing the two modes reads the same names in the same order.
@@ -7833,7 +7853,7 @@ proc ::VMDPathFinder::_tunnel_prop_tokens {} {
     # with pore mode's own rule - see _tunnel_layer_kr. It is not a residue-table
     # lookup, which is why it needed more than a menu entry.
     return [concat [_tunnel_scale_tokens] \
-                   {charge polarity hydropathy hydrophobicity ionizable logp logd logs mutability}]
+                   {charge polarity hydropathy hydrophobicity ionizable logp logd logs mutability esp}]
 }
 
 proc ::VMDPathFinder::_tunnel_scale_tokens {} {
@@ -9140,6 +9160,25 @@ proc ::VMDPathFinder::_mole_exit_flags {d} {
     return $out
 }
 
+proc ::VMDPathFinder::_mole_vdw_spec {} {
+    # MOLE's CustomVdw as the engine's --vdw=El:r,El:r list, validated: every
+    # item must be an element symbol and a positive radius. A malformed field
+    # yields "" (no override) with a console note - never a half-applied one.
+    variable state
+    if {![info exists state(mole_vdw)]} { return "" }
+    set out {}
+    foreach item [split [string map {; ,} [string trim $state(mole_vdw)]] ,] {
+        set item [string trim $item]
+        if {$item eq ""} continue
+        if {![regexp {^([A-Za-z]{1,2})\s*[:=]\s*([0-9]*\.?[0-9]+)$} $item -> el r] || $r <= 0} {
+            catch {vmdcon -warn "VMDPathFinder tunnel: vdW override \"$item\" is not El:radius - ignoring the whole list."}
+            return ""
+        }
+        lappend out "[string toupper $el]:$r"
+    }
+    return [join $out ,]
+}
+
 proc ::VMDPathFinder::_mole_cfg_flags {cfg} {
     set d [_mole_cfg $cfg]
     return "--cover=[dict get $d cover] --autocover=[dict get $d autocover]\
@@ -9180,9 +9219,57 @@ proc ::VMDPathFinder::_mole_cfg {cfg} {
         fbl       [expr {[dict exists $cfg mole_fbl]           ? [dict get $cfg mole_fbl]           : 0}] \
         exit      [expr {[dict exists $cfg mole_exit]          ? [dict get $cfg mole_exit]          : {}}] \
         exitsonly [expr {[dict exists $cfg mole_exits_only]    ? [dict get $cfg mole_exits_only]    : 0}] \
+        exit_text [expr {[dict exists $cfg mole_exit_text]     ? [dict get $cfg mole_exit_text]     : ""}] \
+        vdw       [expr {[dict exists $cfg mole_vdw]           ? [dict get $cfg mole_vdw]           : ""}] \
         patha     [expr {[dict exists $cfg mole_path_a]        ? [dict get $cfg mole_path_a]        : {}}] \
         pathb     [expr {[dict exists $cfg mole_path_b]        ? [dict get $cfg mole_path_b]        : {}}] \
         strict    [expr {[dict exists $cfg mole_strict_interior] ? [dict get $cfg mole_strict_interior] : 0}]]
+}
+
+proc ::VMDPathFinder::_mole_engine_point_args {seed cfg molid frame} {
+    # The FRAME-DEPENDENT tail of an engine command line, shared by the
+    # single-frame path (_tunnel_search_mole) and the multi-frame pool
+    # (run_tunnel_analysis writes one run.sh per frame) so the two cannot
+    # drift: the positional origin (+ origin radius) from the first resolved
+    # start point, --origin= for the rest, --exit= per resolved custom exit
+    # beyond the single literal one _mole_exit_flags already emits, and the
+    # --vdw= override. A plain "x y z" start keeps the exact old command line.
+    set d [_mole_cfg $cfg]
+    set out ""
+    set seeds [_mole_points_from_text $seed $molid $frame]
+    if {[llength $seeds]} {
+        lassign [lindex $seeds 0] sx sy sz
+        append out " [shell_quote $sx] [shell_quote $sy] [shell_quote $sz] [dict get $d orad]"
+        foreach o [lrange $seeds 1 end] { append out " --origin=[join $o ,]" }
+    }
+    if {![llength [dict get $d exit]] && [dict get $d exit_text] ne ""} {
+        set ex [_mole_points_from_text [dict get $d exit_text] $molid $frame]
+        foreach e $ex { append out " --exit=[join $e ,]" }
+        if {[llength $ex] && [dict get $d exitsonly]} { append out " --exitsonly=1" }
+    }
+    if {[dict get $d vdw] ne ""} { append out " --vdw=[dict get $d vdw]" }
+    return $out
+}
+
+proc ::VMDPathFinder::_mole_points_from_text {text molid frame} {
+    # A point list from free text: items separated by ";", each "x y z"
+    # (commas allowed) or a VMD atom selection whose centre in $frame is
+    # taken (MOLE's Residue / Query origins and exits). Unresolvable items
+    # are dropped with a console note rather than aborting the run - a
+    # residue absent from one frame of a trajectory must not kill the whole
+    # search. Returns a list of {x y z} triples; {} when nothing resolved.
+    set out {}
+    foreach item [split $text ";"] {
+        set item [string trim $item]
+        if {$item eq ""} continue
+        set pt {}
+        if {[catch {set pt [_resolve_point_input $item $molid $frame]}] || [llength $pt] != 3} {
+            catch {vmdcon -warn "VMDPathFinder tunnel: point \"$item\" does not resolve in frame $frame - skipped."}
+            continue
+        }
+        lappend out $pt
+    }
+    return $out
 }
 
 proc ::VMDPathFinder::_tunnel_search_mole {molid frame seed cfg} {
@@ -9211,7 +9298,10 @@ proc ::VMDPathFinder::_tunnel_search_mole {molid frame seed cfg} {
                 sos_triangle - running the pure-Tcl MOLE engine. Same algorithm and\
                 the same tunnels, but roughly 120x slower and single-threaded."}
         }
-        return [_tunnel_search_mole_tcl $molid $frame $seed $cfg]
+        # The Tcl port takes one literal origin; give it the first resolved one
+        # (a selection or a ";" list has no meaning to it).
+        set _s1 [_mole_points_from_text $seed $molid $frame]
+        return [_tunnel_search_mole_tcl $molid $frame [lindex $_s1 0] $cfg]
     }
     set base [file join [_scratch_base] "mole_[pid]_[clock milliseconds]"]
     if {[catch {file mkdir $base}]} { return [list unavailable "cannot create scratch dir"] }
@@ -9226,10 +9316,11 @@ proc ::VMDPathFinder::_tunnel_search_mole {molid frame seed cfg} {
     close $fh
 
     set cmd "[shell_quote $exe] [shell_quote $af] [shell_quote $of] [_mole_cfg_args $cfg]"
-    if {[llength $seed] == 3} {
-        lassign $seed sx sy sz
-        append cmd " [shell_quote $sx] [shell_quote $sy] [shell_quote $sz] [dict get [_mole_cfg $cfg] orad]"
-    }
+    # The start point is text: "x y z", a VMD selection (its centre in THIS
+    # frame - MOLE's Residue/Query origin), or several of either separated by
+    # ";" (MOLE's pinned multi-origin); custom exits likewise. Resolved per
+    # frame by the same helper the multi-frame pool uses.
+    append cmd [_mole_engine_point_args $seed $cfg $molid $frame]
     append cmd " [_mole_cfg_flags $cfg]"
     append cmd " 2>[shell_quote $ef]"
     set ok [expr {![catch {exec sh -c $cmd}]}]
@@ -18573,6 +18664,50 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
                 foreach k $pkeys v [lrange $f 9 19] { dict set layer $k $v }
                 dict lappend out $id.layers $layer
             }
+            P {
+                # Per-POINT FreeRadius / BRadius (fields 6-7). _tunnel_parse_text
+                # keeps only x y z r for its fixed-shape tuple; these ride here
+                # so the MOLE-layout CSV export can fill its FreeRadius/BRadius
+                # columns per point instead of leaving them blank.
+                if {[llength $f] >= 8} {
+                    dict lappend out $id.pfree [lindex $f 6]
+                    dict lappend out $id.pbr   [lindex $f 7]
+                }
+            }
+            V {
+                # "V id type volume depth depthlength nboundary ninner" - a
+                # cavity (or a Void: no boundary residues), MOLE's cavities.xml.
+                if {[llength $f] < 8} { continue }
+                dict set out cav.$id [dict create type [lindex $f 2] \
+                    volume [lindex $f 3] depth [lindex $f 4] depthlen [lindex $f 5] \
+                    nboundary [lindex $f 6] ninner [lindex $f 7] \
+                    bprops {} iprops {} bres {} ires {} spheres {}]
+            }
+            VB - VI {
+                # Boundary / inner residue set of cavity $id with its properties:
+                # "VB id charge ionizable npos nneg hydropathy hydrophobicity
+                # polarity logp logd logs mutability nres resn:seq:chain..."
+                if {![dict exists $out cav.$id]} { continue }
+                set p [dict create]
+                foreach k $pkeys v [lrange $f 2 12] { dict set p $k $v }
+                set res {}
+                foreach tok [lrange $f 14 end] {
+                    lassign [split $tok ":"] rn sq ch
+                    lappend res [dict create resname $rn resid $sq chain $ch]
+                }
+                set which [expr {[lindex $f 0] eq "VB" ? "b" : "i"}]
+                dict set out cav.$id ${which}props $p
+                dict set out cav.$id ${which}res $res
+            }
+            VP {
+                # "VP id x y z r" - one cavity tetrahedron as a centre+clearance
+                # sphere, the same quantity a tunnel's P points carry, so a
+                # cavity drawn as a sphere union matches a tunnel drawn one.
+                if {[llength $f] < 6 || ![dict exists $out cav.$id]} { continue }
+                set _sp [dict get $out cav.$id spheres]
+                lappend _sp [lrange $f 2 5]
+                dict set out cav.$id spheres $_sp
+            }
             H {
                 # Tunnel.FindHetResidues - the HET residues the tunnel passes
                 # through. Kept apart from the lining: MOLE computes it with a
@@ -18603,6 +18738,169 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
         }
     }
     return $out
+}
+
+# ---- MOLE cavities: table, draw toggles, residues ---------------------------
+# A cavity is what MOLE's cavities.xml reports: a buried pocket (Cavity, has
+# boundary residues) or a Void (none), with volume, depth, boundary/inner
+# residue sets and their properties, plus - from this engine - the tetrahedra
+# as centre+clearance spheres, so it can be DRAWN the way a tunnel is: the
+# same sphere-union mesher, on the tunnel track. Parsed by
+# _tunnel_parse_lining into tunnel_lining($frame) under cav.<id>.
+proc ::VMDPathFinder::_tunnel_cavities {frame} {
+    # {id dict ...} for $frame, ids ascending. {} without cavity records (an
+    # engine older than the VP/V lines, or the pure-Tcl port).
+    variable tunnel_lining
+    if {$frame eq "" || ![info exists tunnel_lining($frame)]} { return {} }
+    set out {}
+    set ids {}
+    dict for {k v} $tunnel_lining($frame) {
+        if {[string match "cav.*" $k]} { lappend ids [string range $k 4 end] }
+    }
+    foreach id [lsort -integer $ids] { lappend out $id [dict get $tunnel_lining($frame) cav.$id] }
+    return $out
+}
+
+proc ::VMDPathFinder::_tunnel_cavity_shown {id} {
+    variable tunnel_cavity_shown
+    return [expr {[info exists tunnel_cavity_shown($id)] && $tunnel_cavity_shown($id)}]
+}
+
+proc ::VMDPathFinder::_render_cavities_for_frame {frame m fd} {
+    # Draw every ticked cavity of $frame onto the tunnel track mol $m. One
+    # .sph + mesh per cavity beside the frame's tunnel files, reused on the
+    # mtime rule tunnels use. Transparent so a cavity reads as a volume the
+    # opaque tunnel tubes pass through, in its own colour past the tunnel
+    # palette's first entries.
+    variable tunnel_cavity_shown
+    if {![array exists tunnel_cavity_shown]} { return }
+    set cavs [_tunnel_cavities $frame]
+    if {![llength $cavs]} { return }
+    foreach {id cv} $cavs {
+        if {![_tunnel_cavity_shown $id]} continue
+        set sph [file join $fd [format "cavity_%02d.sph" $id]]
+        set spheres [dict get $cv spheres]
+        if {![llength $spheres]} continue
+        if {![file exists $sph]} {
+            if {[catch {write_stock_sph_file $spheres $sph}]} continue
+        }
+        set plot [surface_plot_name $fd [format "cavity_%02d" $id] draw 1]
+        if {![_tunnel_mesh_current $plot $sph]} {
+            if {![surface_mesh $sph $plot draw 6 1 1]} continue
+        }
+        set col [_tunnel_color [expr {$id + 11}]]
+        catch {render_vmd_plot_to_mol $plot $m 1 $col "" Transparent 0 0}
+    }
+}
+
+proc ::VMDPathFinder::_tunnel_cavity_toggle {} {
+    # A tick changed: redraw the shown frame's track (tunnels + cavities).
+    set fr [_tunnel_display_frame]
+    if {$fr ne ""} { catch {render_tunnels_for_frame $fr} }
+}
+
+proc ::VMDPathFinder::show_tunnel_cavities {} {
+    variable w
+    variable state
+    variable tunnel_cavity_shown
+    if {![_have_tk]} { return }
+    set frame [_tunnel_display_frame]
+    set cavs [_tunnel_cavities $frame]
+    set t $w.tuncav
+    if {[winfo exists $t]} { destroy $t }
+    toplevel $t
+    wm withdraw $t
+    wm title $t "Cavities - frame $frame"
+    if {![llength $cavs]} {
+        pack [label $t.none -justify left -wraplength 420 -text \
+            "No cavity records for this frame.\n\nCavities come from the compiled MOLE engine (mole_tunnel_engine); a run made with an older build, or the pure-Tcl fallback, has none. Re-run the tunnel search."] -padx 12 -pady 12
+        wm deiconify $t
+        return
+    }
+    # Table: draw, id, type, volume, depth, boundary/inner counts, residues.
+    frame $t.h
+    foreach {c txt tip} {
+        0 "Draw" "Draw this cavity on the tunnel track as a transparent sphere-union surface."
+        1 "Id" "MOLE cavity rank in this frame (1 = largest)."
+        2 "Type" "Cavity: has boundary residues (open to solvent through them). Void: fully enclosed."
+        3 "Volume (Å³)" "Volume of the cavity's tetrahedra."
+        4 "Depth" "Depth in tetrahedron layers from the surface."
+        5 "Depth (Å)" "Depth length in Å."
+        6 "Bnd" "Boundary residues (line the cavity's outer layer)."
+        7 "Inner" "Inner residues."
+    } {
+        label $t.h.c$c -text $txt -font {Helvetica 9 bold} -anchor w
+        grid $t.h.c$c -row 0 -column $c -sticky w -padx 5
+        add_tooltip $t.h.c$c $tip
+    }
+    grid $t.h -row 0 -column 0 -sticky ew -padx 6 -pady {8 2}
+    frame $t.b
+    set r 0
+    foreach {id cv} $cavs {
+        if {![info exists tunnel_cavity_shown($id)]} { set tunnel_cavity_shown($id) 0 }
+        checkbutton $t.b.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($id) \
+            -command ::VMDPathFinder::_tunnel_cavity_toggle
+        grid $t.b.d$r -row $r -column 0 -sticky w -padx 5
+        set vals [list $id [dict get $cv type] [format %.1f [dict get $cv volume]] \
+            [dict get $cv depth] [format %.1f [dict get $cv depthlen]] \
+            [dict get $cv nboundary] [dict get $cv ninner]]
+        set c 1
+        foreach v $vals {
+            label $t.b.v${r}_$c -text $v -anchor w -font {Helvetica 9}
+            grid $t.b.v${r}_$c -row $r -column $c -sticky w -padx 5
+            incr c
+        }
+        button $t.b.res$r -text "Residues" -font {Helvetica 8} \
+            -command [list ::VMDPathFinder::_tunnel_cavity_residues $frame $id]
+        grid $t.b.res$r -row $r -column 8 -sticky w -padx 5
+        incr r
+    }
+    grid $t.b -row 1 -column 0 -sticky ew -padx 6
+    label $t.note -justify left -wraplength 460 -foreground gray40 -font {Helvetica 8} -text \
+        "Ids are per-frame ranks: MOLE recomputes cavities independently in each frame, so a tick means \"cavity N of the frame shown\". Tunnels start from the surface cavity (C0), which is not listed here."
+    grid $t.note -row 2 -column 0 -sticky w -padx 8 -pady {6 8}
+    _center_toplevel $t 560 [expr {120 + 26*$r}]
+    wm deiconify $t
+}
+
+proc ::VMDPathFinder::_tunnel_cavity_residues {frame id} {
+    # Boundary and inner residue sets with their MOLE properties, and a
+    # selection string for VMD, in a text window.
+    variable w
+    variable tunnel_lining
+    if {![_have_tk] || ![info exists tunnel_lining($frame)] \
+            || ![dict exists $tunnel_lining($frame) cav.$id]} { return }
+    set cv [dict get $tunnel_lining($frame) cav.$id]
+    set t $w.tuncavres
+    if {[winfo exists $t]} { destroy $t }
+    toplevel $t
+    wm withdraw $t
+    wm title $t "Cavity $id residues - frame $frame"
+    text $t.txt -width 84 -height 24 -wrap word -font {Courier 9}
+    $t.txt tag configure hdr -font {Courier 9 bold}
+    foreach {which lbl} {b "Boundary residues" i "Inner residues"} {
+        set res [dict get $cv ${which}res]
+        set p [dict get $cv ${which}props]
+        $t.txt insert end "$lbl ([llength $res])\n" hdr
+        if {[dict size $p]} {
+            $t.txt insert end [format "  charge %s (%s positive, %s negative)  ionizable %s  hydropathy %s  hydrophobicity %s\n  polarity %s  logP %s  logD %s  logS %s  mutability %s\n" \
+                [dict get $p charge] [dict get $p npos] [dict get $p nneg] [dict get $p ionizable] \
+                [dict get $p hydropathy] [dict get $p hydrophobicity] [dict get $p polarity] \
+                [dict get $p logp] [dict get $p logd] [dict get $p logs] [dict get $p mutability]]
+        }
+        set names {}; set sel {}
+        foreach e $res {
+            lappend names "[dict get $e resname][dict get $e resid][dict get $e chain]"
+            lappend sel "(resid [dict get $e resid] and chain [dict get $e chain])"
+        }
+        $t.txt insert end "  [join $names { }]\n"
+        if {[llength $sel]} { $t.txt insert end "  VMD selection: [join $sel { or }]\n" }
+        $t.txt insert end "\n"
+    }
+    $t.txt configure -state disabled
+    pack $t.txt -fill both -expand 1 -padx 6 -pady 6
+    _center_toplevel $t 700 420
+    wm deiconify $t
 }
 
 proc ::VMDPathFinder::_tunnel_parse_out {of} {
@@ -18701,7 +18999,14 @@ proc ::VMDPathFinder::_refresh_tunnel_lining_body {} {
     $txt configure -state normal
     $txt delete 1.0 end
     set ids {}
-    foreach k [dict keys $lin] { lappend ids [lindex [split $k .] 0] }
+    # TUNNEL ids only: the same dict also carries the frame's cavities under
+    # "cav.<id>" (their own window shows those), and those keys are not tunnel
+    # ranks - feeding one to lsort -integer threw and took the whole window
+    # with it.
+    foreach k [dict keys $lin] {
+        set _id [lindex [split $k .] 0]
+        if {[string is integer -strict $_id]} { lappend ids $_id }
+    }
     set ids [lsort -unique -integer $ids]
     if {!$show_all && $sel ne ""} {
         set ids [expr {[lsearch -exact $ids $sel] >= 0 ? [list $sel] : {}}]
@@ -18718,9 +19023,12 @@ proc ::VMDPathFinder::_refresh_tunnel_lining_body {} {
         $txt insert end [format "Tunnel %s   %d layers\n" $id \
                              [llength [dict get $lin $id.layers]]] hdr
         # The weighted properties are what MOLE's tunnels.csv prints.
-        $txt insert end [format "  charge %s  ionizable %s  hydropathy %s\
+        $txt insert end [format "  charge %s (%s positive, %s negative)  ionizable %s  hydropathy %s\
  hydrophobicity %s  polarity %s\n  logP %s  logD %s  logS %s  mutability %s\n" \
-            [dict get $wp charge] [dict get $wp ionizable] \
+            [dict get $wp charge] \
+            [expr {[dict exists $wp npos] ? [dict get $wp npos] : "?"}] \
+            [expr {[dict exists $wp nneg] ? [dict get $wp nneg] : "?"}] \
+            [dict get $wp ionizable] \
             [dict get $wp hydropathy] [dict get $wp hydrophobicity] \
             [dict get $wp polarity] [dict get $wp logp] [dict get $wp logd] \
             [dict get $wp logs] [dict get $wp mutability]]
@@ -18825,7 +19133,17 @@ proc ::VMDPathFinder::export_mole_native_format {} {
             if {$px ne ""} {
                 set d [expr {$d + sqrt(($x-$px)*($x-$px)+($y-$py)*($y-$py)+($z-$pz)*($z-$pz))}]
             }
-            puts $pfh [format {%d,%.3f,%.4f,,,%.3f,%.3f,%.3f} $id $d $r $x $y $z]
+            # Per-point FreeRadius/BRadius come from the engine's P records
+            # (kept by _tunnel_parse_lining as $id.pfree / $id.pbr); blank only
+            # when the run predates them or used an atom table without names.
+            set _fr ""; set _br ""
+            if {$have_lin && [dict exists $lin $id.pfree]} {
+                set _fr [lindex [dict get $lin $id.pfree] $i]
+                set _br [lindex [dict get $lin $id.pbr] $i]
+                if {![string is double -strict $_fr]} { set _fr "" } else { set _fr [format %.4f $_fr] }
+                if {![string is double -strict $_br]} { set _br "" } else { set _br [format %.4f $_br] }
+            }
+            puts $pfh [format {%d,%.3f,%.4f,%s,%s,%.3f,%.3f,%.3f} $id $d $r $_fr $_br $x $y $z]
             set px $x; set py $y; set pz $z
         }
         close $pfh
@@ -18919,6 +19237,8 @@ proc ::VMDPathFinder::_tunnel_cfg {} {
                                     && $state(mole_strict_interior) ? 1 : 0}] \
         mole_exit         [_xyz_or mole_exit] \
         mole_exits_only   [expr {[info exists state(mole_exits_only)] && $state(mole_exits_only) ? 1 : 0}] \
+        mole_exit_text    [expr {[info exists state(mole_exit)] ? [string trim $state(mole_exit)] : ""}] \
+        mole_vdw          [_mole_vdw_spec] \
         mole_path_a       [_xyz_or mole_path_a] \
         mole_path_b       [_xyz_or mole_path_b] \
         mole_weight       [_mole_weight_index]]
@@ -19142,8 +19462,26 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
     # point was given yet". Auto-detect forces it regardless of whatever the
     # (disabled but not cleared) Start point field still shows.
     set seed [expr {$auto_origin ? "" : [string trim $state(tunnel_start)]}]
-    if {!$auto_origin && [llength $seed] != 3} {
-        set state(status) "Tunnel: set a start point first (Start point / From Sel), or check Auto-detect origins."
+    # The seed stays TEXT from here on - "x y z", a VMD selection, or a ";"
+    # list of either - and is resolved per frame inside _tunnel_search_mole
+    # (a residue-defined origin moves with the trajectory). Only check here
+    # that it resolves in the current frame at all, so a typo is caught before
+    # the run rather than as N silent empty frames.
+    # A seed whose first token is a number is a LITERAL attempt ("x y z",
+    # or a typo like "12.3 4.5 nan_typo"): it needs no molecule and is
+    # checked element by element below, exactly as before. Anything else is
+    # resolved through the molecule (selections, ";" lists).
+    set _seed_literal [expr {!$auto_origin && [llength $seed] == 3 \
+        && [string is double -strict [lindex $seed 0]]}]
+    set _seed_ok 1
+    set _sm ""; set _sf 0
+    if {!$auto_origin && !$_seed_literal} {
+        catch {set _sm [resolve_molid]}
+        catch {set _sf [molinfo $_sm get frame]}
+        if {$_sm eq "" || ![llength [_mole_points_from_text $seed $_sm $_sf]]} { set _seed_ok 0 }
+    }
+    if {!$_seed_ok} {
+        set state(status) "Tunnel: set a start point first - \"x y z\", a VMD selection, or several separated by \";\" (Start point / From Sel) - or check Auto-detect origins."
         set busy 0
         _end_calc
         return
@@ -19156,10 +19494,23 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
     # origin on z=0; and `{0 0 {1; touch /tmp/x}}` is also a valid 3-element
     # list, and lands as a command separator. Reject non-numeric here, and
     # shell_quote each component at both interpolation sites below.
+    # The seed is now free text (selections, ";" lists) resolved per frame by
+    # _mole_points_from_text; what reaches run.sh / exec are the RESOLVED
+    # numbers, each shell_quote'd. So the finiteness check applies to those,
+    # on the current frame - the same injection and nan cases are still
+    # refused, a selection is not.
     if {!$auto_origin} {
-        foreach _c $seed {
+        if {$_seed_literal} {
+            set _flat $seed
+        } else {
+            set _rs {}
+            catch {set _rs [_mole_points_from_text $seed $_sm $_sf]}
+            set _flat {}
+            foreach _p $_rs { lappend _flat {*}$_p }
+        }
+        foreach _c $_flat {
             if {![_is_finite $_c]} {
-                set state(status) "Tunnel: start point must be three finite numbers (got '$state(tunnel_start)')."
+                set state(status) "Tunnel: start point must be three finite numbers, a VMD selection, or a \";\" list of them (got '$state(tunnel_start)')."
                 set busy 0
                 _end_calc
                 return
@@ -19335,10 +19686,10 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
             # MOLE's own parameters under MOLE's own names, and the origin only
             # when the panel supplied one - without it the engine uses its
             # computed origins, which is MOLE's automatic mode.
-            set _o ""
-            if {[llength $seed] == 3} {
-                set _o " [shell_quote $sx] [shell_quote $sy] [shell_quote $sz] [dict get [_mole_cfg $cfg] orad]"
-            }
+            # Start point(s), custom exits and the vdW override, resolved for
+            # THIS frame (a residue-defined origin moves with the trajectory) -
+            # the same helper the single-frame path uses.
+            set _o [_mole_engine_point_args $seed $cfg $molid $fr]
             # Remove any previous run's out.dat FIRST. The engine only opens
             # (and truncates) its output after it has finished computing, so a
             # crashed or rejected run left the old file completely intact and
@@ -19834,8 +20185,11 @@ proc ::VMDPathFinder::render_tunnels_for_frame {frame {draft 0}} {
         # per-tunnel override anywhere) unresolved and fall back to auto rank
         # color instead.
         set _gcolor [expr {($cmode ne "auto" && $cmode ne "property") ? $cmode : ""}]
+        # esp has no per-residue value to bake, only per-point ones - it always
+        # takes the sphere-interpolated path below, whatever the 3D switch says.
         set use3d [expr {[info exists state(tunnel_hydro3d_accurate)] \
-            && $state(tunnel_hydro3d_accurate) && [sos_triangle_has_feature hydro3d]}]
+            && $state(tunnel_hydro3d_accurate) && [sos_triangle_has_feature hydro3d] \
+            && $prop ne "esp"}]
         # Centerline representation draws the path and NOTHING else. It is a
         # different way of drawing the tunnel, not an overlay, so the surface
         # is skipped rather than drawn underneath - that is what makes it a
@@ -19976,6 +20330,12 @@ proc ::VMDPathFinder::render_tunnels_for_frame {frame {draft 0}} {
     } else {
         remove_hydro_scalebar
     }
+    # Cavities ride on the same track (the `graphics $m delete all` above
+    # cleared them with the tunnels), so a frame change redraws the ticked
+    # ones for the NEW frame here. Cavity ids are per-frame ranks - MOLE
+    # recomputes them independently each frame - so a tick means "cavity N
+    # of whichever frame is shown".
+    catch {_render_cavities_for_frame $frame $m $fd}
 }
 
 # Per-triangle color for a tunnel, from its MOLE lining properties.
@@ -20025,6 +20385,42 @@ proc ::VMDPathFinder::_tunnel_property_values {frame id prop} {
     return $out
 }
 
+proc ::VMDPathFinder::_tunnel_esp_spheres {frame id pts} {
+    # {x y z r esp} per route point: the in-vacuo Coulomb potential of the
+    # structure's formal charges (HOLE's helefi model, the same charge set the
+    # pore-mode ESP readout and overlay use) evaluated AT each point through
+    # sos_triangle --esp-points. Memoised per (frame, tunnel): the kernel call
+    # is cheap but this is re-read on every redraw of a shown tunnel.
+    variable state
+    variable _tunnel_esp_cache
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return {} }
+    set key "$molid|$frame|$id|[llength $pts]"
+    if {[info exists _tunnel_esp_cache($key)]} { return $_tunnel_esp_cache($key) }
+    set q [_esp_formal_charges $molid $frame]
+    if {$q eq ""} { return {} }
+    lassign $q qx qy qz qc
+    set centers {}
+    foreach {x y z r} $pts { lappend centers [list $x $y $z $r] }
+    set base [file join [_scratch_base] "tesp_[pid]_[clock clicks]"]
+    set sph "$base.sph"; set ov "$base.esp"
+    if {[catch {write_stock_sph_file $centers $sph}]} { return {} }
+    set out {}
+    if {[_esp_points_c $sph $qx $qy $qz $qc $ov] && ![catch {open $ov r} fh]} {
+        set vals [split [string trim [read $fh]] "\n"]; close $fh
+        if {[llength $vals] == [llength $centers]} {
+            foreach c $centers v $vals {
+                set v [string trim $v]
+                if {![string is double -strict $v]} { set v 0.0 }
+                lappend out [concat $c [list $v]]
+            }
+        }
+    }
+    catch {file delete $sph}; catch {file delete $ov}
+    if {[llength $out]} { set _tunnel_esp_cache($key) $out }
+    return $out
+}
+
 proc ::VMDPathFinder::_tunnel_property_spheres {frame id prop} {
     variable tunnel_results
     variable tunnel_lining
@@ -20035,6 +20431,7 @@ proc ::VMDPathFinder::_tunnel_property_spheres {frame id prop} {
     set layers [dict get $lin $id.layers]
     set pts [lindex [lindex $tunnel_results($frame) [expr {$id-1}]] 4]
     if {[llength $pts] < 8} { return {} }
+    if {$prop eq "esp"} { return [_tunnel_esp_spheres $frame $id $pts] }
     # Anchors: one (midpoint, value) pair per layer, in the layers' own order
     # (already arc-length ordered, same as the layer list everywhere else in
     # this file is walked).
@@ -20207,6 +20604,24 @@ proc ::VMDPathFinder::_tunnel_property_range {frame prop} {
     # gradient collapsed to two colours. _tunnel_prop_label already calls this
     # "MOLE polarity"; only the bounds were still Grantham's.
     if {$prop eq "polarity"} { return [list 0.0 52.0] }
+    if {$prop eq "esp"} {
+        # Same adaptive per-frame spread pore mode's ESP colouring uses
+        # (_esp_percentile_range): the fixed property_meta scale clips nearly
+        # every real value to one end. Pooled over every tunnel of the frame,
+        # so two shown tunnels read on one scale.
+        variable tunnel_results
+        set vals {}
+        if {[info exists tunnel_results($frame)]} {
+            set _n [llength $tunnel_results($frame)]
+            for {set _i 1} {$_i <= $_n} {incr _i} {
+                foreach e [_tunnel_property_spheres $frame $_i esp] { lappend vals [lindex $e 4] }
+            }
+        }
+        set _er [_esp_percentile_range $vals]
+        if {$_er ne "" && [llength $_er] == 2} { return $_er }
+        set m [property_meta esp]
+        return [list [dict get $m lo] [dict get $m hi]]
+    }
     if {$prop ni {charge ionizable}} {
         set m [property_meta $prop]
         if {[dict exists $m lo] && [dict exists $m hi]} {
@@ -22526,6 +22941,7 @@ proc ::VMDPathFinder::compute_vector {d} {
         set state(cvect_def_p2) $vec_p2
         set state(status) "CVECT set to $state(cvect)."
         if {[winfo exists $d.result]} { $d.result configure -text "CVECT = $state(cvect)" }
+        catch {_sync_cvect_handles}
         _cvect_sync_stab_controls $d
     } msg]} {
         tk_messageBox -icon error -type ok -title "CVECT" -message $msg -parent $d
@@ -22813,6 +23229,90 @@ proc ::VMDPathFinder::_sync_point_marker {key show_key args} {
             }
         }
     }
+}
+
+proc ::VMDPathFinder::_sync_cvect_handles {args} {
+    # Draw CVECT's two points as handles - a sphere each, joined by a line,
+    # labelled 1 and 2 - while the stick's CVECT page is open.
+    #
+    # CVECT is a DIRECTION, not a place: compute_vector keeps only the
+    # normalised (P2-P1) and discards the positions, and the search axis is
+    # drawn at CPOINT - so nothing on screen marks the pair the stick moves.
+    # These are that pair, drawn while the stick can move them and removed as
+    # soon as it cannot (page switched away, dialog closed).
+    #
+    # Its own marker mol, deliberately not folded into _sync_point_marker: that
+    # proc is one point plus an optional axis arrow driven by a checkbox the
+    # user owns, whereas these two are transient and owned by the dialog. args
+    # swallows the (name1 name2 op) Tcl appends when called as a trace.
+    variable w
+    variable state
+    variable vec_p1
+    variable vec_p2
+    variable point_marker_mols
+    if {![_have_tk]} { return }
+    if {![info exists point_marker_mols]} { set point_marker_mols [dict create] }
+    set key cvect_pts
+    set molid [expr {[dict exists $point_marker_mols $key] ? [dict get $point_marker_mols $key] : ""}]
+    set d $w.axisstick
+    set want [expr {[winfo exists $d] && ![catch {wm state $d} _st] && $_st eq "normal" \
+        && [info exists state(axis_stick_mode)] && $state(axis_stick_mode) eq "cvect"}]
+    set p1 {}; set p2 {}; set ref ""
+    if {$want} {
+        catch {
+            set _m [resolve_molid]
+            set _f [molinfo $_m get frame]
+            # Same resolution the run uses, so a selection-defined end tracks
+            # the structure frame by frame instead of sitting where it started.
+            catch {set p1 [_resolve_point_input $vec_p1 $_m $_f]}
+            catch {set p2 [_resolve_point_input $vec_p2 $_m $_f]}
+            set ref $_m
+        }
+    }
+    if {!$want || [llength $p1] != 3 || [llength $p2] != 3} {
+        if {$molid ne "" && ![catch {molinfo $molid get name}]} { catch {mol delete $molid} }
+        catch {dict unset point_marker_mols $key}
+        return
+    }
+    if {$molid eq "" || [catch {molinfo $molid get name}]} {
+        # Same two hazards _sync_point_marker documents at length: `mol new`
+        # steals top (and state(molid) defaults to "top"), and a fresh molecule
+        # carries IDENTITY view matrices, so anything drawn into it renders in
+        # a different frame than the structure and lands off-screen.
+        set _prev_top [molinfo top]
+        set _pv {}
+        if {$ref ne ""} {
+            catch {set _pv [molinfo $ref get \
+                {center_matrix rotate_matrix scale_matrix global_matrix}]}
+        }
+        set molid [mol new]
+        catch {mol rename $molid "VMDPathFinder: CVECT points"}
+        if {$_pv ne ""} {
+            catch {molinfo $molid set {center_matrix rotate_matrix scale_matrix global_matrix} $_pv}
+            catch {molinfo $ref   set {center_matrix rotate_matrix scale_matrix global_matrix} $_pv}
+        }
+        catch {mol top $_prev_top}
+        dict set point_marker_mols $key $molid
+    } elseif {$ref ne ""} {
+        catch {sync_surface_view $molid $ref}
+    }
+    catch {graphics $molid delete all}
+    catch {graphics $molid materials on}
+    catch {graphics $molid material Glossy}
+    # Not magenta (CPOINT) and not lime (tunnel start): all three cues can be
+    # on screen together, and which handle is which is the whole point of
+    # drawing them. Point 2 is the end the vector points AT, so it takes the
+    # warmer colour and the line runs 1 -> 2.
+    catch {graphics $molid color cyan}
+    catch {graphics $molid sphere $p1 radius 0.7 resolution 18}
+    catch {graphics $molid color orange}
+    catch {graphics $molid sphere $p2 radius 0.7 resolution 18}
+    catch {graphics $molid color white}
+    catch {graphics $molid line $p1 $p2 width 2 style dashed}
+    catch {graphics $molid color cyan}
+    catch {graphics $molid text $p1 " 1" size 0.8 thickness 2}
+    catch {graphics $molid color orange}
+    catch {graphics $molid text $p2 " 2" size 0.8 thickness 2}
 }
 
 proc ::VMDPathFinder::_normalize_dir {v} {
@@ -24114,13 +24614,69 @@ proc ::VMDPathFinder::_axis_stick_current {mode} {
     return $pt
 }
 
+proc ::VMDPathFinder::_cvect_ensure_two_point {} {
+    # Give CVECT's stick something to move. The stick moves one END of the
+    # two-point definition, but a CVECT typed as a literal vector (or guessed,
+    # or Use Z) has no points at all - both entries blank - and the stick then
+    # did nothing, silently. Seed the pair from what IS known: Point 1 = CPOINT
+    # (or the selection's centre when CPOINT is blank), Point 2 = Point 1 +
+    # 10 A along the current CVECT. That reproduces the current vector exactly,
+    # so nothing changes until the user actually moves an end. A blank single
+    # end is rebuilt from the other one the same way. Returns 1 when both
+    # points are usable afterwards.
+    variable state
+    variable vec_p1
+    variable vec_p2
+    set molid ""; catch {set molid [resolve_molid]}
+    if {$molid eq ""} { return 0 }
+    set frame 0; catch {set frame [molinfo $molid get frame]}
+    set p1 {}; set p2 {}
+    catch {set p1 [_resolve_point_input $vec_p1 $molid $frame]}
+    catch {set p2 [_resolve_point_input $vec_p2 $molid $frame]}
+    if {[llength $p1] == 3 && [llength $p2] == 3} { return 1 }
+    set dir {}
+    set _cv [regexp -all -inline -- {[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?} $state(cvect)]
+    if {[llength $_cv] == 3} { catch {set dir [_normalize_dir $_cv]} }
+    if {[llength $dir] != 3} { set dir {0.0 0.0 1.0} }
+    set L 10.0
+    if {[llength $p1] != 3 && [llength $p2] != 3} {
+        catch {set p1 [_resolve_point_input $state(cpoint) $molid $frame]}
+        if {[llength $p1] != 3} {
+            set _sel [string trim $state(selection)]
+            if {$_sel eq "" || $_sel eq "all"} { set _sel "protein" }
+            catch {set p1 [vector_point_from_sel $molid $frame $_sel]}
+        }
+        if {[llength $p1] != 3} { return 0 }
+    }
+    if {[llength $p1] == 3 && [llength $p2] != 3} {
+        set p2 [list [expr {[lindex $p1 0]+$L*[lindex $dir 0]}] \
+                     [expr {[lindex $p1 1]+$L*[lindex $dir 1]}] \
+                     [expr {[lindex $p1 2]+$L*[lindex $dir 2]}]]
+    } elseif {[llength $p2] == 3 && [llength $p1] != 3} {
+        set p1 [list [expr {[lindex $p2 0]-$L*[lindex $dir 0]}] \
+                     [expr {[lindex $p2 1]-$L*[lindex $dir 1]}] \
+                     [expr {[lindex $p2 2]-$L*[lindex $dir 2]}]]
+    }
+    set vec_p1 [format_triplet $p1]
+    set vec_p2 [format_triplet $p2]
+    return 1
+}
+
 proc ::VMDPathFinder::_axis_stick_apply {mode dx dy dz} {
     # Add a screen-relative displacement (dx dy dz, in world units) to the
     # target point. For CVECT's endpoints this also recomputes CVECT from the
     # pair, live, the same as pressing Compute; the CPOINT marker's arrow is
     # what shows the result, since CVECT itself is no longer moved directly.
+    variable state
+    if {$mode eq "cvect" && ![_cvect_ensure_two_point]} {
+        set state(status) "CVECT stick: set CPOINT (or a selection) first - there is no point to move yet."
+        return
+    }
     set cur [_axis_stick_current $mode]
-    if {$cur eq {}} { return }
+    if {$cur eq {}} {
+        set state(status) "Stick: the [_axis_stick_key $mode] entry is not a point (x y z or a VMD selection)."
+        return
+    }
     lassign $cur cx cy cz
     set key [_axis_stick_key $mode]
     _axis_stick_setvar $key [format_triplet [list [expr {$cx+$dx}] [expr {$cy+$dy}] [expr {$cz+$dz}]]]
@@ -24128,6 +24684,7 @@ proc ::VMDPathFinder::_axis_stick_apply {mode dx dy dz} {
         variable w
         catch {compute_vector $w.axisstick.vec}
         catch {_sync_point_marker cpoint show_cpoint_marker}
+        catch {_sync_cvect_handles}
     } else {
         catch {_sync_point_marker $key [_axis_stick_cue_key $mode]}
     }
@@ -24207,8 +24764,18 @@ proc ::VMDPathFinder::_axis_stick_sync_mode {d} {
     # point neither - so the choice sits with the point it governs.
     catch {
         if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
-        if {$m eq "cvect"}  { grid $d.vec; grid $d.pt2; _cvect_sync_stab_controls $d.vec; grid remove $d.pc } \
-        else { grid remove $d.vec; grid remove $d.pt2; grid $d.pc }
+        if {$m eq "cvect"}  {
+            grid $d.vec; grid $d.pt2; _cvect_sync_stab_controls $d.vec; grid remove $d.pc
+            # Fill the two points in the moment the page opens, so the entries
+            # show the ends the stick is about to move (and the stick works on
+            # a CVECT that was typed/guessed rather than built from points).
+            if {[_cvect_ensure_two_point]} { catch {_sync_point_marker cpoint show_cpoint_marker} }
+        } else { grid remove $d.vec; grid remove $d.pt2; grid $d.pc }
+    }
+    # Draws the two handles on the CVECT page, clears them on any other - so
+    # leaving the page takes them off screen without a separate teardown.
+    catch {_sync_cvect_handles}
+    catch {
         if {$m eq "tunnel_start"} { grid $d.pf.none } else { grid remove $d.pf.none }
     }
     _axis_stick_sync_val_label $d
@@ -24224,18 +24791,14 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     variable state
     if {$mode ne ""} { set state(axis_stick_mode) $mode }
     set d "$w.axisstick"
-    variable _axis_stick_prev_cue
-    if {![winfo exists $d] || [wm state $d] eq "withdrawn"} {
-        # The cue is shown while the stick is open and put back the way it was
-        # when the stick closes.
-        variable _axis_stick_cue_var
-        set _axis_stick_cue_var [_axis_stick_cue_key $state(axis_stick_mode)]
-        set _axis_stick_prev_cue [expr {[info exists state($_axis_stick_cue_var)] ? $state($_axis_stick_cue_var) : 0}]
-    }
+    # The cue is shown while the stick is open and put back the way it was
+    # when the stick closes - see _axis_stick_cue_on, which records the
+    # previous value of EVERY cue it turns on.
     if {[winfo exists $d]} {
-        set state([_axis_stick_cue_key $state(axis_stick_mode)]) 1
+        _axis_stick_cue_on $state(axis_stick_mode)
         _axis_stick_sync_mode $d
         wm deiconify $d; raise $d
+        catch {_sync_cvect_handles}
         return
     }
     toplevel $d
@@ -24332,19 +24895,52 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     trace add variable ::VMDPathFinder::vec_p1 write [list ::VMDPathFinder::_axis_stick_sync_val_label_trace $d]
     trace add variable ::VMDPathFinder::vec_p2 write [list ::VMDPathFinder::_axis_stick_sync_val_label_trace $d]
     bind $d <Destroy> [list ::VMDPathFinder::_axis_stick_dialog_closed $d]
-    set state([_axis_stick_cue_key $state(axis_stick_mode)]) 1
+    _axis_stick_cue_on $state(axis_stick_mode)
     _axis_stick_sync_mode $d
     _center_toplevel $d
+    # After the window is actually mapped: _sync_cvect_handles draws only for a
+    # dialog in state "normal", and everything above runs while it is still
+    # withdrawn.
+    catch {_sync_cvect_handles}
+}
+
+proc ::VMDPathFinder::_axis_stick_cue_on {mode} {
+    # Show the cue for what the stick is about to move, remembering what that
+    # checkbox was set to first so Close can put it back.
+    #
+    # EVERY cue the stick turns on is remembered, not just the one it opened
+    # with: the dialog is shared and re-targeted in place (the CPOINT, CVECT
+    # and tunnel-start buttons all call show_axis_stick_dialog on the same
+    # toplevel), so a single remembered variable restored only whichever
+    # target came first and left the other cue - and its marker molecule -
+    # in the scene after Close.
+    variable state
+    variable _axis_stick_prev_cue
+    if {![info exists _axis_stick_prev_cue]} { set _axis_stick_prev_cue [dict create] }
+    set key [_axis_stick_cue_key $mode]
+    if {![dict exists $_axis_stick_prev_cue $key]} {
+        dict set _axis_stick_prev_cue $key \
+            [expr {[info exists state($key)] ? $state($key) : 0}]
+    }
+    set state($key) 1
 }
 
 proc ::VMDPathFinder::_axis_stick_close {d} {
     variable state
     variable _axis_stick_prev_cue
     catch {wm withdraw $d}
-    variable _axis_stick_cue_var
-    if {[info exists _axis_stick_prev_cue] && [info exists _axis_stick_cue_var]} {
-        set state($_axis_stick_cue_var) $_axis_stick_prev_cue
+    if {![info exists _axis_stick_prev_cue]} { return }
+    dict for {key prev} $_axis_stick_prev_cue {
+        set state($key) $prev
+        # Explicitly, not only through the write trace: the trace for a given
+        # cue is installed by the panel/gear that owns that checkbox, and the
+        # stick can turn a cue on before its owner has ever been built.
+        # _sync_point_marker is idempotent and removes the marker mol itself.
+        catch {_sync_point_marker [expr {$key eq "show_tunnel_start_marker" \
+            ? "tunnel_start" : "cpoint"}] $key}
     }
+    set _axis_stick_prev_cue [dict create]
+    catch {_sync_cvect_handles}
 }
 
 proc ::VMDPathFinder::_axis_stick_nudge_cur {d dir} {
@@ -24360,6 +24956,10 @@ proc ::VMDPathFinder::_axis_stick_sync_val_label {d} {
     variable state
     if {![winfo exists $d.sv.val_v]} { return }
     catch {$d.sv.val_v configure -text [_axis_stick_getvar [_axis_stick_key $state(axis_stick_mode)]]}
+    # vec_p1/vec_p2 are traced onto this proc already, so typing an endpoint
+    # moves its handle live without a second set of traces to install and tear
+    # down.
+    catch {_sync_cvect_handles}
 }
 proc ::VMDPathFinder::_axis_stick_sync_val_label_trace {d args} { _axis_stick_sync_val_label $d }
 

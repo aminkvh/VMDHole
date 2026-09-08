@@ -108,7 +108,7 @@ static void write_lining(FILE *out, int id, const mole_tunnel_profile *pr, int n
    them. Volume/Depth/DepthLength were already computed; the residues and the
    physico-chemical block are what this adds. */
 static void write_cavity(FILE *out, int id, const mole_complex *M, int comp,
-                         const mole_cavity *cv, const int *pres)
+                         const mole_cavity *cv, const int *pres, int np)
 {
     int *bnd = xa_malloc((size_t)(MR.n ? MR.n : 1) * sizeof(int));
     int *inn = malloc((size_t)(MR.n ? MR.n : 1) * sizeof(int));
@@ -134,6 +134,23 @@ static void write_cavity(FILE *out, int id, const mole_complex *M, int comp,
         fputc('\n', out);
     }
     free(bnd); free(inn);
+    /* VP: the cavity's geometry, one sphere per member tetrahedron (interior
+       and boundary alike), in ascending tetrahedron index - the same walk
+       mole_cavity_residues makes. Centre and radius are EXACTLY a tunnel P
+       record's: the circumcentre the profile spline passes through, and the
+       clamped clearance the profile's r samples measure there. */
+    {
+        int t, ntet = 0;
+        for (t = 0; t < M->nt; t++) {
+            if (!M->alive[t] || M->comp[t] != comp) continue;
+            fprintf(out, "VP %d %.4f %.4f %.4f %.4f\n", id,
+                    M->vcenter[3*t], M->vcenter[3*t+1], M->vcenter[3*t+2],
+                    mole_radius_at(&M->vcenter[3*t], M->axyz, M->arad, np));
+            ntet++;
+        }
+        if (getenv("MOLE_CAVITY_DEBUG"))
+            fprintf(stderr, "CAVITY %d tetrahedra %d\n", id, ntet);
+    }
 }
 
 /* GetTunnels' SurfaceCavity source, for ONE origin.
@@ -245,6 +262,93 @@ static int arg_int(const char *s, const char *what)
     }
     return (int)v;
 }
+/* "x,y,z": three finite numbers, comma-separated, wholly consumed. */
+static void arg_xyz(const char *s, const char *what, double *out)
+{
+    const char *p = s;
+    int k;
+    for (k = 0; k < 3; k++) {
+        char *end = NULL;
+        out[k] = strtod(p, &end);
+        if (end == p || !isfinite(out[k]) || (k < 2 ? *end != ',' : *end != 0)) {
+            fprintf(stderr, "--tunnel-mole: %s needs x,y,z, got \"%s\"\n", what, s);
+            exit(2);
+        }
+        p = end + (k < 2);
+    }
+}
+
+/* Custom exits: MOLE takes a list, so the flag repeats. Sized for a GUI's
+   worth of them; the origins array is the separate, smaller MOLE_MAX_ORIGINS. */
+#define MOLE_MAX_EXITS 64
+
+/* --vdw=El:r[,El:r...]. The symbol must be one of the periodic table's (or D),
+   matched without regard to case, and the radius a positive finite number.
+   Anything else is an error, not a silently ignored entry: a typo here would
+   otherwise run the search on the built-in radius and report it as custom. */
+static int is_element_symbol(const char *u)
+{
+    static const char *const SYM[] = {
+        "H","HE","LI","BE","B","C","N","O","F","NE","NA","MG","AL","SI","P","S",
+        "CL","AR","K","CA","SC","TI","V","CR","MN","FE","CO","NI","CU","ZN","GA",
+        "GE","AS","SE","BR","KR","RB","SR","Y","ZR","NB","MO","TC","RU","RH","PD",
+        "AG","CD","IN","SN","SB","TE","I","XE","CS","BA","LA","CE","PR","ND","PM",
+        "SM","EU","GD","TB","DY","HO","ER","TM","YB","LU","HF","TA","W","RE","OS",
+        "IR","PT","AU","HG","TL","PB","BI","PO","AT","RN","FR","RA","AC","TH","PA",
+        "U","NP","PU","AM","CM","BK","CF","ES","FM","MD","NO","LR","RF","DB","SG",
+        "BH","HS","MT","DS","RG","CN","NH","FL","MC","LV","TS","OG","D"
+    };
+    size_t i;
+    for (i = 0; i < sizeof SYM / sizeof SYM[0]; i++)
+        if (!strcmp(u, SYM[i])) return 1;
+    return 0;
+}
+static void arg_vdw(const char *s)
+{
+    const char *p = s;
+    if (!*p) { fprintf(stderr, "--tunnel-mole: --vdw needs El:r[,El:r...]\n"); exit(2); }
+    while (*p) {
+        const char *colon = strchr(p, ':'), *comma;
+        char sym[8], *end = NULL;
+        size_t n, i;
+        double r;
+        comma = strchr(p, ',');
+        if (!colon || (comma && comma < colon)) {
+            fprintf(stderr, "--tunnel-mole: --vdw entry \"%.*s\" is not El:r\n",
+                    (int)(comma ? comma - p : (long)strlen(p)), p);
+            exit(2);
+        }
+        n = (size_t)(colon - p);
+        if (n == 0 || n >= sizeof sym) {
+            fprintf(stderr, "--tunnel-mole: --vdw element \"%.*s\" is not an element symbol\n",
+                    (int)n, p);
+            exit(2);
+        }
+        for (i = 0; i < n; i++)
+            sym[i] = (p[i] >= 'a' && p[i] <= 'z') ? (char)(p[i] - 32) : p[i];
+        sym[n] = 0;
+        if (!is_element_symbol(sym)) {
+            fprintf(stderr, "--tunnel-mole: --vdw element \"%s\" is not an element symbol\n", sym);
+            exit(2);
+        }
+        r = strtod(colon + 1, &end);
+        if (end == colon + 1 || !(r > 0.0) || !isfinite(r) || (*end && *end != ',')) {
+            fprintf(stderr, "--tunnel-mole: --vdw radius for %s \"%.*s\" is not a positive number\n",
+                    sym, (int)(comma ? comma - colon - 1 : (long)strlen(colon + 1)), colon + 1);
+            exit(2);
+        }
+        if (mole_vdw_override(sym, r) != 0) {
+            fprintf(stderr, "--tunnel-mole: --vdw holds at most %d elements\n",
+                    MOLE_VDW_MAX_OVERRIDES);
+            exit(2);
+        }
+        p = *end ? end + 1 : end;
+        if (*end && !*p) {         /* trailing comma */
+            fprintf(stderr, "--tunnel-mole: --vdw has an empty trailing entry\n");
+            exit(2);
+        }
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -271,7 +375,12 @@ int main(int argc, char **argv)
     /* Custom exits: a user point that tunnels are computed TO. MOLE offers each
        to the SurfaceCavity and to every regular cavity, and with
        UseCustomExitsOnly only those user openings are used. */
-    double exitp[3]; int have_exit = 0, exits_only = 0;
+    double exitp[MOLE_MAX_EXITS][3]; int nexit = 0, exits_only = 0;
+    /* Pinned origins: the positional ox oy oz first, then every --origin=, in
+       command-line order. Each is offered to every cavity exactly as one
+       positional origin was (Cavity.GetOrigin), so a cavity may end up with
+       several origins - the auto-origin loop below already handles that. */
+    double pin[MOLE_MAX_ORIGINS][3]; int npin = 0;
     /* Paths: Dijkstra between two user points on the SurfaceCavity graph.
        Complex.GetPaths - both endpoints given, no openings involved. */
     double patha[3], pathb[3]; int have_path = 0;
@@ -286,10 +395,17 @@ int main(int argc, char **argv)
           "  give ox oy oz to pin the start; otherwise origins are computed\n"
           "  --cover=10 --autocover=10 --maxorigins=5 --bottleneck=1.25\n"
           "  --bottletol=0 --maxsim=0.9 --fbl=0   the rest of ComplexParameters\n"
-          "  --exit=x,y,z --exitsonly=1           custom exit (CustomExits)\n"
+          "  --origin=x,y,z                       another pinned start; repeatable,\n"
+          "                                       at most %d with ox oy oz - each is\n"
+          "                                       searched like the positional one\n"
+          "  --exit=x,y,z --exitsonly=1           custom exit (CustomExits); --exit\n"
+          "                                       repeats, at most %d, all are used\n"
           "  --path=x,y,z,x,y,z                   path between two points\n"
+          "  --vdw=El:r[,El:r...]                 override the vdW radius of those\n"
+          "                                       elements only (e.g. C:1.7,ZN:1.39)\n"
           "  --strict-interior=1                  MOLE StrictInterior; DEGENERATE\n"
-          "                                       upstream - yields no cavities at all\n", argv[0]);
+          "                                       upstream - yields no cavities at all\n",
+          argv[0], MOLE_MAX_ORIGINS, MOLE_MAX_EXITS);
         return 2;
     }
     atoms_file = argv[1]; out_file = argv[2];
@@ -326,6 +442,7 @@ int main(int argc, char **argv)
         && strncmp(argv[11], "--", 2)) {
         ox = arg_num(argv[9], "origin x"); oy = arg_num(argv[10], "origin y");
         oz = arg_num(argv[11], "origin z"); have_origin = 1;
+        pin[0][0] = ox; pin[0][1] = oy; pin[0][2] = oz; npin = 1;
     }
     if (have_origin && argc > 12 && strncmp(argv[12], "--", 2))
         origin_radius = arg_num(argv[12], "origin radius");
@@ -347,10 +464,21 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "--fbl=", 6))         filter_boundary = arg_int(v, "fbl");
         else if (!strncmp(a, "--strict-interior=", 18)) P.strict_interior = arg_int(v, "strict-interior");
         else if (!strncmp(a, "--exit=", 7)) {
-            if (sscanf(v, "%lf,%lf,%lf", &exitp[0], &exitp[1], &exitp[2]) == 3)
-                have_exit = 1;
-            else { fprintf(stderr, "--tunnel-mole: --exit needs x,y,z\n"); return 2; }
+            if (nexit >= MOLE_MAX_EXITS) {
+                fprintf(stderr, "--tunnel-mole: at most %d --exit points\n", MOLE_MAX_EXITS);
+                return 2;
+            }
+            arg_xyz(v, "--exit", exitp[nexit]); nexit++;
         }
+        else if (!strncmp(a, "--origin=", 9)) {
+            if (npin >= MOLE_MAX_ORIGINS) {
+                fprintf(stderr, "--tunnel-mole: at most %d pinned origins (ox oy oz and --origin=)\n",
+                        MOLE_MAX_ORIGINS);
+                return 2;
+            }
+            arg_xyz(v, "--origin", pin[npin]); npin++; have_origin = 1;
+        }
+        else if (!strncmp(a, "--vdw=", 6)) arg_vdw(v);
         else if (!strncmp(a, "--exitsonly=", 12)) exits_only = arg_int(v, "exitsonly");
         else if (!strncmp(a, "--path=", 7)) {
             if (sscanf(v, "%lf,%lf,%lf,%lf,%lf,%lf", &patha[0], &patha[1], &patha[2],
@@ -559,19 +687,27 @@ int main(int argc, char **argv)
               && cav[c].depth > P.min_depth)) continue;
 
         if (have_origin) {
-            /* A user origin replaces the computed ones for the cavity it lands
+            /* User origins replace the computed ones for the cavity each lands
                in: nearest vertex by circumcentre with Depth >= 5, rejected past
-               OriginRadius - Cavity.GetOrigin's own rule. */
-            double bd = 1e300; int best = -1;
-            for (i = 0; i < M.nt; i++) {
-                double dx, dy, dz, d2;
-                if (!M.alive[i] || M.comp[i] != c || M.depth[i] < 5) continue;
-                dx = M.vcenter[3*i]-ox; dy = M.vcenter[3*i+1]-oy; dz = M.vcenter[3*i+2]-oz;
-                d2 = dx*dx+dy*dy+dz*dz;
-                if (d2 < bd) { bd = d2; best = i; }
+               OriginRadius - Cavity.GetOrigin's own rule, applied to every
+               pinned point. Two points snapping to the same tetrahedron give
+               one origin, as mole_auto_origins never lists a maximum twice. */
+            int q;
+            nor = 0;
+            for (q = 0; q < npin; q++) {
+                double bd = 1e300; int best = -1, dup = 0;
+                for (i = 0; i < M.nt; i++) {
+                    double dx, dy, dz, d2;
+                    if (!M.alive[i] || M.comp[i] != c || M.depth[i] < 5) continue;
+                    dx = M.vcenter[3*i]-pin[q][0]; dy = M.vcenter[3*i+1]-pin[q][1];
+                    dz = M.vcenter[3*i+2]-pin[q][2];
+                    d2 = dx*dx+dy*dy+dz*dz;
+                    if (d2 < bd) { bd = d2; best = i; }
+                }
+                if (best < 0 || bd > origin_radius*origin_radius) continue;
+                for (i = 0; i < nor; i++) if (origins[i] == best) dup = 1;
+                if (!dup) origins[nor++] = best;
             }
-            if (best < 0 || bd > origin_radius*origin_radius) continue;
-            origins[0] = best; nor = 1;
         } else {
             nor = mole_auto_origins(&M, c, auto_cover, max_origins, origins);
             if (getenv("MOLE_ORIGIN_DEBUG"))
@@ -598,28 +734,25 @@ int main(int argc, char **argv)
             free(b); free(n2);
         }
         open = NULL; nop = 0;
-        if (have_exit && exits_only) {
-            /* UseCustomExitsOnly: this cavity's openings are the user exits it
-               snapped, and nothing else. */
-            int pv = mole_cavity_opening(&M, c, NULL, exitp, origin_radius);
-            /* A cavity the exit misses contributes no tunnels of its own, but
-               it still yields its origin and the SurfaceCavity is a source from
-               it - MOLE prints `SOURCE cavity Id=1 openings=0` followed by the
-               surface for the same origin. Skipping the cavity here lost that
-               tunnel entirely. */
-            if (pv >= 0) {
-                open = malloc(sizeof(int));
-                if (!open) continue;
-                open[0] = pv; nop = 1;
-            }
-        } else {
-            nop = mole_openings(&M, c, surf_cover, &open);
-            /* s.Openings holds user exits alongside the computed ones;
-               UseCustomExitsOnly filters that list rather than replacing it, so
-               a snapped exit is an extra opening. */
-            if (have_exit) {
-                int pv = mole_cavity_opening(&M, c, NULL, exitp, origin_radius);
-                if (pv >= 0) {
+        /* UseCustomExitsOnly: this cavity's openings are the user exits it
+           snapped, and nothing else. Otherwise s.Openings holds the user exits
+           alongside the computed ones - UseCustomExitsOnly filters that list
+           rather than replacing it, so a snapped exit is an extra opening.
+           A cavity every exit misses contributes no tunnels of its own, but it
+           still yields its origin and the SurfaceCavity is a source from it -
+           MOLE prints `SOURCE cavity Id=1 openings=0` followed by the surface
+           for the same origin. Skipping the cavity here lost that tunnel
+           entirely. Exits are snapped in command-line order; two exits that
+           snap to the same pivot count once. */
+        if (!(nexit && exits_only)) nop = mole_openings(&M, c, surf_cover, &open);
+        {
+            int e, ebase = nop;
+            for (e = 0; e < nexit; e++) {
+                int pv = mole_cavity_opening(&M, c, NULL, exitp[e], origin_radius), q, dup = 0;
+                if (pv < 0) continue;
+                for (q = ebase; q < nop; q++) if (open[q] == pv) dup = 1;
+                if (dup) continue;
+                {
                     int *g = xa_realloc(open, (size_t)(nop + 1) * sizeof(int));
                     if (g) { open = g; open[nop++] = pv; }
                 }
@@ -631,7 +764,7 @@ int main(int argc, char **argv)
             for (z = 0; z < nop; z++) fprintf(stderr, " %d", open[z]);
             fputc('\n', stderr);
         }
-        if (!nop && !have_exit) { free(open); continue; }
+        if (!nop && !nexit) { free(open); continue; }
         dist = malloc((size_t)M.nt*sizeof(double));
         prev = malloc((size_t)M.nt*sizeof(int));
         if (!dist || !prev) return 1;
@@ -699,9 +832,12 @@ int main(int argc, char **argv)
                runs FilterTunnels over the COMBINED list, so filtering the two
                groups separately keeps a tunnel MOLE removes. The surface branch
                below runs the filter once both are in. */
-            if (have_exit)
-                surface_tunnel(&M, &P, origins[o], exitp, origin_radius,
-                               bottleneck, bottle_tol, &res, &nres, &ncap, np);
+            {
+                int e;
+                for (e = 0; e < nexit; e++)
+                    surface_tunnel(&M, &P, origins[o], exitp[e], origin_radius,
+                                   bottleneck, bottle_tol, &res, &nres, &ncap, np);
+            }
             {
                 int cnt = nres - base_, q, w;
                 if (cnt > 1) {
@@ -742,6 +878,7 @@ int main(int argc, char **argv)
     fprintf(out, "# V id type volume depth depthlength nboundary ninner ;"
                  " VB/VI id charge ionizable npos nneg hydropathy hydrophobicity"
                  " polarity logp logd logs mutability nres resn:seq:chain...\n");
+    fprintf(out, "# VP id x y z r  (cavity tetrahedra as centre+clearance spheres)\n");
     fprintf(out, "# freeradius %s ; bradius %s\n",
             MA.has_names ? "vs backbone+het" : "= radius (no atom-name column in the atom table)",
             "from B-factors (0 where absent)");
@@ -827,7 +964,7 @@ int main(int argc, char **argv)
             /* crank is the descending-volume rank MOLE assigns Cavity.Id from,
                so the ids line up with its cavities.xml rather than being a
                sequential counter over whatever survived the depth filters. */
-            write_cavity(out, crank[c] + 1, &M, c, &cav[c], mres);
+            write_cavity(out, crank[c] + 1, &M, c, &cav[c], mres, np);
         }
     }
     for (i = 0; i < nres; i++) {

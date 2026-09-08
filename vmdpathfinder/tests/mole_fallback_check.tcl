@@ -84,15 +84,27 @@ set ntun [llength [lsearch -all [split [lindex $c 1] "\n"] "T *"]]
 puts $out "c_status [lindex $c 0]"
 puts $out "tcl_status [lindex $t 0]"
 puts $out "tunnels $ntun"
-puts $out "identical [expr {[lindex $c 1] eq [lindex $t 1]}]"
+# The C engine writes the cavity VP records (and their '# VP' header line)
+# ahead of the Tcl engine. While the Tcl side writes none they are set aside
+# and REPORTED as vp_pending, so the rest of the text stays under identity;
+# once the Tcl engine writes any VP line, every VP line is compared too.
+set ct [lindex $c 1]; set tt [lindex $t 1]
+set vp_re {^(VP |# VP )}
+set nvp_c [llength [lsearch -all -regexp [split $ct "\n"] $vp_re]]
+set nvp_t [llength [lsearch -all -regexp [split $tt "\n"] $vp_re]]
+if {$nvp_c > 0 && $nvp_t == 0} {
+    set ct [join [lsearch -all -inline -not -regexp [split $ct "\n"] $vp_re] "\n"]
+}
+puts $out "vp_pending [expr {$nvp_c > 0 && $nvp_t == 0 ? $nvp_c : 0}]"
+puts $out "identical [expr {$ct eq $tt}]"
 puts $out "timing $cms $tms"
 puts $out "tcl_diag [lindex $t 2]"
 puts $out "cfg_probe [dict get $cfg mole_probe]"
 puts $out "cfg_weight [dict get $cfg mole_weight]"
 set ::VMDPathFinder::state(mole_weight_disp) "not-a-weight-function"
 puts $out "cfg_weight_bogus [dict get [::VMDPathFinder::_tunnel_cfg] mole_weight]"
-if {[lindex $c 1] ne [lindex $t 1]} {
-    foreach x [split [lindex $c 1] "\n"] y [split [lindex $t 1] "\n"] {
+if {$ct ne $tt} {
+    foreach x [split $ct "\n"] y [split $tt "\n"] {
         if {$x ne $y} { puts $out "firstdiff_c $x"; puts $out "firstdiff_tcl $y"; break }
     }
 }

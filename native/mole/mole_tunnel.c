@@ -598,6 +598,9 @@ double mole_radius_at_raw(const double *p, const double *axyz, const double *ara
 static double radius_at(const double *p, const double *axyz, const double *arad, int na)
 { return radius_at_impl(p, axyz, arad, na, 1, NULL, NULL, NULL); }
 
+double mole_radius_at(const double *p, const double *axyz, const double *arad, int na)
+{ return radius_at(p, axyz, arad, na); }
+
 /* The five atoms the radius at p was measured against, nearest first. Same
    query, same answer - the lining stage groups them into residues. */
 int mole_nearest5(const double *p, const double *axyz, const double *arad,

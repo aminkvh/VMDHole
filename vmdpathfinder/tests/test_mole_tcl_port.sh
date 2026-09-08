@@ -246,6 +246,14 @@ if [ -x "$MOLE_ENGINE" ] && [ -f "$REF/tunnel_1.csv" ]; then
             bad "the plugin's lining reader disagrees with MOLE's own numbers"
         fi
         sed 's/^/     /' "$TMP/out"
+        # Same interface, the CAVITY half of it (V/VB/VI/VP) plus the two
+        # per-tunnel fields that block added - nothing else reads those back.
+        if tclsh "$DIR/test_mole_cavity_parse.tcl" "$TMP/gt.txt" > "$TMP/out" 2>&1; then
+            ok "the plugin's reader recovers cavities and per-point radii"
+        else
+            bad "the plugin's cavity reader disagrees with the engine's file"
+        fi
+        sed 's/^/     /' "$TMP/out"
     else
         bad "engine failed on the ground-truth run: $(tail -2 "$TMP/gtout")"
     fi
@@ -319,8 +327,12 @@ if [ -f "$PDB" ] && [ -x "$MOLE_ENGINE" ] && command -v "${VMD:-vmd}" >/dev/null
         else
             bad "panel parameters not plumbed through (probe=$cp weight=$cw bogus=$cwb)"
         fi
+        vpp=$(awk '$1=="vp_pending"{print $2}' "$TMP/fb.txt")
         if [ "$same" = 1 ] && [ "$cst" = ok ] && [ "$tst" = ok ] && [ "${ntun:-0}" -gt 0 ]; then
             ok "both paths agree at NON-DEFAULT parameters ($ntun tunnels)"
+            # VP records: C writes them, the Tcl engine does not yet - set
+            # aside by mole_fallback_check.tcl and compared once Tcl has them.
+            [ "${vpp:-0}" -gt 0 ] && echo "       VP records: Tcl engine writes none yet - PENDING ($vpp C lines set aside)"
         else
             bad "plugin fallback differs (c=$cst tcl=$tst tunnels=$ntun identical=$same)"
             sed 's/^/       /' "$TMP/fb.txt"
