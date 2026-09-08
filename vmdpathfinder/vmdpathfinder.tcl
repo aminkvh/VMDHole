@@ -704,6 +704,7 @@ namespace eval ::VMDPathFinder:: {
         cavity_solid 0
         cavity_spheres 0
         cavity_origin_rule mole
+        cavity_prop none
         cavity_sort_col vol
         cavity_sort_dir desc
         cavity_track_cutoff 6.0
@@ -1043,7 +1044,7 @@ proc ::VMDPathFinder::save_config {} {
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
         conn_lobe_sort_col conn_lobe_sort_dir
         mole_exit mole_path_a mole_path_b mole_vdw tunnel_cluster
-        cavity_solid cavity_spheres cavity_origin_rule cavity_track_cutoff
+        cavity_solid cavity_spheres cavity_origin_rule cavity_track_cutoff cavity_prop
         tunnel_align tunnel_render_maxr bottleneck_shell tunnel_hydro3d_accurate
         tunnel_display_mode tunnel_display_material tunnel_display_color
         mean_tunnel_display_mode
@@ -18689,7 +18690,8 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
                 dict set out cav.$id [dict create type [lindex $f 2] \
                     volume [lindex $f 3] depth [lindex $f 4] depthlen [lindex $f 5] \
                     nboundary [lindex $f 6] ninner [lindex $f 7] \
-                    bprops {} iprops {} bres {} ires {} spheres {} origins {}]
+                    bprops {} iprops {} bres {} ires {} spheres {} origins {} \
+                    nsph 0 sx 0.0 sy 0.0 sz 0.0 maxr 0.0]
             }
             VB - VI {
                 # Boundary / inner residue set of cavity $id with its properties:
@@ -18715,6 +18717,18 @@ proc ::VMDPathFinder::_tunnel_parse_lining {txt} {
                 set _sp [dict get $out cav.$id spheres]
                 lappend _sp [lrange $f 2 5]
                 dict set out cav.$id spheres $_sp
+                # Running centroid and largest radius, accumulated HERE because
+                # this loop already touches every sphere. Walking them again per
+                # cavity per frame is what made the Cavities window slow to open
+                # on a real trajectory: frames x cavities x hundreds of spheres.
+                set _n  [expr {[dict get $out cav.$id nsph] + 1}]
+                dict set out cav.$id nsph $_n
+                dict set out cav.$id sx [expr {[dict get $out cav.$id sx] + [lindex $f 2]}]
+                dict set out cav.$id sy [expr {[dict get $out cav.$id sy] + [lindex $f 3]}]
+                dict set out cav.$id sz [expr {[dict get $out cav.$id sz] + [lindex $f 4]}]
+                if {[lindex $f 5] > [dict get $out cav.$id maxr]} {
+                    dict set out cav.$id maxr [lindex $f 5]
+                }
             }
             O {
                 # "O id rank x y z depthlength" - an origin MOLE itself would
@@ -18783,6 +18797,12 @@ proc ::VMDPathFinder::_cavity_centroid {cv} {
     # Mean of the cavity's tetrahedra centres - its position, for matching the
     # same cavity across frames. Cheaper and steadier than the origin, which
     # can hop between two nearly equal DepthLength maxima from frame to frame.
+    if {[dict exists $cv nsph]} {
+        set n [dict get $cv nsph]
+        if {$n == 0} { return {} }
+        return [list [expr {[dict get $cv sx]/$n}] [expr {[dict get $cv sy]/$n}] \
+                     [expr {[dict get $cv sz]/$n}]]
+    }
     set n 0; set sx 0.0; set sy 0.0; set sz 0.0
     foreach sp [dict get $cv spheres] {
         lassign $sp x y z
@@ -18796,6 +18816,7 @@ proc ::VMDPathFinder::_cavity_centroid {cv} {
 proc ::VMDPathFinder::_cavity_max_probe {cv} {
     # The largest clearance sphere the cavity holds - CAVER Analyst's "Max.
     # Probe". An upper bound on what fits inside the pocket at all.
+    if {[dict exists $cv maxr]} { return [dict get $cv maxr] }
     set m 0.0
     foreach sp [dict get $cv spheres] {
         set r [lindex $sp 3]
@@ -19007,6 +19028,32 @@ proc ::VMDPathFinder::ensure_cavity_mol {protein_mol} {
     return $m
 }
 
+proc ::VMDPathFinder::_cavity_structure_molid {} {
+    # A molecule that actually carries atoms: what resolve_molid gives, unless
+    # that resolved to one of the plugin's own graphics molecules (see
+    # _render_cavities_for_frame), in which case the molecule this run's
+    # tunnel track was created for.
+    variable tunnel_surface_mols
+    variable tunnel_run_molid
+    # The molecule the RESULTS belong to wins: the cavity lining names residues
+    # of that structure, and resolving them against any other molecule finds
+    # nothing.
+    if {[info exists tunnel_run_molid] && $tunnel_run_molid ne "" \
+            && ![catch {molinfo $tunnel_run_molid get numatoms} n0] && $n0 > 0} {
+        return $tunnel_run_molid
+    }
+    set m [resolve_molid_or -1]
+    if {$m >= 0 && ![catch {molinfo $m get numatoms} n] && $n > 0} { return $m }
+    if {[info exists tunnel_surface_mols]} {
+        foreach k [array names tunnel_surface_mols] {
+            if {[string is integer -strict $k] && ![catch {molinfo $k get numatoms} n2] && $n2 > 0} {
+                return $k
+            }
+        }
+    }
+    return -1
+}
+
 proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     # Draw every ticked cavity of $frame onto the CAVITY track. One .sph + mesh
     # per cavity beside the frame's tunnel files, reused on the mtime rule the
@@ -19015,10 +19062,13 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     variable state
     variable tunnel_cavity_shown
     variable tunnel_root
-    # resolve_molid_or, not the raw field: state(molid) defaults to "top", and
-    # keying the cavity track on the literal string would make a second,
-    # graphics-less molecule the moment anything asked for it by number.
-    set molid [resolve_molid_or -1]
+    # The STRUCTURE, and it must really be one. state(molid) defaults to "top",
+    # and the tracks/cavities are drawn into graphics molecules that briefly
+    # become top - so resolve_molid can hand back an atom-less molecule, and
+    # every atomselect against it then finds nothing ("no lining residues
+    # resolved to atoms", with the property colouring silently falling back to
+    # a flat colour). Fall back to the molecule this run's tunnels belong to.
+    set molid [_cavity_structure_molid]
     if {$molid < 0} { return "" }
     set cavs [_tunnel_cavities $frame]
     set any 0
@@ -19037,6 +19087,8 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     if {$fd eq ""} { set fd [file join $tunnel_root [format "tunnel_%05d" $frame]] }
     set mat [expr {[info exists state(cavity_solid)] && $state(cavity_solid) \
         ? "Opaque" : "Transparent"}]
+    set prop [expr {[info exists state(cavity_prop)] ? $state(cavity_prop) : "none"}]
+    if {$prop ne "none" && $prop ne "" && $prop ni [_cavity_prop_tokens]} { set prop "none" }
     foreach t [_cavity_tracks] {
         set tid [dict get $t tid]
         if {![_tunnel_cavity_shown $tid]} continue
@@ -19062,7 +19114,51 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         if {![_tunnel_mesh_current $plot $sph]} {
             if {![surface_mesh $sph $plot draw 6 1 1]} continue
         }
-        catch {render_vmd_plot_to_mol $plot $cm 1 [_tunnel_color [expr {$tid+11}]] "" $mat 0 0}
+        # Property colouring goes through the SAME mesh and the same recolour
+        # kernel a route uses: one mesh, recoloured, never a second surface
+        # built a different way. Cached beside it on the mesh's own mtime, as
+        # the route colouring is, so a redraw is not a re-recolour.
+        set done 0
+        if {$prop ne "none" && $prop ne ""} {
+            set cplot [file join $fd [format "cavity_%02d_%s_v1.plot" $id $prop]]
+            if {[surface_has_geometry $cplot] && [file mtime $cplot] >= [file mtime $plot]} {
+                # color_mode "property": the plot carries its OWN per-triangle
+                # colours, and render_vmd_plot_to_mol overrides them for any
+                # mode outside its data-driven set - so leaving this blank let
+                # pore mode's flat surface_color repaint a cavity that had just
+                # been coloured by a property.
+                catch {render_vmd_plot_to_mol $cplot $cm 1 "" property $mat 0 0}
+                set done 1
+            } else {
+                # Why a fallback happened is worth saying: a cavity silently
+                # drawn in its flat colour looks like the property picker did
+                # nothing.
+                variable _cavity_color_why
+                set rfile [file join $fd [format "cavity_%02d_%s.txt" $id $prop]]
+                if {[catch {write_cavity_property_sidecar $molid $frame $id $rfile $prop} _e1]} {
+                    set _cavity_color_why "sidecar: $_e1"
+                } else {
+                    lassign [_cavity_property_range $prop] plo phi
+                    set psigned [dict get [property_meta $prop] signed]
+                    if {[catch {run_sos_triangle_3d_recolor $plot $cplot $sph $rfile $psigned $plo $phi 0} _e2]} {
+                        set _cavity_color_why "recolor: $_e2"
+                    } elseif {![surface_has_geometry $cplot]} {
+                        set _cavity_color_why "recolor produced no geometry"
+                    } else {
+                        set _cavity_color_why ""
+                        catch {render_vmd_plot_to_mol $cplot $cm 1 "" property $mat 0 0}
+                        set done 1
+                    }
+                }
+                catch {file delete $rfile}
+                if {!$done && $_cavity_color_why ne ""} {
+                    set state(status) "Cavity $id: property colouring fell back to a flat colour ($_cavity_color_why)."
+                }
+            }
+        }
+        if {!$done} {
+            catch {render_vmd_plot_to_mol $plot $cm 1 [_tunnel_color [expr {$tid+11}]] "" $mat 0 0}
+        }
     }
     return $cm
 }
@@ -19071,6 +19167,99 @@ proc ::VMDPathFinder::_tunnel_cavity_toggle {} {
     # A tick changed: redraw the shown frame's track (tunnels + cavities).
     set fr [_tunnel_display_frame]
     if {$fr ne ""} { catch {render_tunnels_for_frame $fr} }
+}
+
+proc ::VMDPathFinder::_lining_residue_value {prop resname} {
+    # ONE rule for "what is this residue worth under this property", for every
+    # per-residue colour anchor (a route's and a cavity's).
+    #
+    # The two tables are deliberately NOT aliased onto each other - MOLE's
+    # charge/polarity/hydropathy are its own constants, not the HOLE scales of
+    # similar name (see _tunnel_prop_label) - so the token decides which table
+    # answers. mole_residue_property returns 0.0 for a token it does not carry,
+    # which is why a HOLE scale asked of it produced a uniformly zero, flat
+    # surface rather than an error.
+    if {$prop in [_tunnel_scale_tokens]} { return [residue_property $prop $resname] }
+    return [mole_residue_property $prop $resname]
+}
+
+proc ::VMDPathFinder::write_cavity_property_sidecar {molid frame id out_file prop} {
+    # One "x y z value" row per residue lining this cavity - the same sidecar
+    # format write_tunnel_hydro3d_residue_sidecar writes for a route, so a
+    # cavity surface is coloured by the SAME kernel that colours a tunnel and a
+    # pore wall (run_sos_triangle_3d_recolor's nearest-residue interpolation)
+    # rather than by a second, parallel colouring path.
+    #
+    # A cavity's residues come from MOLE's own Boundary and Inner sets rather
+    # than from per-layer lining: a volume has no layers. Both sets are used -
+    # the boundary residues are what the surface actually touches, and the
+    # inner ones fill the interior so a point deep in the pocket still has a
+    # residue to take its value from.
+    variable tunnel_lining
+    if {![info exists tunnel_lining($frame)]} { error "no cavity data for this frame" }
+    set lin $tunnel_lining($frame)
+    if {![dict exists $lin cav.$id]} { error "no cavity $id in frame $frame" }
+    set cv [dict get $lin cav.$id]
+    set out [open $out_file w]
+    set n 0
+    set _last_sel "(none)"
+    foreach which {bres ires} {
+        foreach r [dict get $cv $which] {
+            set rn [dict get $r resname]
+            set sq [dict get $r resid]
+            set ch [dict get $r chain]
+            set seltext "resname $rn and resid $sq"
+            if {$ch ne "" && $ch ne "-"} { append seltext " and chain $ch" }
+            set _last_sel $seltext
+            if {[catch {atomselect $molid $seltext frame $frame} sel]} { continue }
+            if {[$sel num] == 0} { $sel delete; continue }
+            # UNWEIGHTED centroid, as the tunnel sidecar uses - not a centre of
+            # mass, so a heavy atom cannot drag the residue's colour anchor.
+            set c [measure center $sel]
+            $sel delete
+            set val [_lining_residue_value $prop $rn]
+            if {![string is double -strict $val]} { continue }
+            lassign $c cx cy cz
+            puts $out [format "%.4f %.4f %.4f %.6f" $cx $cy $cz $val]
+            incr n
+        }
+    }
+    close $out
+    if {$n == 0} {
+        set _na "?"
+        catch {set _na [molinfo $molid get numatoms]}
+        error "no lining residues resolved to atoms (mol $molid, $_na atoms;\
+            [llength [dict get $cv bres]] boundary + [llength [dict get $cv ires]] inner\
+            residues; first tried: \"$_last_sel\")"
+    }
+    return $n
+}
+
+proc ::VMDPathFinder::_cavity_prop_tokens {} {
+    # The properties a CAVITY can be coloured by: the residue-table scales, since
+    # a cavity's value comes from its lining residues. MOLE's own per-layer
+    # columns are not here - those are computed per tunnel layer and a volume
+    # has no layers - and neither is esp, which is evaluated at a route's own
+    # points.
+    # kr is excluded: Kapcha-Rossky is ATOM-level, so a residue has no single
+    # value to anchor a colour with (a route gets one only by averaging a
+    # layer's atoms, and a volume has no layers).
+    set out {}
+    foreach t [_tunnel_scale_tokens] { if {$t ne "kr"} { lappend out $t } }
+    return [concat $out \
+                   {charge polarity hydropathy hydrophobicity ionizable logp logd logs mutability}]
+}
+
+proc ::VMDPathFinder::_cavity_property_range {prop} {
+    # Same convention the tunnel property scale uses: fixed theoretical bounds
+    # where the quantity has them, so a colour means the same thing in every
+    # frame and every cavity.
+    if {$prop eq "polarity"} { return [list 0.0 52.0] }
+    set m [property_meta $prop]
+    if {[dict exists $m lo] && [dict exists $m hi]} {
+        return [list [dict get $m lo] [dict get $m hi]]
+    }
+    return {0.0 1.0}
 }
 
 proc ::VMDPathFinder::_cavity_sort {col} {
@@ -19083,6 +19272,13 @@ proc ::VMDPathFinder::_cavity_sort {col} {
         set state(cavity_sort_dir) [expr {$col eq "id" ? "asc" : "desc"}]
     }
     show_tunnel_cavities
+}
+
+proc ::VMDPathFinder::_cavity_set_prop {prop} {
+    variable state
+    set state(cavity_prop) $prop
+    set state(cavity_prop_disp) [_tunnel_prop_label_short $prop]
+    _tunnel_cavity_toggle
 }
 
 proc ::VMDPathFinder::_cavity_show_all {on} {
@@ -19135,9 +19331,11 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         wm deiconify $t
         return
     }
-    foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole} {
+    foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole
+                   cavity_prop none} {
         if {![info exists state($k)]} { set state($k) $d }
     }
+    set state(cavity_prop_disp) [_tunnel_prop_label_short $state(cavity_prop)]
 
     # ---- controls -------------------------------------------------------
     frame $t.ctl
@@ -19147,27 +19345,52 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         -command ::VMDPathFinder::_tunnel_cavity_toggle
     checkbutton $t.ctl.sph -text "Spheres" -variable ::VMDPathFinder::state(cavity_spheres) \
         -command ::VMDPathFinder::_tunnel_cavity_toggle
+    label $t.ctl.pl -text "  Colour by:"
+    menubutton $t.ctl.pm -textvariable ::VMDPathFinder::state(cavity_prop_disp) \
+        -relief raised -indicatoron 1 -menu $t.ctl.pm.m -width 14
+    menu $t.ctl.pm.m -tearoff 0
+    foreach _p [concat none [_cavity_prop_tokens]] {
+        $t.ctl.pm.m add command -label [_tunnel_prop_label_short $_p] \
+            -command [list ::VMDPathFinder::_cavity_set_prop $_p]
+    }
+    _menu_two_columns $t.ctl.pm.m
     label $t.ctl.rl -text "  Start point:"
     radiobutton $t.ctl.rm -text "deepest (MOLE)" -value mole \
         -variable ::VMDPathFinder::state(cavity_origin_rule)
     radiobutton $t.ctl.rc -text "largest sphere (CAVER)" -value caver \
         -variable ::VMDPathFinder::state(cavity_origin_rule)
-    pack $t.ctl.all $t.ctl.none $t.ctl.solid $t.ctl.sph $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
+    pack $t.ctl.all $t.ctl.none $t.ctl.solid $t.ctl.sph $t.ctl.pl $t.ctl.pm \
+        $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
     add_tooltip $t.ctl.solid "Draw cavities opaque instead of transparent (MOLE's \"Solid cavities\")."
     add_tooltip $t.ctl.sph "Draw the clearance spheres themselves instead of a surface over them (CAVER Analyst's \"Locked Probes\")."
+    add_tooltip $t.ctl.pm "Colour the cavity surface by a property of its lining residues, through the same recolour used for routes and the pore wall. The scale bar shows the range."
     add_tooltip $t.ctl.rm "MOLE's own automatic origin: the cavity's deepest point, read from the engine rather than recomputed. This is the point MOLE would search from."
     add_tooltip $t.ctl.rc "CAVER Analyst's rule: the centre of the largest sphere that fits in the cavity."
 
     # ---- table ----------------------------------------------------------
-    frame $t.h
+    # ONE grid for the header and the rows, inside a scrolling frame. Two
+    # grids in two frames cannot share column widths, so every row drifted out
+    # of line with its heading the moment a cell's text changed length.
+    set _tracks [_cavity_tracks]
+    set _rowh 22
+    set _want [expr {[llength $_tracks]*$_rowh + 30}]
+    set _hmax 460
+    set _th [expr {$_want < $_hmax ? $_want : $_hmax}]
+    frame $t.sc
+    grid $t.sc -row 1 -column 0 -sticky nsew -padx 8 -pady {2 2}
+    grid rowconfigure $t 1 -weight 1
+    grid columnconfigure $t 0 -weight 1
+    _scrollable_fixed $t.sc $_th 860
+    set g $t.sc.c.inner
+
     set _cols {draw "Draw" "Draw this cavity, in every frame it appears in."
                id "Id" "Tracked cavity id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."
                type "Type" "Cavity: has boundary residues. Void: fully enclosed."
-               vol "Volume (A^3)" "Volume of this frame's cavity. Click to sort."
-               mean "Mean +/- SD" "Mean volume over the frames this cavity was tracked through, and its spread. Click to sort."
+               vol "Volume" "This frame's volume, A^3. Click to sort."
+               mean "Mean +/- SD" "Mean volume over the frames this cavity was tracked through. Click to sort."
                seen "Seen %" "Percentage of analysed frames this cavity was found in. Click to sort."
-               probe "Max probe" "Radius of the largest sphere that fits inside - does your ligand fit at all. Click to sort."
+               probe "Max probe" "Radius of the largest sphere that fits inside. Click to sort."
                depth "Depth" "Depth in tetrahedron layers from the surface."
                res "Bnd/Inner" "Boundary and inner residue counts in this frame."
                rank "Rank here" "What MOLE ranked this cavity in the displayed frame - per frame, unlike Id."}
@@ -19178,79 +19401,77 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         if {$_sortable && $state(cavity_sort_col) eq $key} {
             append _txt [expr {$state(cavity_sort_dir) eq "asc" ? " \u25b2" : " \u25bc"}]
         }
-        label $t.h.c$c -text $_txt -font {Helvetica 9 bold} -anchor w
+        label $g.h$c -text $_txt -font {Helvetica 9 bold} -anchor w
         if {$_sortable} {
-            $t.h.c$c configure -cursor hand2
-            bind $t.h.c$c <Button-1> [list ::VMDPathFinder::_cavity_sort $key]
+            $g.h$c configure -cursor hand2
+            bind $g.h$c <Button-1> [list ::VMDPathFinder::_cavity_sort $key]
         }
-        grid $t.h.c$c -row 0 -column $c -sticky w -padx 5
-        add_tooltip $t.h.c$c $tip
+        grid $g.h$c -row 0 -column $c -sticky w -padx 4 -pady {0 3}
+        add_tooltip $g.h$c $tip
         incr c
     }
-    grid $t.h -row 1 -column 0 -sticky ew -padx 8 -pady {4 2}
 
     # rows are TRACKS, not this frame's ranks: the row means the same pocket in
     # every frame, which is what makes the checkbox and the colour stable. A
     # track absent from the displayed frame still gets a row - that absence is
     # information (see its Seen %) - with this frame's columns blank.
     set rows {}
-    foreach tr [_cavity_tracks] {
+    foreach tr $_tracks {
         set tid [dict get $tr tid]
         set id [_cavity_rank_in_frame $tid $frame]
         set cv [expr {$id ne "" && [dict exists $cavs $id] ? [dict get $cavs $id] : {}}]
         lappend rows [list $tid $cv $tr $id]
     }
-    set _col $state(cavity_sort_col)
-    set rows [lsort -command [list ::VMDPathFinder::_cavity_row_cmp $_col] $rows]
+    set rows [lsort -command [list ::VMDPathFinder::_cavity_row_cmp $state(cavity_sort_col)] $rows]
     if {$state(cavity_sort_dir) eq "desc"} { set rows [lreverse $rows] }
 
-    frame $t.b
     set r 0
     foreach row $rows {
+        incr r
         lassign $row tid cv tr id
         if {![info exists tunnel_cavity_shown($tid)]} { set tunnel_cavity_shown($tid) 0 }
-        checkbutton $t.b.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($tid) \
-            -command ::VMDPathFinder::_tunnel_cavity_toggle
-        grid $t.b.d$r -row $r -column 0 -sticky w -padx 5
-        set _mean [format "%.0f +/- %.0f" [dict get $tr vol_mean] [dict get $tr vol_sd]]
-        set _seen [format "%.0f" [dict get $tr seen]]
+        checkbutton $g.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($tid) \
+            -command ::VMDPathFinder::_tunnel_cavity_toggle -padx 0 -pady 0
+        grid $g.d$r -row $r -column 0 -sticky w -padx 4
         set _here [expr {[llength $cv] > 0}]
         set vals [list $tid \
             [expr {$_here ? [dict get $cv type] : [dict get $tr type]}] \
             [expr {$_here ? [format %.1f [dict get $cv volume]] : "-"}] \
-            $_mean $_seen \
+            [format "%.0f +/- %.0f" [dict get $tr vol_mean] [dict get $tr vol_sd]] \
+            [format "%.0f" [dict get $tr seen]] \
             [format %.2f [dict get $tr maxprobe]] \
             [expr {$_here ? [dict get $cv depth] : "-"}] \
             [expr {$_here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
             [expr {$_here ? $id : "absent"}]]
         set c 1
         foreach v $vals {
-            label $t.b.v${r}_$c -text $v -anchor w -font {Helvetica 9} \
-                -foreground [expr {$_here ? "black" : "gray50"}]
-            grid $t.b.v${r}_$c -row $r -column $c -sticky w -padx 5
+            # numbers right-aligned, names left: a column of figures that is
+            # left-aligned cannot be read down.
+            set _num [expr {$c in {1 3 4 5 6 7 9}}]
+            label $g.v${r}_$c -text $v -anchor [expr {$_num ? "e" : "w"}] \
+                -font {Helvetica 9} -foreground [expr {$_here ? "black" : "gray50"}]
+            grid $g.v${r}_$c -row $r -column $c -sticky [expr {$_num ? "e" : "w"}] -padx 4
             incr c
         }
-        button $t.b.use$r -text "Use as start" -font {Helvetica 8} \
+        button $g.use$r -text "Use as start" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_cavity_use_as_start $frame $id]
-        if {!$_here} { $t.b.use$r configure -state disabled }
-        grid $t.b.use$r -row $r -column $c -sticky w -padx 5
-        add_tooltip $t.b.use$r "Put this cavity's start point into the tunnel Start point field, by the rule chosen above."
+        if {!$_here} { $g.use$r configure -state disabled }
+        grid $g.use$r -row $r -column $c -sticky w -padx {8 2}
+        add_tooltip $g.use$r "Put this cavity's start point into the tunnel Start point field, by the rule chosen above."
         incr c
-        button $t.b.res$r -text "Residues" -font {Helvetica 8} \
+        button $g.res$r -text "Residues" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_tunnel_cavity_residues $frame $id]
-        if {!$_here} { $t.b.res$r configure -state disabled }
-        grid $t.b.res$r -row $r -column $c -sticky w -padx 5
-        incr r
+        if {!$_here} { $g.res$r configure -state disabled }
+        grid $g.res$r -row $r -column $c -sticky w -padx {2 4}
     }
-    grid $t.b -row 2 -column 0 -sticky ew -padx 8
 
-    set _nfr 0
-    set _tr0 [_cavity_tracks]
-    if {[llength $_tr0]} { set _nfr [dict get [lindex $_tr0 0] nframes] }
-    label $t.note -justify left -wraplength 720 -foreground gray40 -font {Helvetica 8} -text \
-        "Id is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have - see its Seen %. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps). The surface cavity the tunnels exit through is not listed."
-    grid $t.note -row 3 -column 0 -sticky w -padx 8 -pady {6 8}
-    _center_toplevel $t 900 [expr {170 + 26*$r}]
+    set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
+    label $t.note -justify left -wraplength 840 -foreground gray40 -font {Helvetica 8} -text \
+        "Id is a TRACKED id: the same pocket keeps the same number, colour and tick across all $_nfr analysed frames, matched by centroid proximity. MOLE ranks cavities independently in each frame, so that per-frame rank is shown separately under \"Rank here\", and a row reading \"absent\" is a pocket this frame does not have. This cross-frame tracking is the plugin's own; MOLE and CAVER report cavities one frame at a time. The drawn surface is a marching-cubes sphere union, not MOLE's atom-centre facets, so its volume is not comparable with MOLE's own Volume column (tetrahedra minus van der Waals caps)."
+    grid $t.note -row 2 -column 0 -sticky ew -padx 8 -pady {4 8}
+    # Height follows the table, capped so a structure with many pockets scrolls
+    # instead of growing a window taller than the screen.
+    _center_toplevel $t 900 [expr {$_th + 150}]
     wm deiconify $t
 }
 
@@ -19876,6 +20097,12 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
     _begin_calc
 
     set molid [string trim $state(molid)]
+    # Remember WHICH molecule this run's results describe. The cavity residue
+    # lookups resolve atom selections, and by the time they run the user (or a
+    # test) may have loaded other molecules, leaving state(molid) - especially
+    # at its "top" default - pointing somewhere the lining does not exist.
+    variable tunnel_run_molid
+    catch {set tunnel_run_molid [resolve_molid]}
     if {[catch {molinfo $molid get numframes}]} {
         set state(status) "Tunnel: molecule '$molid' does not exist."
         set busy 0
@@ -20999,7 +21226,7 @@ proc ::VMDPathFinder::write_tunnel_hydro3d_residue_sidecar {molid frame tunnel_i
                     }
                     if {$_dc >= $_da} { continue }
                 }
-                set val [mole_residue_property $prop [dict get $r resname]]
+                set val [_lining_residue_value $prop [dict get $r resname]]
                 puts $out [format "%.4f %.4f %.4f %.6f" $cx $cy $cz $val]
                 incr n_written
             }

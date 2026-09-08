@@ -124,6 +124,7 @@ cited: MOLE for Tunnel mode, CAVER additionally when route clustering is used.
 | Boundary/Inner residues with physicochemical properties | MOLE (present only in its XML, never on screen) | MOLE |
 | The drawn cavity surface | both draw one | **this plugin** - marching-cubes sphere union; MOLE uses atom-centre facets, CAVER Analyst an analytic SES |
 | "Use as start point" | CAVER Analyst (*Create Starting Point*) | selectable: **MOLE**'s own automatic origin, or **CAVER**'s largest inscribed sphere |
+| Colour a cavity by volume / max probe | CAVER Analyst (per-cavity flat colour) | not implemented here |
 | Max probe column | CAVER Analyst | max radius over the cavity's own spheres |
 | Sortable table, Show/Hide all | CAVER Analyst | interface only |
 | Solid / transparent toggle | MOLE (*Solid cavities*) | interface only |
@@ -131,9 +132,26 @@ cited: MOLE for Tunnel mode, CAVER additionally when route clustering is used.
 | Snapping a user origin into the cavity | both (MOLE `OriginRadius`, CAVER `rmin`/`dmax`) | MOLE's |
 | Reporting the origin actually used | CAVER 3.0 requires it for reproducibility | recorded per frame in the run manifest |
 | Cavity tracked across a trajectory | **neither program does this** | this plugin (centroid proximity) |
-| Cavity coloured by a property | **neither program does this** | this plugin |
+| Cavity coloured by a property | **neither program does this** | this plugin (per-residue sidecar + the shared recolour kernel) |
 
 Two numerical caveats follow from the third row: our cavity volume is the volume
 of the meshed sphere union, MOLE's is its tetrahedra minus van der Waals caps,
 and CAVER Analyst's is a Monte-Carlo estimate over filling balls. They are three
 different quantities and should not be compared directly.
+
+### Cavity colouring, specifically
+
+CAVER Analyst has no cavity-owned colouring strategy at all: its colouring
+window has tabs for structures, selections and tunnels, and none for cavities.
+A cavity there can be given a flat colour per cavity (random, or mapped from its
+volume or max probe), or - under *Advanced coloring* - inherit the **protein's
+per-atom** colours interpolated over its surface. Colouring a void surface by a
+physicochemical property exists in CAVER only for **tunnels**, computed from
+atoms within 5 Å of each surface point. MOLE cannot colour a cavity by a
+property either; its per-vertex spectrum exporters are unimplemented stubs.
+
+Colouring a cavity surface by a property of its own lining residues is therefore
+this plugin's own, and it reuses the same per-residue sidecar and recolour
+kernel that colour a route and a pore wall, so the three are one mechanism
+rather than three. Neither reference program offers a legend for cavity
+colouring; ours follows the scale bar the other property views already use.

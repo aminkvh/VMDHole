@@ -6048,21 +6048,48 @@ if {$ntun > 0} {
         # the window and its controls
         ::VMDPathFinder::show_tunnel_cavities
         update idletasks; update
+        # Header and rows must share ONE grid: two grids in two frames cannot
+        # share column widths, so every row drifted out of line with its
+        # heading as soon as a cell's text changed length. And the table has to
+        # scroll, or a structure with many pockets grows a window taller than
+        # the screen with no way to reach the last row.
+        set _g $w.tuncav.sc.c.inner
+        set _hrow {}; set _drow {}
+        if {[winfo exists $_g]} {
+            foreach _sl [grid slaves $_g] {
+                set _gi [grid info $_sl]
+                if {[dict get $_gi -row] == 0} { lappend _hrow [dict get $_gi -column] }
+                if {[dict get $_gi -row] == 1} { lappend _drow [dict get $_gi -column] }
+            }
+        }
+        report "cavity header and rows share one grid, so columns line up" \
+               [expr {[llength $_hrow] > 3 && [llength $_drow] > 3
+                      && [llength [lsort -unique $_hrow]] <= [llength [lsort -unique $_drow]]}] \
+               "(header cols [lsort -integer $_hrow], row cols [lsort -integer $_drow])"
+        report "the cavity table scrolls and the window stays bounded" \
+               [expr {[winfo exists $w.tuncav.sc.sb]
+                      && [winfo reqheight $w.tuncav] < 700}] \
+               "(height [winfo reqheight $w.tuncav] px)"
         report "the cavities window offers show/hide all and both start-point rules" \
                [expr {[winfo exists $w.tuncav.ctl.all] && [winfo exists $w.tuncav.ctl.none]
                       && [winfo exists $w.tuncav.ctl.rm] && [winfo exists $w.tuncav.ctl.rc]
-                      && [winfo exists $w.tuncav.b.use0]}] ""
+                      && [winfo exists $w.tuncav.ctl.pm]
+                      && [winfo exists $w.tuncav.sc.c.inner.use1]}] \
+               "(the row buttons live in the scrolling grid now)"
         # sorting actually reorders
         set ::VMDPathFinder::state(cavity_sort_col) vol
         set ::VMDPathFinder::state(cavity_sort_dir) desc
         ::VMDPathFinder::show_tunnel_cavities
         update idletasks; update
-        set _fd ""; catch {set _fd [$w.tuncav.b.v0_3 cget -text]}
+        # first data row's Volume cell: rows start at grid row 1 (row 0 is the
+        # header, which now shares this same grid), column 3 is Volume
+        set _fd ""; catch {set _fd [$w.tuncav.sc.c.inner.v1_3 cget -text]}
         ::VMDPathFinder::_cavity_sort vol
         update idletasks; update
-        set _fa ""; catch {set _fa [$w.tuncav.b.v0_3 cget -text]}
+        set _fa ""; catch {set _fa [$w.tuncav.sc.c.inner.v1_3 cget -text]}
         report "clicking a cavity column header reverses the sort" \
-               [expr {$_fd ne "" && $_fa ne "" && $_fd != $_fa}] "(desc $_fd, asc $_fa)"
+               [expr {$_fd ne "" && $_fa ne "" && $_fd != $_fa}] \
+               "(desc '$_fd', asc '$_fa' - blank means the cell path moved)"
         # cavities draw on their OWN molecule, not the routes'
         ::VMDPathFinder::_cavity_show_all 1
         update idletasks; update
@@ -6092,6 +6119,75 @@ if {$ntun > 0} {
                       && $::VMDPathFinder::state(tunnel_start) ne $_s1
                       && [string match "*CAVER*" $::VMDPathFinder::state(status)]}] \
                "(MOLE $_s1 / CAVER $::VMDPathFinder::state(tunnel_start))"
+        # Colour by a property: the cavity surface goes through the SAME
+        # per-residue sidecar + recolour kernel a route and the pore wall use.
+        # The two residue tables are not interchangeable - MOLE's own
+        # charge/polarity/hydropathy are different constants from the HOLE
+        # scales of similar name - and mole_residue_property answers 0.0 for a
+        # token it does not carry, which produced a uniformly zero, flat
+        # surface rather than an error. So check the VALUES, not just that a
+        # file appeared.
+        set _side "/tmp/vmdpathfinder_cavprop_[pid].txt"
+        set _nrow 0
+        catch {set _nrow [::VMDPathFinder::write_cavity_property_sidecar \
+            $mid $_cfr $_cid $_side kd]}
+        set _vlo 1e30; set _vhi -1e30; set _cols4 1
+        if {$_nrow > 0 && ![catch {open $_side r} _sfh]} {
+            foreach _row [split [string trim [read $_sfh]] "\n"] {
+                if {[llength $_row] != 4} { set _cols4 0; continue }
+                set _v [lindex $_row 3]
+                if {$_v < $_vlo} { set _vlo $_v }
+                if {$_v > $_vhi} { set _vhi $_v }
+            }
+            close $_sfh
+        }
+        catch {file delete $_side}
+        report "a cavity's property sidecar carries real per-residue values" \
+               [expr {$_nrow > 0 && $_cols4 && $_vhi > $_vlo}] \
+               "($_nrow rows, kd range $_vlo..$_vhi - a flat range means the wrong table answered)"
+        report "kr is not offered for cavities (atom-level, no residue value)" \
+               [expr {"kr" ni [::VMDPathFinder::_cavity_prop_tokens]
+                      && "kd" in [::VMDPathFinder::_cavity_prop_tokens]}] ""
+        # and the colouring reaches the drawn surface
+        set ::VMDPathFinder::tunnel_cavity_shown([dict get [lindex [::VMDPathFinder::_cavity_tracks] 0] tid]) 1
+        set ::VMDPathFinder::state(cavity_prop) none
+        set _cmA [::VMDPathFinder::_render_cavities_for_frame $_cfr]
+        set _colA {}
+        if {$_cmA ne ""} {
+            foreach _it [graphics $_cmA list] {
+                set _i [graphics $_cmA info $_it]
+                if {[lindex $_i 0] eq "color"} { lappend _colA [lindex $_i 1] }
+            }
+        }
+        set ::VMDPathFinder::state(cavity_prop) kd
+        set _cmB [::VMDPathFinder::_render_cavities_for_frame $_cfr]
+        set _colB {}
+        if {$_cmB ne ""} {
+            foreach _it [graphics $_cmB list] {
+                set _i [graphics $_cmB info $_it]
+                if {[lindex $_i 0] eq "color"} { lappend _colB [lindex $_i 1] }
+            }
+        }
+        # Report the artefact too: if the recolour kernel could not run, the
+        # renderer falls back to the flat colour and the colour counts are
+        # equal - which must read as "the recolour did not happen", not as a
+        # silently acceptable pass.
+        set _rank [::VMDPathFinder::_cavity_rank_in_frame \
+            [dict get [lindex [::VMDPathFinder::_cavity_tracks] 0] tid] $_cfr]
+        set _fdc [file join $::VMDPathFinder::tunnel_root [format tunnel_%05d $_cfr]]
+        set _cplot [file join $_fdc [format "cavity_%02d_kd_v1.plot" $_rank]]
+        set _cgeo 0
+        catch {set _cgeo [::VMDPathFinder::surface_has_geometry $_cplot]}
+        # The recolour runs in sos_triangle; without that feature the renderer
+        # falls back to the flat colour by design, and the assertion below would
+        # be testing the environment rather than the code.
+        set _h3d 0
+        catch {set _h3d [::VMDPathFinder::sos_triangle_has_feature hydro3d]}
+        report "colouring a cavity by a property reaches the drawn surface" \
+               [expr {$_cgeo && [llength [lsort -unique $_colB]] > [llength [lsort -unique $_colA]]}] \
+               "(why='[expr {[info exists ::VMDPathFinder::_cavity_color_why] ? $::VMDPathFinder::_cavity_color_why : {unset}}]' hydro3d=$_h3d prop=$::VMDPathFinder::state(cavity_prop) rank=$_rank exists=[file exists $_cplot] geometry=$_cgeo; flat [llength [lsort -unique $_colA]] colours, by-property [llength [lsort -unique $_colB]])"
+        set ::VMDPathFinder::state(cavity_prop) none
+        ::VMDPathFinder::_cavity_show_all 0
         set ::VMDPathFinder::state(tunnel_start) $_saved_start
         catch {destroy $w.tuncav}
     }
