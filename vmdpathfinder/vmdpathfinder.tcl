@@ -48246,6 +48246,10 @@ proc ::VMDPathFinder::show_permeation_dialog {} {
     label $d.cfg.r1.zd -text "to"
     entry $d.cfg.r1.zhi -textvariable ::VMDPathFinder::state(perm_zhi) -width 6
     button $d.cfg.r1.auto -text "Auto" -command {
+        # Says so first: this measures the pore's axis in every analysed frame
+        # and takes seconds on a long run.
+        set ::VMDPathFinder::state(status) "Permeation: measuring the pore's extent along its axis..."
+        catch {update idletasks}
         set ::b ""
         set ::bmid [::VMDPathFinder::resolve_molid_or -1]
         if {$::bmid >= 0} {
@@ -48283,9 +48287,13 @@ Optional - only needed for rates and conductance."
     # placement, which is exactly the "opens under the pointer" behaviour being
     # fixed here. Centring it also deiconifies after the withdraw above.
     _center_toplevel $d
+    # The bulk planes are NOT measured here. Measuring them builds the counter's
+    # per-frame axis chain over the whole trajectory - one _asym_gather per
+    # analysed frame, 8.5 s on 100 frames - and doing it on open froze the
+    # window the moment it appeared, for a number the user may never need.
+    # Compute fills them itself, and the Auto button asks for them directly.
     if {$state(perm_zlo) eq "" || $state(perm_zhi) eq ""} {
-        set state(status) "Permeation: measuring the pore's extent along its axis..."
-        after idle [list ::VMDPathFinder::_permeation_fill_bounds $d]
+        set state(status) "Permeation: press Compute, or Auto, to measure the pore's extent."
     }
 }
 
@@ -48306,6 +48314,13 @@ proc ::VMDPathFinder::_run_permeation {} {
         return
     }
     set axis $state(perm_axis)
+    # Blank means "not measured yet" - measure them now. The chain this builds
+    # is the same one the count below needs, so nothing is paid twice.
+    if {$state(perm_zlo) eq "" || $state(perm_zhi) eq ""} {
+        set state(status) "Permeation: measuring the pore's extent along its axis..."
+        catch {update idletasks}
+        _permeation_fill_bounds $d
+    }
     if {![_is_finite $state(perm_zlo)] || ![_is_finite $state(perm_zhi)]} {
         pack [label $d.body.err -text "Set numeric bulk bounds (or click Auto)."] -fill x; return
     }
