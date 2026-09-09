@@ -37898,7 +37898,10 @@ proc ::VMDPathFinder::_conn_ionflow_spheres_fast {in_sph cvect_s cpoint_s margin
     # wall+margin AND in an escaped range", and "beyond wall+margin" IS the
     # definition of lateral, which the classifier has already decided. Pore dots
     # pass unconditionally; only LATERAL dots are escape-tested.
-    set _nat [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin]
+    # The CACHED classifier, not the raw native call: this runs once per frame
+    # per ion-flow scan, and the same frame's split is wanted again by the
+    # lobes panel and the redraw on the same click.
+    set _nat [_conn_classify_cached $in_sph $cvect_s $cpoint_s $margin]
     if {[dict size $_nat] && [dict exists $_nat escaped_ranges]} {
         set _er [dict get $_nat escaped_ranges]
         set out [_thin_spheres_to_voxels [dict get $_nat keep] 1.0]
@@ -57836,7 +57839,24 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
             set _ax_declared 1
         }
     }
-    if {!$_ax_declared} { lassign [oriented_axis $ref_centers] ux uy uz ax_x ax_y ax_z }
+    if {!$_ax_declared} {
+        # No axis file - an imported or older run. Before the PCA fit, try the
+        # DECLARED fields: they are the same axis the profile was measured on,
+        # and a PCA fit of one frame's centreline is not. Only a run with
+        # neither reaches oriented_axis, and it says so.
+        set _lcv [_resolve_cvect_now [resolve_molid_or -1] 0]
+        set _lcp [_point_now $state(cpoint) [resolve_molid_or -1] 0]
+        if {[llength $_lcv] == 3 && [llength $_lcp] == 3} {
+            lassign $_lcv ux uy uz
+            lassign $_lcp ax_x ax_y ax_z
+            set _ax_declared 1
+        } else {
+            lassign [oriented_axis $ref_centers] ux uy uz ax_x ax_y ax_z
+            catch {vmdcon -warn "VMDPathFinder: this run recorded no channel axis and CPOINT/CVECT are\
+                blank, so the mean tube is placed on a fit of one frame's centreline. Set CPOINT and\
+                CVECT, or re-run, if the tube does not follow the pore."}
+        }
+    }
 
     # oriented_axis's origin (ax_x/y/z) is the CENTROID of the reference frame's
     # centerline spheres - NOT HOLE's own coord=0 (CPOINT). collect_binned_radii's
