@@ -36184,17 +36184,17 @@ proc ::VMDPathFinder::_conn_gear_dialog {sid} {
         grid $d.c.sf -row $row -column 1 -sticky w -padx 6 -pady 2
         add_tooltip $d.c.sf.e "Hides openings that appear in only a few frames. Set it to 0 to list every one found."
         incr row
-        label $d.c.ml -text "At least" -anchor w
-        frame $d.c.mf
+        label $d.c.mshl -text "At least" -anchor w
+        frame $d.c.mshf
         if {![info exists state(conn_lobe_minshare)]} { set state(conn_lobe_minshare) [_conn_lobe_min_share] }
-        entry $d.c.mf.e -textvariable ::VMDPathFinder::state(conn_lobe_minshare) -width 4
-        label $d.c.mf.l -text "% of the sideways dots" -font {Helvetica 8}
-        pack $d.c.mf.e $d.c.mf.l -side left -padx {0 3}
-        bind $d.c.mf.e <Return>   {::VMDPathFinder::_commit_conn_lobe_minshare}
-        bind $d.c.mf.e <FocusOut> {::VMDPathFinder::_commit_conn_lobe_minshare}
-        grid $d.c.ml -row $row -column 0 -sticky w -pady 2
-        grid $d.c.mf -row $row -column 1 -sticky w -padx 6 -pady 2
-        add_tooltip $d.c.mf.e "How big a patch has to be before it is called an opening rather than noise,\
+        entry $d.c.mshf.e -textvariable ::VMDPathFinder::state(conn_lobe_minshare) -width 4
+        label $d.c.mshf.l -text "% of the sideways dots" -font {Helvetica 8}
+        pack $d.c.mshf.e $d.c.mshf.l -side left -padx {0 3}
+        bind $d.c.mshf.e <Return>   {::VMDPathFinder::_commit_conn_lobe_minshare}
+        bind $d.c.mshf.e <FocusOut> {::VMDPathFinder::_commit_conn_lobe_minshare}
+        grid $d.c.mshl -row $row -column 0 -sticky w -pady 2
+        grid $d.c.mshf -row $row -column 1 -sticky w -padx 6 -pady 2
+        add_tooltip $d.c.mshf.e "How big a patch has to be before it is called an opening rather than noise,\
             as a share of all the dots outside the pore. Applied before the Seen filter, so anything it drops\
             is not counted in the \"below the floor\" line either. Lower it to see small openings."
         incr row

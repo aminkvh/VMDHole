@@ -4985,7 +4985,7 @@ if {[winfo exists $_hp]} {
     if {[winfo exists $_cg2.c.el]} {
         set _exr [lindex [grid info $_cg2.c.el] [expr {[lsearch [grid info $_cg2.c.el] -row]+1}]]
         set _lastfield 0
-        foreach _fw {tf sf} {
+        foreach _fw {tf sf mshf} {
             if {![winfo exists $_cg2.c.$_fw]} { continue }
             set _fr [lindex [grid info $_cg2.c.$_fw] [expr {[lsearch [grid info $_cg2.c.$_fw] -row]+1}]]
             if {$_fr > $_lastfield} { set _lastfield $_fr }
