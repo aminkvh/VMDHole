@@ -455,6 +455,21 @@ static long mesh_run(const char *outpath, const char *plotpath) {
        moves every existing normal in that ring - left alone deliberately until
        someone asks for it. The probe is inert unless the variable is set
        (verified byte-identical output). */
+    /* The field marching cubes actually marches, materialised so the NORMALS
+       can be its gradient. Without smoothing the corner values come from
+       fval() = max(fpos, -fclip) - the pore minus the ENDRAD clip spheres -
+       while the normals were taken from fpos alone. On the wall those agree;
+       on a mouth cap, where the clip term decides the surface, the normal
+       described the wall the cap was carved out of instead of the cap.
+       Sampling this array makes the normal the gradient of exactly the
+       interpolant whose zero set the vertices sit on, which is what the
+       smoothing path (favg) has always done - so the two paths now agree
+       rather than one being patched.
+       Where fpos governs, max() returns fpos and this array holds the same
+       bits, so those normals are unchanged; only the mouths move. */
+    float *fvalf = malloc(ncorner * sizeof(float));
+    for (size_t i = 0; i < ncorner; i++) fvalf[i] = fval(i);
+
     float *favg = NULL;
     if (nwith > 0) {
         /* Every corner is averaged over ALL frames, sentinel included.
@@ -588,10 +603,9 @@ static long mesh_run(const char *outpath, const char *plotpath) {
                     tr->v[q*3+2] = (float)vv[q][2];
                     /* outward normal = gradient of f (central differences) */
                     double e = 0.5 * hf;
-                    const float *nf = favg ? favg : fpos;
+                    const float *nf = favg ? favg : fvalf;
                     /* CSG_DEBUG_NORMSRC=1: count vertices where the clip term
-                       decides the surface, i.e. where taking the normal from
-                       fpos differs from the gradient of fval. */
+                       decides the surface - the ones this fix moves. */
                     if (dbg_normsrc) {
                         if (-trisample(fclip, vv[q][0], vv[q][1], vv[q][2]) >
                              trisample(fpos,  vv[q][0], vv[q][1], vv[q][2]))
@@ -712,6 +726,7 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     if (dbg_normsrc)
         fprintf(stderr, "CSG_NORMSRC clip_dominated=%ld of %ld vertices (%.4f%%)\n",
                 dbg_clipdom, dbg_vtot, dbg_vtot ? 100.0*dbg_clipdom/dbg_vtot : 0.0);
+    free(fvalf);
     free(fpos); free(fclip); free(fown); free(fownc); free(favg);
     fpos = fclip = NULL; fown = fownc = NULL;
     free(tx); free(ty); free(tz); tx = ty = tz = NULL;
