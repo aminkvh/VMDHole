@@ -2670,7 +2670,7 @@ struct ifp_frame {
     double com[3], L[3], u[3];
     int *idx; double *px, *py, *pz; /* inline points only */
     int nkept, *kidx, *kslot;       /* kept: atom index and (stream mode) its slot */
-    double *kz, *kr, *kd3;
+    double *kz, *kr, *kd3, *kaz;
 };
 
 /* Read a little-endian 32-bit float without assuming the host's byte order or
@@ -2815,7 +2815,7 @@ static int ionflow_project(const char *infile, const char *outfile)
         const unsigned char *bx = NULL, *by = NULL, *bz = NULL;
         long np = p->n, j;
         int kept = 0, kk;   /* own indices: the function-scope k is shared across threads */
-        int *tslot; double *tz, *tr, *td3;
+        int *tslot; double *tz, *tr, *td3, *taz; double e1[3], e2[3];
         if (p->n < 0) {
             const unsigned char *blk = stream + p->slot * nw * 12;
             bx = blk; by = blk + nw*4; bz = blk + nw*8;
@@ -2825,6 +2825,7 @@ static int ionflow_project(const char *infile, const char *outfile)
         tz  = xa_malloc((np?np:1)*sizeof(double));
         tr  = xa_malloc((np?np:1)*sizeof(double));
         td3 = xa_malloc((np?np:1)*sizeof(double));
+        taz = xa_malloc((np?np:1)*sizeof(double));
         for (j = 0; j < np; j++) {
             double X, Y, Z, rx, ry, rz, z, qx, qy, qz, R, wx, wy, wz, mind = 1e30;
             int m;
@@ -2857,8 +2858,30 @@ static int ionflow_project(const char *infile, const char *outfile)
                 if (have_zwin && (z <= zlo || z >= zhi)) continue;
                 if (R >= scan_r) continue;
                 tslot[kept] = (int)j; tz[kept] = z; tr[kept] = R; td3[kept] = mind;
+                /* A branching tunnel has no single axis to take an azimuth
+                   about. 1e30 is the "none" marker the Tcl side maps to an
+                   empty value - a fabricated 0.0 would be attributed to
+                   whichever opening happens to sit at zero. */
+                taz[kept] = 1e30;
                 kept++;
                 continue;
+            }
+            /* Same basis _conn_axis_basis builds in Tcl: derived from the
+               axis alone so every frame shares one zero-point, or no opening
+               could be recognised from one frame to the next. */
+            {
+                double ax = (fabs(p->u[0]) < 0.9) ? 1.0 : 0.0;
+                double ay = (fabs(p->u[0]) < 0.9) ? 0.0 : 1.0;
+                double n1;
+                e1[0] = ay*p->u[2] - 0.0*p->u[1];
+                e1[1] = 0.0*p->u[0] - ax*p->u[2];
+                e1[2] = ax*p->u[1] - ay*p->u[0];
+                n1 = sqrt(e1[0]*e1[0] + e1[1]*e1[1] + e1[2]*e1[2]);
+                if (n1 < 1e-9) { e1[0]=1.0; e1[1]=0.0; e1[2]=0.0; n1=1.0; }
+                e1[0]/=n1; e1[1]/=n1; e1[2]/=n1;
+                e2[0] = p->u[1]*e1[2] - p->u[2]*e1[1];
+                e2[1] = p->u[2]*e1[0] - p->u[0]*e1[2];
+                e2[2] = p->u[0]*e1[1] - p->u[1]*e1[0];
             }
             z = rx*p->u[0]+ry*p->u[1]+rz*p->u[2];
             if (have_zwin && (z <= zlo || z >= zhi)) continue;
@@ -2871,6 +2894,8 @@ static int ionflow_project(const char *infile, const char *outfile)
                 if (surf < mind) mind = surf;
             }
             tslot[kept] = (int)j; tz[kept] = z; tr[kept] = R; td3[kept] = mind;
+            taz[kept] = atan2(qx*e2[0] + qy*e2[1] + qz*e2[2],
+                              qx*e1[0] + qy*e1[1] + qz*e1[2]);
             kept++;
         }
         /* Copy to exact-size arrays: a frame keeps a few hundred of tens of
@@ -2882,10 +2907,11 @@ static int ionflow_project(const char *infile, const char *outfile)
         p->kz    = xa_malloc((kept?kept:1)*sizeof(double));
         p->kr    = xa_malloc((kept?kept:1)*sizeof(double));
         p->kd3   = xa_malloc((kept?kept:1)*sizeof(double));
+        p->kaz   = xa_malloc((kept?kept:1)*sizeof(double));
         for (kk = 0; kk < kept; kk++) {
             p->kslot[kk] = tslot[kk];
             p->kidx[kk]  = bx ? widx[tslot[kk]] : p->idx[tslot[kk]];
-            p->kz[kk] = tz[kk]; p->kr[kk] = tr[kk]; p->kd3[kk] = td3[kk];
+            p->kz[kk] = tz[kk]; p->kr[kk] = tr[kk]; p->kd3[kk] = td3[kk]; p->kaz[kk] = taz[kk];
         }
         free(tslot); free(tz); free(tr); free(td3);
     }
@@ -2900,7 +2926,7 @@ static int ionflow_project(const char *infile, const char *outfile)
         long *cnt = calloc((size_t)(nw?nw:1), sizeof(long));
         long *off = calloc((size_t)(nw?nw:1)+1, sizeof(long));
         long total = 0, *fill = NULL;
-        int *gf = NULL; double *gz = NULL, *gr = NULL, *gd = NULL;
+        int *gf = NULL; double *gz = NULL, *gr = NULL, *gd = NULL, *ga = NULL;
         if (!cnt || !off) { fclose(o); free(cnt); free(off); fprintf(stderr,"\n--ionflow-project: out of memory\n"); goto done; }
         for (i = 0; i < nfr; i++) for (k = 0; k < fr[i].nkept; k++) cnt[fr[i].kslot[k]]++;
         for (ii = 0; ii < nw; ii++) { off[ii] = total; total += cnt[ii]; }
@@ -2910,11 +2936,13 @@ static int ionflow_project(const char *infile, const char *outfile)
         gz = malloc((size_t)(total?total:1)*sizeof(double));
         gr = malloc((size_t)(total?total:1)*sizeof(double));
         gd = malloc((size_t)(total?total:1)*sizeof(double));
+        ga = malloc((size_t)(total?total:1)*sizeof(double));
         if (!fill || !gf || !gz || !gr || !gd) { fclose(o); fprintf(stderr,"\n--ionflow-project: out of memory\n"); goto done; }
         for (i = 0; i < nfr; i++) {
             for (k = 0; k < fr[i].nkept; k++) {
                 long sl = fr[i].kslot[k], at = off[sl] + fill[sl]++;
                 gf[at] = fr[i].frame; gz[at] = fr[i].kz[k]; gr[at] = fr[i].kr[k]; gd[at] = fr[i].kd3[k];
+                ga[at] = fr[i].kaz[k];
             }
         }
         for (ii = 0; ii < nw; ii++) {
@@ -2925,14 +2953,19 @@ static int ionflow_project(const char *infile, const char *outfile)
             for (q = 0; q < n; q++) fprintf(o, " %.17g", gz[b+q]);
             for (q = 0; q < n; q++) fprintf(o, " %.17g", gr[b+q]);
             for (q = 0; q < n; q++) fprintf(o, " %.17g", gd[b+q]);
+            /* Fifth block: azimuth. Readers that predate it stop after the
+               fourth and ignore the rest, so the format stays backward
+               compatible in the direction that matters. */
+            for (q = 0; q < n; q++) fprintf(o, " %.17g", ga[b+q]);
             fputc('\n', o);
         }
-        free(cnt); free(off); free(fill); free(gf); free(gz); free(gr); free(gd);
+        free(cnt); free(off); free(fill); free(gf); free(gz); free(gr); free(gd); free(ga);
     } else {
         for (i = 0; i < nfr; i++) {
             fprintf(o, "F %d %d\n", fr[i].frame, fr[i].nkept);
             for (k = 0; k < fr[i].nkept; k++)
-                fprintf(o, "%d %.17g %.17g %.17g\n", fr[i].kidx[k], fr[i].kz[k], fr[i].kr[k], fr[i].kd3[k]);
+                fprintf(o, "%d %.17g %.17g %.17g %.17g\n", fr[i].kidx[k], fr[i].kz[k],
+                        fr[i].kr[k], fr[i].kd3[k], fr[i].kaz[k]);
         }
     }
     fclose(o);

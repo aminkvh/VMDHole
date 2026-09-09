@@ -76,11 +76,34 @@ else
     bad "episodes do not require adjacent frames - gaps would count as dwell"
 fi
 
-# 7. water must not be counted as ion traffic
-if printf '%s' "$OCC" | grep -q 'species\] eq "Water"} { continue }'; then
-    ok "water is excluded from the ion-frame counts"
+# 7. water must be counted SEPARATELY, not folded into the ion figures
+if printf '%s' "$OCC" | grep -q 'set _iswater' && \
+   printf '%s' "$OCC" | grep -q 'dict set e waters'; then
+    ok "water is counted separately from the ion-frame figures"
 else
-    bad "water contributes to a count the UI calls ion-frames"
+    bad "water is not separated from the counts the UI calls ion-frames"
+fi
+EP=$(awk '/^proc ::VMDPathFinder::_conn_open_close_episode/,/^}/' "$TCL")
+if printf '%s' "$EP" | grep -q 'if {\$iswater}' && printf '%s' "$EP" | grep -q 'wdwellsum'; then
+    ok "a water visit lands in the water residence sums, not the ion ones"
+else
+    bad "water and ion episodes share one dwell accumulator"
+fi
+
+# 8. the C engine must emit an azimuth, and the reader must survive one that does not
+C="$ROOT/native/sos_triangle_fast.c"
+if [ -f "$C" ]; then
+    if grep -q 'ga\[b+q\]' "$C" && grep -q 'taz\[kept\] = 1e30' "$C"; then
+        ok "the projector emits an azimuth, with 1e30 for a tunnel sample"
+    else
+        bad "the C projector does not emit a per-sample azimuth"
+    fi
+fi
+FL=$(awk '/^proc ::VMDPathFinder::_ion_flow_project_flush/,/^}/' "$TCL")
+if printf '%s' "$FL" | grep -q 'lrepeat \$_n ""'; then
+    ok "a binary that writes only four blocks still loads, with empty azimuths"
+else
+    bad "the reader assumes the fifth block is present"
 fi
 
 echo "ion-flow-azimuth: $pass passed, $fail failed"

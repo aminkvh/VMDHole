@@ -35090,10 +35090,16 @@ proc ::VMDPathFinder::_conn_lobe_ion_text {row frame occ} {
     append tip [format ". Mean visit %.1f consecutive frame(s)" [dict get $e dwell]]
     append tip ". [dict get $e cross] visit(s) moved 3 A or more radially while inside it"
     append tip " - that is radial travel, NOT a verified lumen-to-bulk passage: it does not test where the ion came from or went."
+    if {[dict exists $e waters] && [dict get $e waters] > 0} {
+        append tip [format "\n\nWater: %d water-frames, mean stay %.1f consecutive frame(s), longest %d." \
+            [dict get $e waters] [dict get $e wdwell] [dict get $e wmax]]
+    } else {
+        append tip "\n\nWater: none recorded here (scan water in the Ion Flow tab to fill this in)."
+    }
     return [list [dict get $e ions] $tip]
 }
 
-proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last} {
+proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last {iswater 0}} {
     # One visit to one opening, finished. Records its length (for the mean
     # dwell) and its RADIAL TRAVEL: whether the ion's distance from the axis
     # changed by >= 3 A between the first and last frame of the visit.
@@ -35105,6 +35111,15 @@ proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last} {
     # tooltip both say "moved >=3 A radially" instead.
     upvar 1 $outvar out
     set e [dict get $out $lb]
+    if {$iswater} {
+        # Water residence: its own sums, and the longest single stay, which is
+        # what distinguishes a trapped water from one drifting past.
+        dict set e wdwellsum [expr {[dict get $e wdwellsum] + $run}]
+        dict set e wdwelln [expr {[dict get $e wdwelln] + 1}]
+        if {$run > [dict get $e wmax]} { dict set e wmax $run }
+        dict set out $lb $e
+        return
+    }
     dict set e dwellsum [expr {[dict get $e dwellsum] + $run}]
     dict set e dwelln [expr {[dict get $e dwelln] + 1}]
     if {$r_first ne "" && $r_last ne "" && abs($r_last - $r_first) >= 3.0} {
@@ -35198,10 +35213,11 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
 
     set out [dict create]
     foreach tr [dict get $ion_flow_raw traces] {
-        # IONS ONLY. Water dwell and crossing are a different quantity and the
-        # column says "ion-frames"; mixing them in was a presentation lie.
-        if {[dict get $tr species] eq "Water"} { continue }
+        # Water is counted SEPARATELY, never folded into the ion figures: the
+        # column says "ion-frames" and a water is not an ion. Its own residence
+        # is what the water columns report.
         set sp [dict get $tr species]
+        set _iswater [expr {$sp eq "Water"}]
         set azs [expr {[dict exists $tr az] ? [dict get $tr az] : {}}]
         if {![llength $azs]} continue
         set zs [dict get $tr z]; set fs [dict get $tr frame]; set rs [dict get $tr r]
@@ -35216,19 +35232,24 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
                 if {[dict exists $c2s "$zi,$ti"]} { set site [dict get $c2s "$zi,$ti"] }
             }
             if {$site eq ""} {
-                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
+                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last $_iswater }
                 set prev_site ""; set prev_f ""; set run 0; continue
             }
             if {![dict exists $out $site]} {
                 dict set out $site [dict create ions 0 species [dict create] waters 0 \
-                                                dwellsum 0 dwelln 0 cross 0 frames [dict create]]
+                                                dwellsum 0 dwelln 0 cross 0 frames [dict create] \
+                                                wdwellsum 0 wdwelln 0 wmax 0]
             }
             set e [dict get $out $site]
-            dict set e ions [expr {[dict get $e ions] + 1}]
-            set spd [dict get $e species]
-            dict set spd $sp [expr {([dict exists $spd $sp] ? [dict get $spd $sp] : 0) + 1}]
-            dict set e species $spd
-            set fd [dict get $e frames]; dict set fd $f 1; dict set e frames $fd
+            if {$_iswater} {
+                dict set e waters [expr {[dict get $e waters] + 1}]
+            } else {
+                dict set e ions [expr {[dict get $e ions] + 1}]
+                set spd [dict get $e species]
+                dict set spd $sp [expr {([dict exists $spd $sp] ? [dict get $spd $sp] : 0) + 1}]
+                dict set e species $spd
+                set fd [dict get $e frames]; dict set fd $f 1; dict set e frames $fd
+            }
             dict set out $site $e
             # An episode is CONSECUTIVE analysed frames in the same opening. A
             # gap is a new visit, not a longer one.
@@ -35236,16 +35257,18 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
             if {$adjacent} {
                 incr run; set r_last $rr
             } else {
-                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
+                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last $_iswater }
                 set run 1; set r_first $rr; set r_last $rr
             }
             set prev_site $site; set prev_f $f
         }
-        if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
+        if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last $_iswater }
     }
     dict for {sid e} $out {
         set n [dict get $e dwelln]
         dict set e dwell [expr {$n > 0 ? [dict get $e dwellsum]/double($n) : 0.0}]
+        set wn [dict get $e wdwelln]
+        dict set e wdwell [expr {$wn > 0 ? [dict get $e wdwellsum]/double($wn) : 0.0}]
         dict set e nframes [dict size [dict get $e frames]]
         dict set out $sid $e
     }
@@ -44486,7 +44509,7 @@ proc ::VMDPathFinder::_ion_flow_project_flush {dir jc cc} {
     # frame (the older form). The scratch directory is removed either way.
     # Returns 1 on success, 0 if the binary failed or wrote nothing.
     variable state
-    upvar 1 _w_f _w_f _w_z _w_z _w_r _w_r _w_d3 _w_d3
+    upvar 1 _w_f _w_f _w_z _w_z _w_r _w_r _w_d3 _w_d3 _w_az _w_az
     catch {close $jc}
     if {$cc ne ""} { catch {close $cc} }
     set in  [file join $dir in.txt]
@@ -44505,15 +44528,36 @@ proc ::VMDPathFinder::_ion_flow_project_flush {dir jc cc} {
                 set _lf [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
                 set _lz [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
                 set _lr [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
-                set _ld [lrange $line $_b [expr {$_b+$_n-1}]]
+                set _ld [lrange $line $_b [expr {$_b+$_n-1}]]; incr _b $_n
+                # Fifth block: azimuth, added so a water can be attributed to a
+                # lateral opening. A binary predating it writes four blocks and
+                # this comes back empty, which the consumers already treat as
+                # "no azimuth" rather than a zero angle.
+                set _la [lrange $line $_b [expr {$_b+$_n-1}]]
+                # 1e30 is the engine's "no azimuth" marker (a branching tunnel
+                # has no single axis); an older binary writes four blocks and
+                # this list comes back short. Both become an empty value, which
+                # the attribution already skips - never a zero angle, which
+                # would land on whichever opening sits at zero.
+                if {[llength $_la] != $_n} {
+                    set _la [lrepeat $_n ""]
+                } else {
+                    set _tmp {}
+                    foreach _v $_la {
+                        lappend _tmp [expr {[string is double -strict $_v] && $_v < 1e29 ? $_v : ""}]
+                    }
+                    set _la $_tmp
+                }
                 if {[info exists _w_f($_wi)]} {
                     lappend _w_f($_wi)  {*}$_lf
                     lappend _w_z($_wi)  {*}$_lz
                     lappend _w_r($_wi)  {*}$_lr
                     lappend _w_d3($_wi) {*}$_ld
+                    lappend _w_az($_wi) {*}$_la
                 } else {
                     set _w_f($_wi) $_lf; set _w_z($_wi) $_lz
                     set _w_r($_wi) $_lr; set _w_d3($_wi) $_ld
+                    set _w_az($_wi) $_la
                 }
             } elseif {$_k eq "F"} {
                 set _wf [lindex $line 1]
