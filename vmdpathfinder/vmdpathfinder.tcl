@@ -6072,8 +6072,19 @@ proc ::VMDPathFinder::draw_tunnel_profile_plot {} {
         $cv create text [expr {$ml-6}] $yy -anchor e -font {Helvetica 7} -text [format $_lfmt $yv]
     }
     lassign $tuple bott len
+    # Name the TRACKED route - the number the list shows and the 3D colour keys
+    # on. $id is MOLE's rank in the displayed frame and is usually a different
+    # number (tracked route 2 plotted as "Tunnel 16"), or blank on a frame the
+    # route is absent from, so titling with it made the plot impossible to match
+    # against the surface on screen.
+    set _cid [_tunnel_selected_cluster]
+    set _who [expr {$_cid ne "" ? "Route $_cid" : "Selected route"}]
     $cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} \
-        -text "Tunnel $id profile - bottleneck [format %.2f $bott] Å at length [format %.1f $len] Å"
+        -text "$_who profile - bottleneck [format %.2f $bott] Å at length [format %.1f $len] Å"
+    if {$_cid ne "" && $id ne "" && "$_cid" ne "$id"} {
+        $cv create text [expr {$ml+$pw/2}] 26 -anchor n -font {Helvetica 7} -fill "#555555" \
+            -text "MOLE ranks it $id in this frame; Route $_cid is the tracked number the list and the 3D colour use"
+    }
     # The pore profile states what its curve is made of under the title; a
     # tunnel's counterparts are where along the path the bottleneck sits, how
     # many layers MOLE resolved, and the mean radius over them. Everything here
