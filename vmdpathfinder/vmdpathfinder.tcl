@@ -555,6 +555,7 @@ namespace eval ::VMDPathFinder:: {
         cvect {}
         axis_stick_mode cpoint
         surface_smooth follow
+        smooth_window_disp 0
         axis_stick_step_cpoint 1.0
         axis_stick_vec_pt p1
         cvect_def_p1 {}
@@ -2869,6 +2870,17 @@ Stricter than Passage, which counts ions that merely entered."
     # Abort button lives on the options row BELOW the transport controls (created +
     # shown/hidden there - see the options row build and _show_abort_button), so it
     # sits UNDER the playback buttons rather than inline among them.
+    # Smoothing sits with the frame controls because that is what it averages
+    # over. -side right packs outermost-first, so this lands to the RIGHT of >|.
+    label   $w.bottom.transport.sm_l -text "Smooth"
+    spinbox $w.bottom.transport.sm -width 3 -from 0 -to 99 -increment 1 -justify right \
+        -textvariable ::VMDPathFinder::state(smooth_window_disp) \
+        -command ::VMDPathFinder::_smooth_spin_changed
+    bind $w.bottom.transport.sm <Return>   ::VMDPathFinder::_smooth_spin_changed
+    bind $w.bottom.transport.sm <KP_Enter> ::VMDPathFinder::_smooth_spin_changed
+    bind $w.bottom.transport.sm <FocusOut> ::VMDPathFinder::_smooth_spin_changed
+    pack $w.bottom.transport.sm    -side right -padx {1 0}
+    pack $w.bottom.transport.sm_l  -side right -padx {8 2}
     pack $w.bottom.transport.last  -side right -padx {1 0}
     pack $w.bottom.transport.next  -side right -padx 1
     pack $w.bottom.transport.slider -side left -fill x -expand 1 -padx {0 4}
@@ -2879,6 +2891,10 @@ Stricter than Passage, which counts ions that merely entered."
     add_tooltip $w.bottom.transport.next  "Step forward one frame."
     add_tooltip $w.bottom.transport.last  "Jump to the last frame."
     add_tooltip $w.bottom.transport.fnum  "Type a frame number and press Enter to jump there."
+    add_tooltip $w.bottom.transport.sm    "Average over this many frames either side. 0 is off.\
+        Sets VMD's own trajectory smoothing on every representation of the molecule, and the\
+        plugin's frame averaging of the surface, so the two always match. Changing it in\
+        Graphics > Representations updates this box too."
 
     # Options row: frame-list toggle. Playback speed is VMD's own (the play
     # button drives VMD's animate engine), so there is no separate speed control.
@@ -17963,29 +17979,27 @@ proc ::VMDPathFinder::_surface_smooth_window {} {
 }
 
 proc ::VMDPathFinder::_smooth_watch_tick {} {
-    # Under "Follow", the smoothing window is VMD'S OWN per-rep slider, changed
-    # in Graphics > Representations with no call into this plugin - so a change
-    # only reached the surface on the next scrub, which is what re-checks the
-    # cached _s<N> tag. Poll it instead: one `mol smoothrep` read per visible
-    # rep, twice a second, and repaint when the number actually moves.
+    # The window has TWO writers: the spinbox on the Frames row, and VMD's own
+    # per-rep slider in Graphics > Representations. VMD never calls into the
+    # plugin, so its side is polled - one `mol smoothrep` read per shown rep,
+    # twice a second - and whichever moved last wins.
     variable _smooth_watch_after
     variable _smooth_watch_last
     variable state
     set _smooth_watch_after ""
     variable w
     if {![_have_tk] || ![winfo exists $w]} { return }
-    if {[catch {_surface_smooth_window} n]} { set n 0 }
+    if {[catch {_vmd_smooth_window} n]} { set n 0 }
     if {![info exists _smooth_watch_last]} { set _smooth_watch_last $n }
     if {$n ne $_smooth_watch_last} {
         set _smooth_watch_last $n
-        # Only when Follow is what is actually driving it: an explicit window
-        # already repaints through _set_surface_smooth.
-        if {[info exists state(surface_smooth)] && $state(surface_smooth) eq "follow"} {
-            variable last_geom_key
-            set last_geom_key ""
-            catch {apply_display_change}
-        }
+        # Changed in VMD: adopt it, which also copies it to every other rep so
+        # the molecule and the pore inside it stay on one window.
+        if {$n ne [_surface_smooth_window]} { catch {_set_smooth_window $n} }
     }
+    # The spinbox only ever displays the effective window, so it cannot drift
+    # from it even if something else writes state(surface_smooth).
+    catch {set state(smooth_window_disp) [_surface_smooth_window]}
     _smooth_watch_start
 }
 
@@ -18156,24 +18170,51 @@ proc ::VMDPathFinder::_tunnel_smooth_with {frame rank} {
     return $with
 }
 
-proc ::VMDPathFinder::_set_surface_smooth {val disp} {
+proc ::VMDPathFinder::_vmd_smooth_window {} {
+    # VMD's own trajectory smoothing window, as the widest of the shown
+    # representations. Read straight from VMD, not from state(surface_smooth).
+    set n 0
+    catch {
+        set molid [resolve_molid]
+        for {set r 0} {$r < [molinfo $molid get numreps]} {incr r} {
+            if {![mol showrep $molid $r]} continue
+            set wv [mol smoothrep $molid $r]
+            if {[string is integer -strict $wv] && $wv > $n} { set n $wv }
+        }
+    }
+    return $n
+}
+
+proc ::VMDPathFinder::_set_smooth_window {n} {
+    # ONE number for both smoothings: VMD's trajectory window on every
+    # representation of the molecule, and the plugin's own frame averaging of
+    # the surface. Setting them together is what keeps the protein and the pore
+    # inside it on the same window.
     variable state
     variable last_geom_key
-    if {[info exists state(surface_smooth)] && $state(surface_smooth) eq $val} { return }
-    set state(surface_smooth) $val
-    set state(surface_smooth_disp) $disp
+    if {![string is integer -strict $n] || $n < 0} { set n 0 }
+    set state(surface_smooth) $n
+    set state(smooth_window_disp) $n
+    # Every representation, not only the shown ones - a rep turned on later
+    # would otherwise carry a different window from the rest.
+    catch {
+        set molid [resolve_molid]
+        for {set r 0} {$r < [molinfo $molid get numreps]} {incr r} {
+            catch {mol smoothrep $molid $r $n}
+        }
+    }
     set last_geom_key ""
     catch {apply_display_change}
     catch {update_pore_lining_rep}
     catch {update_pore_facing_rep}
 }
 
-proc ::VMDPathFinder::_surface_smooth_label {v} {
-    switch -- $v {
-        follow { return "Follow VMD" }
-        off    { return "Off" }
-        default { return "$v frames" }
-    }
+proc ::VMDPathFinder::_smooth_spin_changed {args} {
+    variable state
+    set n [string trim $state(smooth_window_disp)]
+    if {![string is integer -strict $n] || $n < 0} { set n 0 }
+    if {$n eq [_surface_smooth_window]} { set state(smooth_window_disp) $n; return }
+    _set_smooth_window $n
 }
 
 # The dot-cloud smoother for the legacy pair: the shipped sos_triangle when it
@@ -22927,44 +22968,33 @@ proc ::VMDPathFinder::show_settings_dialog {} {
     }
     frame $d.ms_vx
     label $d.ms_vx.l1 -text "grid"
-    entry $d.ms_vx.e1 -textvariable ::VMDPathFinder::state(csg_voxel) -width 5
+    entry $d.ms_vx.e1 -textvariable ::VMDPathFinder::state(csg_voxel) -width 4
     label $d.ms_vx.l2 -text "neck"
-    entry $d.ms_vx.e2 -textvariable ::VMDPathFinder::state(csg_voxel_fine) -width 5
-    pack $d.ms_vx.l1 $d.ms_vx.e1 $d.ms_vx.l2 $d.ms_vx.e2 -side left -padx {0 4}
+    entry $d.ms_vx.e2 -textvariable ::VMDPathFinder::state(csg_voxel_fine) -width 4
+    pack $d.ms_vx.l1 $d.ms_vx.e1 $d.ms_vx.l2 $d.ms_vx.e2 -side left -padx {0 2}
     # the mesher's own knob sits beside it on the same row: grid/neck for
     # marching cubes, dot density for sos_triangle (_update_mesher_rows)
     frame $d.ms_dd
-    label $d.ms_dd.l -text "dot density"
-    entry $d.ms_dd.e -textvariable ::VMDPathFinder::state(dot_density) -width 5
+    label $d.ms_dd.l -text "dots"
+    entry $d.ms_dd.e -textvariable ::VMDPathFinder::state(dot_density) -width 4
     label $d.ms_dd.l2 -text "playback"
-    entry $d.ms_dd.e2 -textvariable ::VMDPathFinder::state(draft_stride) -width 5
+    entry $d.ms_dd.e2 -textvariable ::VMDPathFinder::state(draft_stride) -width 4
     label $d.ms_dd.l3 -text "Connolly"
-    entry $d.ms_dd.e3 -textvariable ::VMDPathFinder::state(conn_draft_dotden) -width 5
-    pack $d.ms_dd.l $d.ms_dd.e $d.ms_dd.l2 $d.ms_dd.e2 $d.ms_dd.l3 $d.ms_dd.e3 -side left -padx {0 4}
+    entry $d.ms_dd.e3 -textvariable ::VMDPathFinder::state(conn_draft_dotden) -width 4
+    pack $d.ms_dd.l $d.ms_dd.e $d.ms_dd.l2 $d.ms_dd.e2 $d.ms_dd.l3 $d.ms_dd.e3 -side left -padx {0 2}
     grid $d.ms_l -row $row -column 0 -sticky w -padx 8 -pady 3
     grid $d.ms_mb -row $row -column 1 -sticky w -padx 8 -pady 3
-    grid $d.ms_vx -row $row -column 2 -sticky w -padx 8 -pady 3
-    grid $d.ms_dd -row $row -column 2 -sticky w -padx 8 -pady 3
+    grid $d.ms_vx -row $row -column 2 -sticky w -padx {0 8} -pady 3
+    grid $d.ms_dd -row $row -column 2 -sticky w -padx {0 8} -pady 3
     incr row
     add_tooltip $d.ms_mb "Marching cubes (mesh_csg) or HOLE\'s sos_triangle."
     add_tooltip $d.ms_vx "Cell size in \u00c5. Neck applies to spherical runs only."
-    add_tooltip $d.ms_dd.e "sph_process dots per sphere."
+    add_tooltip $d.ms_dd.l "Dots per sphere that sph_process generates. Higher is smoother and slower."
+    add_tooltip $d.ms_dd.e "Dots per sphere that sph_process generates. Higher is smoother and slower."
     add_tooltip $d.ms_dd.e2 "Draw every Nth triangle while playing."
     add_tooltip $d.ms_dd.e3 "Dot density while playing, for a frame with no surface yet."
-    label $d.sm_l -text "Smoothing"
-    set ::VMDPathFinder::state(surface_smooth_disp) [_surface_smooth_label $::VMDPathFinder::state(surface_smooth)]
-    menubutton $d.sm_mb -textvariable ::VMDPathFinder::state(surface_smooth_disp) \
-        -relief raised -width 18 -anchor w -indicatoron 1 -menu $d.sm_mb.m
-    menu $d.sm_mb.m -tearoff 0
-    foreach _smv {follow off 1 2 3 5} {
-        $d.sm_mb.m add command -label [_surface_smooth_label $_smv] \
-            -command [list ::VMDPathFinder::_set_surface_smooth $_smv [_surface_smooth_label $_smv]]
-    }
-    grid $d.sm_l  -row $row -column 0 -sticky w -padx 8 -pady 3
-    grid $d.sm_mb -row $row -column 1 -sticky w -padx 8 -pady 3
-    incr row
-    add_tooltip $d.sm_mb "Average the surface over neighbouring frames. Follow VMD uses the\
-        trajectory smoothing window of the shown representations. Numbers stay per frame."
+    # Smoothing moved to the Frames row, beside the playback buttons, where it
+    # is a spinbox driving VMD's own window as well as the plugin's.
     set ::VMDPathFinder::_settings_d $d
     _update_mesher_rows
 
@@ -25759,8 +25789,7 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
     checkbutton $d.sb.ex  -text "Exact selection" \
         -variable ::VMDPathFinder::state(cvect_exact) \
         -command [list ::VMDPathFinder::_cvect_stab_excl $d exact]
-    label       $d.sb.note -text "" -foreground gray40 -font {Helvetica 8}
-    pack $d.sb.l $d.sb.cv $d.sb.ex $d.sb.note -side left -padx {0 6}
+    pack $d.sb.l $d.sb.cv $d.sb.ex -side left -padx {0 6}
     grid $d.sb -row 4 -column 0 -columnspan 4 -sticky w -padx 6 -pady {0 4}
     label $d.result -text "" -anchor w -foreground blue -wraplength 340 -justify left
     grid $d.result -row 5 -column 0 -columnspan 4 -sticky ew -padx 6
@@ -25775,8 +25804,8 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
     pack $d.btns.guess $d.btns.z $d.btns.calc -side left -padx {0 4}
     pack $d.btns.close -side right
     grid $d.btns -row 6 -column 0 -columnspan 4 -sticky ew -padx 6 -pady {4 6}
-    add_tooltip $d.sb.cv "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
-    add_tooltip $d.sb.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
+    add_tooltip $d.sb.cv ""
+    add_tooltip $d.sb.ex ""
     _cvect_sync_stab_controls $d
 }
 
@@ -25801,16 +25830,21 @@ proc ::VMDPathFinder::_cvect_sync_stab_controls {d} {
          [normalize_triplet_value $state(cvect_def_p2)] eq {})}]
     catch {$d.sb.cv configure -state [expr {$has_def ? "normal" : "disabled"}]}
     catch {$d.sb.ex configure -state [expr {$has_sel ? "normal" : "disabled"}]}
+    # Why a control is greyed goes in its tooltip, not in a label on the row -
+    # the label was as wide as the rest of the dialog put together.
+    set _why_stab "Re-fits each endpoint's local context per frame, then recomputes the direction."
+    set _why_exact "Re-evaluates the two endpoint selections literally each frame, with no fit."
     if {!$has_def} {
         set state(stabilize_cvect) 0
         set state(cvect_exact) 0
-        catch {$d.sb.note configure -text ""}
+        append _why_stab "\nNeeds CVECT defined from two points."
+        append _why_exact "\nNeeds CVECT defined from two points."
     } elseif {!$has_sel} {
         set state(cvect_exact) 0
-        catch {$d.sb.note configure -text "Exact needs a selection endpoint"}
-    } else {
-        catch {$d.sb.note configure -text ""}
+        append _why_exact "\nNeeds at least one endpoint given as a selection, not as x y z."
     }
+    catch {set_tooltip $d.sb.cv $_why_stab}
+    catch {set_tooltip $d.sb.ex $_why_exact}
 }
 
 proc ::VMDPathFinder::_cvect_stab_excl {d which} {
@@ -26444,7 +26478,7 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right \
         -textvariable ::VMDPathFinder::state(axis_stick_step_cpoint)
     label   $d.sv.val_l -text "Value"
-    label   $d.sv.val_v -width 24 -anchor w -relief sunken
+    label   $d.sv.val_v -width 30 -anchor w -relief sunken
     pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
     pack $d.sv.val_l -side left -padx {10 4}
     pack $d.sv.val_v -side left

@@ -5121,7 +5121,16 @@ chk "...and so does the Facing overlay" \
     [expr {[string first {_pore_surface_spheres $frame 1} \
         [info body ::VMDPathFinder::update_pore_facing_rep]] >= 0}] 1
 chk "changing the smoothing window refreshes the lining" \
-    [expr {[string first {update_pore_lining_rep} [info body ::VMDPathFinder::_set_surface_smooth]] >= 0}] 1
+    [expr {[string first {update_pore_lining_rep} [info body ::VMDPathFinder::_set_smooth_window]] >= 0}] 1
+# The window is one number driving two smoothings. Setting it must reach VMD's
+# own per-rep window as well as the plugin's frame averaging, or the protein and
+# the pore inside it drift apart.
+chk "...and pushes the same window into every VMD representation" \
+    [expr {[string first {mol smoothrep $molid $r $n} \
+        [info body ::VMDPathFinder::_set_smooth_window]] >= 0}] 1
+chk "...and a change made in VMD is adopted back" \
+    [expr {[string first {_set_smooth_window $n} \
+        [info body ::VMDPathFinder::_smooth_watch_tick]] >= 0}] 1
 set _bht [info body ::VMDPathFinder::build_hydro_trinorm]
 chk "property colouring lines against the smoothing window's spheres" \
     [expr {[string first {_smooth_union_sph $frame $sph_file} $_bht] >= 0}] 1
