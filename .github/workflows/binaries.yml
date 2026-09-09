@@ -65,28 +65,41 @@ jobs:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc
 
+      # OPT is passed EXPLICITLY. Both build scripts default to -O2 from their
+      # own OPT="${OPT:--O2}", so calling them bare published -O2 binaries while
+      # this workflow's header, docs/installation.md and packaging/make_zip.sh
+      # all state -O0. The policy is deliberate - a published artefact should be
+      # the one whose provenance is stated - so the flag belongs here, not in a
+      # comment.
       - name: Build the C tools (portable, not native-targeted)
         if: runner.os != 'Windows'
         working-directory: native
+        env:
+          OPT: "-O0"
         run: sh build.sh
 
       - name: Build the C tools (Windows, MinGW-w64)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         working-directory: native
+        env:
+          OPT: "-O0"
         run: sh build.sh
 
       # Linux additionally gets the FULL acceleration: the pinned HOLE 2 source
       # is cloned, our Fortran patches applied, and the accelerated hole +
-      # sph_process built (build-vmdpathfinder-optimized.sh; default -O2, portable -
-      # the script itself refuses -march=native for FP-identity reasons).
+      # sph_process built (build-vmdpathfinder-optimized.sh, at -O0 like the
+      # rest of the bundle - the script itself also refuses -march=native for
+      # FP-identity reasons). The ACCELERATION here is the Fortran patches
+      # (parallel CONNOLLY, fast CAPSULE), which -O0 keeps; -O2 is a separate
+      # axis and belongs to a local build.
       # macOS runners have no gfortran by default, so the mac bundle stays the
       # three C tools - stated in its README.
       - name: Build the patched HOLE pair (Linux only)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update && sudo apt-get install -y gfortran
-          sh native/build-vmdpathfinder-optimized.sh "" "$PWD/accel_out"
+          OPT="-O0" sh native/build-vmdpathfinder-optimized.sh "" "$PWD/accel_out"
 
       - name: Stage the artefacts with their provenance
         shell: bash
@@ -164,6 +177,17 @@ jobs:
           name: vmdpathfinder-binaries-${{ matrix.tag }}
           path: vmdpathfinder-binaries-${{ matrix.tag }}.tar.gz
 
+      # A release gate that CAN run here. The full scientific gate
+      # (VMDPATHFINDER_RELEASE=1 ./run_tests.sh) needs VMD and an X display, so
+      # it cannot run on these runners - and treating a SKIP as a pass is
+      # exactly what that flag exists to prevent. What runs headless runs here,
+      # and the notes say plainly that the full gate is a local step, so its
+      # absence is stated rather than implied by silence.
+      - name: Release gate (the parts that run without VMD)
+        if: runner.os == 'Linux'
+        run: |
+          ./tests/unit/run_unit_tests.sh
+          ./vmdpathfinder/tests/test_release_integrity.sh
       - name: Attach to the release
         if: github.event_name == 'release' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2

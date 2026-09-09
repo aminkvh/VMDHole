@@ -39,6 +39,7 @@ jobs:
           for f in sos_triangle_fast.c voronoi/vor_delaunay.c voronoi/vor_predicates.c \
                    mole/mole_main.c mole/mole_tunnel.c mole/mole_lining.c \
                    mole/mole_complex.c mole/mole_dh.c mole/mole_rng.c \
+                   nm/nm_search.c nm/mesh_csg.c conn_lobes.c \
                    hydration/hydro_project.c; do
             echo "=== $f ==="
             cc -fsyntax-only -Wall -Wextra "$f" 2>&1 | head -40 || true

@@ -51,7 +51,12 @@ fi
 # build of the repository (./native/). Detect both.
 BINDIR=""
 for d in "$SRC/binaries" "$SRC"/vmdpathfinder-binaries-*/ "$SRC/native"; do
-    [ -x "$d/mole_tunnel_engine" ] && { BINDIR="${d%/}"; break; }
+    # .exe too: the Windows bundle ships mole_tunnel_engine.exe, and checking
+    # only the bare name meant Windows users were told no engine was present
+    # while it sat right there.
+    for e in "" ".exe"; do
+        [ -x "$d/mole_tunnel_engine$e" ] && { BINDIR="${d%/}"; break 2; }
+    done
 done
 if [ -n "$BINDIR" ]; then
     note "tunnel engine" "found ($BINDIR)"
@@ -78,11 +83,54 @@ for f in NOTICE.md LICENSE-Apache-2.0.txt; do
     [ -f "$SRC/vmdpathfinder/$f" ] && cp "$SRC/vmdpathfinder/$f" "$DEST/vmdpathfinder/"
 done
 echo "Installed."
+
+# Point the plugin AT the binaries rather than telling the user to do it. The
+# release README says the installer does this; it did not, and a user following
+# that text got a plugin that silently fell back to the Tcl engines.
+#
+# Conservative on purpose: only keys that are absent or empty, or that name a
+# file which no longer exists, are written. A path the user chose deliberately
+# is never overwritten, and every other line of the config is preserved.
 if [ -n "$BINDIR" ]; then
-    echo
-    echo "Accelerator binaries found in $BINDIR:"
-    echo "  point VMDPathFinder at them under File > Settings (engine/sos_triangle paths),"
-    echo "  or copy them next to your HOLE binaries so they are found automatically."
+    CFG="${VMDPATHFINDER_CONFIG_FILE:-$HOME/.vmdpathfinder_config}"
+    BINABS=$(cd "$BINDIR" && pwd)
+    TMP="$CFG.install.$$"
+    : > "$TMP"
+    wrote=0
+    # config key : file in the bundle
+    set -- "mole_engine_exec:mole_tunnel_engine" \
+           "sos_triangle_exec:sos_triangle" \
+           "conn_lobes_exec:conn_lobes" \
+           "mesh_csg_exec:mesh_csg" \
+           "nm_search_exec:nm_search" \
+           "sph_process_exec:sph_process" \
+           "hole_exec:hole"
+    if [ -f "$CFG" ]; then cp "$CFG" "$TMP"; fi
+    for pair in "$@"; do
+        key=${pair%%:*}; file=${pair#*:}
+        path=""
+        for e in "" ".exe"; do
+            [ -x "$BINABS/$file$e" ] && { path="$BINABS/$file$e"; break; }
+        done
+        [ -n "$path" ] || continue
+        cur=$(sed -n "s/^$key = //p" "$TMP" 2>/dev/null | tail -1)
+        if [ -n "$cur" ] && [ -x "$cur" ]; then continue; fi   # user's own choice stands
+        grep -v "^$key = " "$TMP" > "$TMP.n" 2>/dev/null || : > "$TMP.n"
+        mv "$TMP.n" "$TMP"
+        echo "$key = $path" >> "$TMP"
+        wrote=$((wrote+1))
+    done
+    if [ "$wrote" -gt 0 ]; then
+        [ -f "$CFG" ] && cp "$CFG" "$CFG.bak-$(date +%Y%m%d-%H%M%S)"
+        mv "$TMP" "$CFG"
+        echo
+        echo "Configured $wrote accelerator path(s) in $CFG (previous file kept as .bak-*)."
+        echo "  Change them any time under File > Settings."
+    else
+        rm -f "$TMP"
+        echo
+        echo "Accelerator binaries found in $BINDIR; your existing paths already point at working files."
+    fi
 fi
 echo
 echo "Load it with:  vmd -e /dev/null   then  Extensions > Analysis > VMDPathFinder"
