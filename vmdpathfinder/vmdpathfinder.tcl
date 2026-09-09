@@ -24363,6 +24363,19 @@ proc ::VMDPathFinder::_resolve_point_input {val molid frame} {
     return [vector_point_from_sel $molid $frame $val]
 }
 
+proc ::VMDPathFinder::_point_now {val molid frame} {
+    # A point field ("x y z" OR an atom selection) as three numbers at THIS
+    # frame, or {} if it is neither. A selection of several atoms gives its
+    # centre of geometry, recomputed for the frame asked for, so a point tied
+    # to residues follows the structure.
+    if {[string trim $val] eq ""} { return {} }
+    set n [normalize_triplet_value $val]
+    if {$n ne {}} { return $n }
+    if {[catch {vector_point_from_sel $molid $frame $val} c]} { return {} }
+    if {[llength $c] != 3} { return {} }
+    return $c
+}
+
 proc ::VMDPathFinder::_clear_cvect_def {args} {
     # Drop the stored two-point CVECT definition whenever CVECT is set by any other
     # means (manual edit, Z-axis, guess). compute_vector re-sets it right after
@@ -25311,7 +25324,9 @@ proc ::VMDPathFinder::_run_axis_init {molid frame seltext} {
     variable state
     variable _run_axis_cp; variable _run_axis_cv
     _run_axis_reset
-    set _need_cp [expr {[normalize_triplet_value $state(cpoint)] eq {}}]
+    # A CPOINT given as an atom selection is SET, not blank - resolve it here
+    # rather than letting CGUESS overwrite it.
+    set _need_cp [expr {[_point_now $state(cpoint) $molid $frame] eq {}}]
     set _need_cv [expr {[normalize_triplet_value $state(cvect)]  eq {}}]
     if {!$_need_cp && !$_need_cv} { return }
     set _tmp [file join [get_temp_base] "vmdpathfinder_cguess_[pid].pdb"]
@@ -25321,7 +25336,7 @@ proc ::VMDPathFinder::_run_axis_init {molid frame seltext} {
         $_s delete
         lassign [hole::read_pdb $_tmp $state(radius_file)] _n _xs _ys _zs _rs _ans
         if {$_n == 0} { error "no atoms" }
-        set _cp [normalize_triplet_value $state(cpoint)]
+        set _cp [_point_now $state(cpoint) $molid $frame]
         if {$_need_cp} { set _cp [hole::cguess_cpoint $_n $_xs $_ys $_zs $_rs $_ans] }
         if {$_need_cv} {
             set _cv [hole::cguess_cvect [lindex $_cp 0] [lindex $_cp 1] [lindex $_cp 2] \
@@ -25441,6 +25456,14 @@ proc ::VMDPathFinder::frame_axis {molid frame} {
     }
     if {![info exists _M1]} { set _M1 "" }
     if {![info exists _M2]} { set _M2 "" }
+    # CPOINT may be an atom selection rather than three numbers. Resolve it to
+    # its centre of geometry AT THIS FRAME, so it follows the structure. Without
+    # this the selection reached write_control_file unresolved, the cpoint card
+    # was dropped, and HOLE guessed the point instead - silently.
+    if {[normalize_triplet_value $cp] eq {}} {
+        set _cpsel [_point_now $cp $molid $frame]
+        if {$_cpsel ne {}} { set cp [format "%.4f %.4f %.4f" {*}$_cpsel] }
+    }
     return [list $cp $cv $_M1 $_M2]
 }
 
@@ -26762,9 +26785,15 @@ proc ::VMDPathFinder::_mem_new {} {
     _mem_stash_active
     set id $pore_memory_next
     incr pore_memory_next
+    # The frame range is about the trajectory, not about which pore is being
+    # measured, so carry it over instead of resetting it. Resetting sent every
+    # new memory back to "now" and the two memories then covered different
+    # frames, which is exactly what makes them uncomparable.
+    set _keep_frames $state(frame_spec)
     foreach k [_mem_run_keys] {
         if {[info exists default_state($k)]} { set state($k) $default_state($k) }
     }
+    set state(frame_spec) $_keep_frames
     set results [dict create]
     set result_frames {}
     set pore_memory_runsig ""
@@ -26868,20 +26897,21 @@ proc ::VMDPathFinder::_mem_keep_frame {} {
 
 proc ::VMDPathFinder::_mem_seed_axis {} {
     # A new memory's blank CPOINT/CVECT draws no cue, so there is nothing to
-    # grab. Seed it with what HOLE's own CGUESS resolves a blank field to
-    # (_run_axis_init): visible and draggable, and identical to what a blank run
-    # would have used. Silent on failure - blank stays valid.
+    # grab. Seed it with exactly what the panel's own Guess button would give:
+    # the selection's centre of geometry, and _detect_pore_axis's axis.
+    #
+    # NOT HOLE's CGUESS, which was used here first. CGUESS only ever returns an
+    # x, y or z axis, chosen by summed pore radius, so on a membrane channel it
+    # regularly seeded "1 0 0" - a handle pointing across the pore instead of
+    # along it. Silent on failure: blank stays valid.
     variable state
-    variable _run_axis_cp
-    variable _run_axis_cv
     if {[catch {resolve_molid} molid] || $molid < 0} { return }
     set seltext [string trim $state(selection)]
-    if {$seltext eq ""} { set seltext "all" }
+    if {$seltext eq "" || $seltext eq "all"} { set seltext "protein" }
     set frame 0
     catch {set frame [molinfo $molid get frame]}
-    if {[catch {_run_axis_init $molid $frame $seltext}]} { return }
-    if {[info exists _run_axis_cp] && $_run_axis_cp ne ""} { set state(cpoint) $_run_axis_cp }
-    if {[info exists _run_axis_cv] && $_run_axis_cv ne ""} { set state(cvect) $_run_axis_cv }
+    catch {set state(cpoint) [format_triplet [vector_point_from_sel $molid $frame $seltext]]}
+    catch {suggest_cvect 1}
 }
 
 proc ::VMDPathFinder::_mem_point_surface_mol {} {
@@ -26915,6 +26945,10 @@ proc ::VMDPathFinder::_mem_sync_cues {} {
     # outside the dialog would corrupt that saved set.
     catch {_sync_point_marker cpoint show_cpoint_marker}
     catch {_sync_cvect_handles}
+    # Stabilize/Track are restored as values; the fields they govern are shown
+    # or hidden by this call. Without it a memory with Stabilize off still
+    # displayed the previous memory's fit radii, reading as "on".
+    catch {_update_cpoint_scope_row}
 }
 
 proc ::VMDPathFinder::_mem_delete {id} {
@@ -27387,7 +27421,9 @@ proc ::VMDPathFinder::get_view_center {molid} {
     return $center
 }
 
-proc ::VMDPathFinder::normalize_triplet_value {value} {
+proc ::VMDPathFinder::_triplet_tokens {value} {
+    # Three words, split on whitespace or commas. Says nothing about whether
+    # they are numbers.
     set parsed [string trim $value]
     if {$parsed eq ""} { return {} }
     # Accept comma-separated input (e.g. "1,0,0" or "1, 0, 0")
@@ -27397,21 +27433,39 @@ proc ::VMDPathFinder::normalize_triplet_value {value} {
     return $parsed
 }
 
+proc ::VMDPathFinder::normalize_triplet_value {value} {
+    # "x y z" as three real numbers, or {} for anything else - which callers
+    # then treat as an atom selection.
+    #
+    # The numeric check is not optional. Without it a three-word selection such
+    # as "name CA CB" parsed as a coordinate, and the arithmetic downstream
+    # threw "syntax error in expression" - once per keystroke while the field
+    # was being typed.
+    set parsed [_triplet_tokens $value]
+    if {$parsed eq {}} { return {} }
+    foreach part $parsed {
+        if {![string is double -strict $part]} { return {} }
+    }
+    return $parsed
+}
+
 proc ::VMDPathFinder::format_triplet {value} {
     return [format "%.4f %.4f %.4f" [lindex $value 0] [lindex $value 1] [lindex $value 2]]
 }
 
 proc ::VMDPathFinder::validate_triplet {label value} {
-    set parts [normalize_triplet_value $value]
+    # {} means "not a coordinate", and the caller resolves it as a selection.
+    # Three words that are nearly numbers ("1 0 z") are a typo, not a selection,
+    # so they still get the clear message here rather than an atomselect error
+    # much later.
+    set parts [_triplet_tokens $value]
     if {$parts eq {}} { return {} }
-    set validated {}
     foreach part $parts {
         if {![string is double -strict $part]} {
             error "$label must contain only numeric values (X Y Z)."
         }
-        lappend validated $part
     }
-    return $validated
+    return $parts
 }
 
 proc ::VMDPathFinder::ensure_path {label path} {
