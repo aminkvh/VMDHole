@@ -340,11 +340,104 @@ set saved [expr {[file exists $cfg] ? [string match "*$eng*" [read [open $cfg r]
 puts "PRESETSAVE saved=$saved [expr {!$saved ? {OK} : {BAD}}]"
 S5_EOF
 
+cat > "$T/s6.tcl" <<'S6_EOF'
+# ---- memory slots: several spherical pores held and drawn at once ----
+namespace eval ::VMDPathFinder {
+set row $_runpanel.mem
+# 1. the row exists and starts with exactly one slot plus the "+"
+_mem_refresh_row
+update
+set kids [lsort [winfo children $row.slots]]
+puts "MEMROW mapped=[winfo ismapped $row] kids=$kids\
+    [expr {[winfo ismapped $row] && [llength $kids]==2 && [winfo exists $row.slots.m1] \
+           && [winfo exists $row.slots.add] ? {OK} : {BAD}}]"
+# 2. Sync and Delete are disabled while there is only one memory - neither
+#    means anything yet, and an enabled button that does nothing is a bug report
+puts "MEMONE sync=[$row.sync cget -state] del=[$row.del cget -state]\
+    [expr {[$row.sync cget -state] eq {disabled} && [$row.del cget -state] eq {disabled} ? {OK} : {BAD}}]"
+# 3. "+" adds a slot, from DEFAULT parameters, without touching the first one's
+set state(cpoint) "1 2 3"
+set results [dict create 0 {min_radius 1.0}]
+set result_frames {0}
+_mem_stash_active
+_mem_add_clicked
+update
+set n2 [llength [winfo children $row.slots]]
+puts "MEMADD slots=$n2 cpoint='$state(cpoint)' res=[dict size $results]\
+    [expr {$n2==3 && $state(cpoint) eq {} && [dict size $results]==0 ? {OK} : {BAD}}]"
+# 4. clicking back to slot 1 restores its numbers AND its results
+_mem_slot_clicked 1
+update
+puts "MEMBACK cpoint='$state(cpoint)' res=[dict size $results]\
+    [expr {$state(cpoint) eq {1 2 3} && [dict size $results]==1 ? {OK} : {BAD}}]"
+# 5. with two memories Sync and Delete come alive
+puts "MEMTWO sync=[$row.sync cget -state] del=[$row.del cget -state]\
+    [expr {[$row.sync cget -state] eq {normal} && [$row.del cget -state] eq {normal} ? {OK} : {BAD}}]"
+# 6. the row is SPHERICAL ONLY - under Connolly it must disappear, or the other
+#    memories' spherical surfaces read as part of a Connolly result
+set state(pore_method) connolly
+_mem_refresh_row
+update
+set hidden [expr {![winfo ismapped $row]}]
+set state(pore_method) circular
+_mem_refresh_row
+update
+puts "MEMMODE hidden_under_connolly=$hidden back=[winfo ismapped $row]\
+    [expr {$hidden && [winfo ismapped $row] ? {OK} : {BAD}}]"
+# 7. no slot switching mid-run: it would stash half a run and redirect the rest
+_begin_calc
+set before $pore_memory_active
+_mem_slot_clicked 2
+set moved [expr {$pore_memory_active ne $before}]
+_end_calc
+puts "MEMBUSY moved=$moved [expr {!$moved ? {OK} : {BAD}}]"
+# 8. the RUN PATH writes memory 2 elsewhere. This is the actual no-overwrite
+#    guarantee: resolve_output_root, not the reporting helper.
+set state(work_dir) $::env(VMDPATHFINDER_HARNESS_TMP)/wd
+set state(save_results) 1
+_mem_slot_clicked 2
+lassign [resolve_output_root 0] r2 t2
+_mem_slot_clicked 1
+lassign [resolve_output_root 0] r1 t1
+puts "MEMROOT m1=$r1 m2=$r2\
+    [expr {$r1 ne $r2 && [file tail $r2] eq {mem_2} && [file dirname $r2] eq $r1 ? {OK} : {BAD}}]"
+# 9. a DRAW-ONLY change must not mark anything stale - it would be telling the
+#    user to re-run analyses that are perfectly current
+_mem_mark_fresh
+set state(display_mode) dots
+set a [_mem_stale_ids]
+set state(display_mode) triangulated
+set state(sample) 0.9
+set b [_mem_stale_ids]
+set state(sample) 0.25
+puts "MEMSTALE draw='$a' compute='$b'\
+    [expr {$a eq {} && $b ne {} ? {OK} : {BAD}}]"
+# 10. Sync really redraws: press the button for real, with two memories holding
+#     different colours, and check the other memory's stored colour followed
+_mem_slot_clicked 2
+set state(surface_color) blue
+_mem_stash_active
+_mem_slot_clicked 1
+set state(surface_color) red
+_mem_sync_clicked
+update
+set other [dict get [dict get $pore_memories 2] params surface_color]
+puts "MEMSYNC other=$other here=$state(surface_color)\
+    [expr {$other eq {red} && $state(surface_color) eq {red} ? {OK} : {BAD}}]"
+# 11. deleting the current memory leaves the other one active
+_mem_delete_clicked
+update
+puts "MEMDEL left=[dict keys $pore_memories] active=$pore_memory_active\
+    [expr {[dict size $pore_memories]==1 && $pore_memory_active ne {} ? {OK} : {BAD}}]"
+}
+S6_EOF
+
 run_section close-path "$T/s1.tcl"
 run_section guards     "$T/s2.tcl"
 run_section molid      "$T/s3.tcl"
 run_section tunnel-opts "$T/s4.tcl"
 run_section config-fields "$T/s5.tcl"
+run_section memory-slots "$T/s6.tcl"
 
 echo "  -> $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

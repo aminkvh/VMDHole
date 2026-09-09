@@ -232,6 +232,27 @@ namespace eval ::VMDPathFinder:: {
     array set mol_result_frames {}
     variable surface_mols
     array set surface_mols {}
+    # MEMORY SLOTS (spherical pore mode only). One structure can hold several
+    # pores; each memory is a complete analysis - its own run parameters, its
+    # own results, its own surface - and they are all drawn at once.
+    #
+    # Same stash/restore shape as mol_results/activate_molecule, keyed by slot
+    # instead of molecule, with two differences that matter: every memory's
+    # surface stays visible so each needs its OWN surface mol, and each needs
+    # its own work directory so a new run cannot overwrite an older one.
+    variable pore_memories [dict create]
+    variable pore_memory_active ""
+    variable pore_memory_next 1
+    # The shared-settings signature the LIVE results were produced under. It
+    # travels with the results into and out of a memory, so switching slots
+    # cannot quietly re-stamp stale results as current.
+    variable pore_memory_runsig ""
+    variable mem_surface_mols
+    array set mem_surface_mols {}
+    # Memories are per molecule, stashed and restored by activate_molecule the
+    # same way results are.
+    variable mol_memories
+    array set mol_memories {}
     # Transient inputs for the CVECT helper dialog.
     variable vec_mode {Two atoms}
     variable vec_atom1 {}
@@ -776,6 +797,14 @@ namespace eval ::VMDPathFinder:: {
         last_root_dir {}
         status {Ready.}
     }
+
+    # The defaults as shipped, captured BEFORE the config file is read. A new
+    # memory slot resets its run parameters to these: a second pore is a
+    # different pore, so inheriting the previous slot's CPOINT would be the
+    # wrong starting point. Taken here rather than re-typed, so the two can
+    # never drift apart.
+    variable default_state
+    array set default_state [array get state]
 
     if {![catch {package require multiplot}]} {
         set plot_available 1
@@ -2046,6 +2075,9 @@ proc ::VMDPathFinder::build_gui {w} {
     }
     $w.sidebar.nb select $w.sidebar.nb.hole
     update idletasks
+    # First paint of the memory row, so the panel opens showing slot 1 rather
+    # than an empty strip until something else happens to refresh it.
+    catch {_mem_refresh_row}
 
     # ---- Plot area: notebook with "Pore Profile" and "Hole over Time" tabs ----
     frame $w.plotframe
@@ -6494,6 +6526,7 @@ proc ::VMDPathFinder::on_mode_tab_changed {args} {
     # waited for is not thrown away by a round trip between modes.
     _mode_analysis_swap
     catch {_sync_solo_surface_for_mode}
+    catch {_mem_refresh_row}
     # Over Time / Mean Profile / Histogram are ONE set of widgets shared by both
     # engines, so their placeholder wording belongs to whichever drew last - a
     # deferred redraw that fired under the other mode leaves a tunnel user being
@@ -21949,8 +21982,36 @@ proc ::VMDPathFinder::_tunnel_property_range_pooled {prop} {
 
 proc ::VMDPathFinder::build_run_panel {parent} {
     variable _runpanel
+    variable _mem_row
     set _runpanel $parent
     set row 0
+
+    # ---- Memory: several spherical pores held and drawn at once ----
+    # One structure can have five channels; this keeps five analyses alive side
+    # by side instead of each run replacing the last. Spherical only - Connolly
+    # and Capsule build a different kind of surface and Tunnel keeps its own
+    # result store, so the row hides itself outside spherical rather than
+    # offering slots that cannot hold what those modes produce.
+    frame $parent.mem
+    label $parent.mem.l -text "Memory" -font {Helvetica 9 bold}
+    frame $parent.mem.slots
+    button $parent.mem.sync -text "Sync" -padx 4 -pady 0 \
+        -command ::VMDPathFinder::_mem_sync_clicked
+    button $parent.mem.del -text "\u2715" -padx 3 -pady 0 \
+        -command ::VMDPathFinder::_mem_delete_clicked
+    pack $parent.mem.l     -side left
+    pack $parent.mem.slots -side left -padx {6 0}
+    pack $parent.mem.del   -side right
+    pack $parent.mem.sync  -side right -padx {0 3}
+    set _mem_row $parent.mem
+    add_tooltip $parent.mem.l "Each memory is one complete pore analysis - its own\
+        start point, direction, selection and results - kept and drawn at the same time as the others.\
+        Click a number to go back to that analysis; its settings and its results return with it."
+    add_tooltip $parent.mem.sync "Copy this memory's colour, material and dot density to every other\
+        memory and redraw them, so all the pores on screen read as one picture."
+    add_tooltip $parent.mem.del "Delete the current memory and its surface. The last memory cannot be deleted."
+    grid $parent.mem -row $row -column 0 -columnspan 3 -sticky ew -padx 8 -pady {4 2}
+    incr row
 
     # ---- HOLE parameters: what the pore search is run on (through CVECT below);
     # the "Graphics" header further down separates these from the render controls.
@@ -26383,6 +26444,567 @@ proc ::VMDPathFinder::resolve_molid_or {fallback} {
     return $id
 }
 
+# ---------------------------------------------------------------------------
+# Memory slots: several spherical analyses held, and drawn, at the same time.
+# ---------------------------------------------------------------------------
+
+proc ::VMDPathFinder::_mem_run_keys {} {
+    # The parameters that DEFINE a run, and that legitimately DIFFER between
+    # memories: a second memory describes a different pore. A new memory resets
+    # these to their defaults, so it never inherits the last one's CPOINT.
+    return {selection cpoint cvect endrad ignore shorto extra_cards
+            random_seed mcstep mcdisp mckt cvect_def_p1 cvect_def_p2
+            stabilize_cpoint track_cpoint stabilize_cvect cvect_exact
+            frame_spec}
+}
+
+proc ::VMDPathFinder::_mem_shared_keys {} {
+    # SHARED BY EVERY MEMORY, never stored per memory. Two pores of one
+    # structure drawn side by side have to be measured and drawn the same way,
+    # or the comparison is meaningless: one at sample 0.25 next to one at 1.0,
+    # or a marching-cubes surface next to an sos one, or a mean profile next to
+    # a live pore, invites reading a method difference as a structural one.
+    # Because these live only in state(), a mismatch is not possible to create.
+    return {sample pore_method pore_method_disp
+            search_engine search_engine_disp conn_engine conn_engine_disp
+            mesher mesher_disp csg_voxel csg_voxel_fine
+            display_mode display_mode_disp surface_smooth
+            show_mean_surface mean_display_mode mean_3d_mode}
+}
+
+proc ::VMDPathFinder::_mem_display_keys {} {
+    # How a memory is DRAWN, where memories are ALLOWED to differ - five pores
+    # in five colours is the point of the feature. "Sync presentation" copies
+    # the active memory's set to every other one when the user wants them to
+    # read as one picture instead of five unrelated ones.
+    return {surface_color surface_color_disp surface_material dot_density
+            hydro_scheme hydro_scheme_disp
+            mean_surface_color mean_surface_color_disp mean_surface_material}
+}
+
+proc ::VMDPathFinder::_mem_stale_keys {} {
+    # The shared settings that change what is COMPUTED, and so make stored
+    # results out of date. Deliberately NARROWER than _mem_shared_keys: the
+    # mesher, the display mode and the smoothing are re-derived at draw time
+    # from the live settings, so switching triangulated to dots redraws every
+    # memory correctly and must not turn the whole row red telling the user to
+    # re-run analyses that are perfectly current. These four are exactly the
+    # fields run_signature records, which is what makes a loaded run comparable
+    # with a live one.
+    return {sample pore_method search_engine conn_engine}
+}
+
+proc ::VMDPathFinder::_mem_shared_signature {} {
+    # The compute-affecting settings as one comparable string. A memory records
+    # the signature its results were produced under; when the user later changes
+    # the sampling or the search engine, the stored results no longer match what
+    # a new run would produce, and the panel says so rather than letting a stale
+    # surface sit next to a fresh one.
+    variable state
+    set sig {}
+    foreach k [lsort [_mem_stale_keys]] {
+        lappend sig $k [expr {[info exists state($k)] ? $state($k) : ""}]
+    }
+    return $sig
+}
+
+proc ::VMDPathFinder::_mem_mark_fresh {} {
+    # Called when a run finishes: the results on hand were produced under the
+    # shared settings in force right now.
+    variable pore_memory_runsig
+    set pore_memory_runsig [_mem_shared_signature]
+    _mem_stash_active
+}
+
+proc ::VMDPathFinder::_mem_stale {id} {
+    # 1 when this memory holds results produced under different shared settings.
+    variable pore_memories
+    if {![dict exists $pore_memories $id]} { return 0 }
+    set rec [dict get $pore_memories $id]
+    if {![dict size [dict get $rec results]]} { return 0 }
+    # Unknown provenance is NOT "fresh". Results whose settings were never
+    # recorded cannot be shown as matching the live ones just because there is
+    # nothing to compare against - that is the failure mode the whole signature
+    # exists to prevent.
+    if {![dict exists $rec signature] || [dict get $rec signature] eq ""} { return 1 }
+    return [expr {[dict get $rec signature] ne [_mem_shared_signature]}]
+}
+
+proc ::VMDPathFinder::_mem_stale_ids {} {
+    variable pore_memories
+    set out {}
+    foreach id [lsort -integer [dict keys $pore_memories]] {
+        if {[_mem_stale $id]} { lappend out $id }
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_mem_enabled {} {
+    # SPHERICAL PORE ONLY. Tunnel keeps its own result store and surface track,
+    # and Connolly/Capsule produce a different kind of surface; mixing them into
+    # one slot list would be indistinguishable downstream, which is the defect
+    # the tunnel_results comment already warns about.
+    variable state
+    # analysis_mode returns "hole"/"tunnel" - the left-panel tab, not the pore
+    # method. Both gates are needed: the Tunnel tab, and Connolly/Capsule.
+    if {[analysis_mode] ne "hole"} { return 0 }
+    return [expr {[info exists state(pore_method)] && $state(pore_method) eq "circular"}]
+}
+
+proc ::VMDPathFinder::_mem_capture {} {
+    # The live analysis, as a memory record.
+    variable state
+    variable results
+    variable result_frames
+    variable pore_memory_runsig
+    set p [dict create]
+    foreach k [concat [_mem_run_keys] [_mem_display_keys]] {
+        if {[info exists state($k)]} { dict set p $k $state($k) }
+    }
+    return [dict create params $p results $results frames $result_frames \
+                        signature $pore_memory_runsig \
+                        workdir [expr {[info exists state(work_dir)] ? $state(work_dir) : ""}]]
+}
+
+proc ::VMDPathFinder::_mem_apply {rec} {
+    # Restore a memory into the live slots. Parameters AND results, so the panel
+    # shows the numbers that produced what is on screen.
+    variable state
+    variable results
+    variable result_frames
+    variable plot_data_version
+    variable pore_memory_runsig
+    if {![dict size $rec]} { return }
+    dict for {k v} [dict get $rec params] { set state($k) $v }
+    set results [dict get $rec results]
+    set result_frames [dict get $rec frames]
+    set pore_memory_runsig [expr {[dict exists $rec signature] ? [dict get $rec signature] : ""}]
+    # last_geom_key is a single global "what is currently drawn" stamp. Another
+    # memory's results are different geometry under a key that may compare
+    # equal, so without this the switch leaves the previous memory's surface on
+    # screen next to the new memory's numbers.
+    variable last_geom_key
+    set last_geom_key "mem-switch"
+    # work_dir is NOT restored per memory. Where a memory's frames go is decided
+    # centrally by _mem_root_suffix inside resolve_output_root; pushing a stored
+    # value back into state here overrode that and sent memory 2's run to
+    # whatever root was live when the slot was created. The stored field is kept
+    # as a record of where this memory's results came from, nothing more.
+    incr plot_data_version
+}
+
+proc ::VMDPathFinder::_mem_stash_active {} {
+    # Write the live analysis back into whichever memory is current.
+    variable pore_memories
+    variable pore_memory_active
+    if {$pore_memory_active eq ""} { return }
+    dict set pore_memories $pore_memory_active [_mem_capture]
+}
+
+proc ::VMDPathFinder::_mem_ensure_first {} {
+    # The live analysis becomes memory 1 the first time the feature is touched,
+    # so an existing run is never left outside the list.
+    variable pore_memories
+    variable pore_memory_active
+    variable pore_memory_next
+    if {$pore_memory_active ne ""} { return }
+    variable pore_memory_runsig
+    variable results
+    set id 1
+    set pore_memory_active $id
+    if {$pore_memory_next <= $id} { set pore_memory_next [expr {$id+1}] }
+    # an existing run was produced under the settings in force now
+    if {$pore_memory_runsig eq "" && [dict size $results]} {
+        set pore_memory_runsig [_mem_shared_signature]
+    }
+    # adopt any surface already drawn for this molecule as memory 1's track,
+    # so the pore on screen when the feature is first touched keeps its graphics
+    # MOVE, not copy. Leaving the entry in surface_mols leaves the same mol id
+    # reachable from ensure_surface_mol's non-memory branch, so a Connolly or
+    # Capsule surface would render straight into memory 1's track and slot 1
+    # would then show spherical numbers over Connolly graphics. It would also
+    # leave surface_mols dangling at a deleted mol after _mem_forget_tracks.
+    variable surface_mols
+    variable mem_surface_mols
+    foreach mk [array names surface_mols] {
+        set key "$mk|$id"
+        if {![info exists mem_surface_mols($key)]} {
+            set mem_surface_mols($key) $surface_mols($mk)
+        }
+        unset surface_mols($mk)
+    }
+    dict set pore_memories $id [_mem_capture]
+}
+
+proc ::VMDPathFinder::_mem_workdir_for {id base} {
+    # Where memory $id's frames live under a resolved run root. The same rule
+    # _mem_root_suffix applies, exposed for the panel and the load path.
+    if {$base eq ""} { return "" }
+    if {[regexp {^mem_[0-9]+$} [file tail $base]]} { set base [file dirname $base] }
+    if {$id == 1} { return $base }
+    return [file join $base [format "mem_%d" $id]]
+}
+
+proc ::VMDPathFinder::_mem_new {} {
+    # A new memory, from DEFAULTS. The previous one keeps its results, its
+    # surface and its numbers.
+    variable state
+    variable results
+    variable result_frames
+    variable pore_memories
+    variable pore_memory_active
+    variable pore_memory_next
+    variable pore_memory_runsig
+    variable default_state
+    _mem_ensure_first
+    _mem_stash_active
+    set id $pore_memory_next
+    incr pore_memory_next
+    foreach k [_mem_run_keys] {
+        if {[info exists default_state($k)]} { set state($k) $default_state($k) }
+    }
+    set results [dict create]
+    set result_frames {}
+    set pore_memory_runsig ""
+    set pore_memory_active $id
+    dict set pore_memories $id [_mem_capture]
+    return $id
+}
+
+proc ::VMDPathFinder::_mem_activate {id} {
+    # Switch to a memory: its numbers come back into the panel and its results
+    # become the live ones. Every memory's surface stays drawn either way.
+    variable pore_memories
+    variable pore_memory_active
+    if {![dict exists $pore_memories $id]} { return 0 }
+    if {$pore_memory_active eq $id} { return 1 }
+    _mem_stash_active
+    set pore_memory_active $id
+    _mem_apply [dict get $pore_memories $id]
+    return 1
+}
+
+proc ::VMDPathFinder::_mem_delete {id} {
+    variable pore_memories
+    variable pore_memory_active
+    variable mem_surface_mols
+    if {![dict exists $pore_memories $id]} { return 0 }
+    if {[dict size $pore_memories] < 2} { return 0 }
+    dict unset pore_memories $id
+    _mem_forget_tracks $id
+    if {$pore_memory_active eq $id} {
+        set pore_memory_active [lindex [lsort -integer [dict keys $pore_memories]] 0]
+        _mem_apply [dict get $pore_memories $pore_memory_active]
+    }
+    return 1
+}
+
+proc ::VMDPathFinder::_mem_track_ids {id} {
+    # Every surface track belonging to this memory. Keyed "<molid>|<memory>",
+    # so one memory can have a track per analysed molecule.
+    variable mem_surface_mols
+    set out {}
+    foreach k [array names mem_surface_mols "*|$id"] { lappend out $mem_surface_mols($k) }
+    return $out
+}
+
+proc ::VMDPathFinder::_mem_forget_tracks {id} {
+    variable mem_surface_mols
+    foreach k [array names mem_surface_mols "*|$id"] {
+        catch {mol delete $mem_surface_mols($k)}
+        unset mem_surface_mols($k)
+    }
+}
+
+proc ::VMDPathFinder::_mem_show_tracks {on} {
+    # Leaving spherical hides the extra memories' surfaces rather than deleting
+    # them: Connolly and Tunnel draw a different kind of surface into their own
+    # track, and leaving five spherical pores on screen underneath would read as
+    # part of their result. Coming back shows them again - nothing is lost.
+    variable pore_memories
+    variable pore_memory_active
+    foreach id [dict keys $pore_memories] {
+        if {$id eq $pore_memory_active} { continue }
+        set verb [expr {$on ? {on} : {off}}]
+        foreach m [_mem_track_ids $id] { catch {mol $verb $m} }
+    }
+}
+
+proc ::VMDPathFinder::_mem_refresh_row {} {
+    # Rebuild the slot buttons: one numbered square per memory plus the "+" that
+    # starts a new one. Cheap - a handful of buttons - so it just rebuilds
+    # rather than tracking which slot changed.
+    variable _mem_row
+    variable pore_memories
+    variable pore_memory_active
+    variable state
+    if {![_have_tk] || ![info exists _mem_row] || ![winfo exists $_mem_row]} { return }
+    # Outside spherical the row has nothing it can hold. Hiding it (rather than
+    # greying it) also stops the other memories' surfaces being left on screen
+    # under a Connolly or Tunnel result.
+    if {![_mem_enabled]} {
+        catch {grid remove $_mem_row}
+        _mem_show_tracks 0
+        return
+    }
+    catch {grid $_mem_row}
+    _mem_show_tracks 1
+    _mem_ensure_first
+    set f $_mem_row.slots
+    foreach c [winfo children $f] { destroy $c }
+    foreach id [lsort -integer [dict keys $pore_memories]] {
+        set b $f.m$id
+        set rec [dict get $pore_memories $id]
+        set has [dict size [dict get $rec results]]
+        button $b -text $id -width 2 -padx 1 -pady 0 \
+            -command [list ::VMDPathFinder::_mem_slot_clicked $id]
+        if {$id eq $pore_memory_active} {
+            $b configure -relief sunken -font {Helvetica 9 bold}
+        } else {
+            $b configure -relief raised
+        }
+        # A slot the user can see is empty, or holding results that no longer
+        # match the live settings, must LOOK that way - the whole point of the
+        # row is telling five analyses apart at a glance.
+        if {!$has} {
+            catch {$b configure -fg gray45}
+            add_tooltip $b "Memory $id - no analysis yet. Set the parameters and press Run."
+        } elseif {[_mem_stale $id]} {
+            catch {$b configure -fg red}
+            add_tooltip $b "Memory $id - computed with different sampling/method/engine settings\
+                than the ones now selected. Re-run it before comparing it with the others."
+        } else {
+            set cp [dict get [dict get $rec params] cpoint]
+            if {$cp eq ""} { set cp "auto" }
+            add_tooltip $b "Memory $id - [dict size [dict get $rec results]] frame(s), CPOINT $cp."
+        }
+        pack $b -side left -padx 1
+    }
+    # The "+" square: groove relief is Tk 8.5's nearest thing to the dashed
+    # outline, and reads as "empty slot" next to the raised numbered ones.
+    button $f.add -text "+" -width 2 -padx 1 -pady 0 -relief groove \
+        -command ::VMDPathFinder::_mem_add_clicked
+    pack $f.add -side left -padx {3 0}
+    add_tooltip $f.add "Start another analysis of this structure, from the default parameters.\
+        The analyses already held keep their results and stay on screen."
+    set n [dict size $pore_memories]
+    catch {$_mem_row.sync configure -state [expr {$n > 1 ? "normal" : "disabled"}]}
+    catch {$_mem_row.del  configure -state [expr {$n > 1 ? "normal" : "disabled"}]}
+}
+
+proc ::VMDPathFinder::_mem_guard_busy {what} {
+    # Switching or adding a slot mid-run would stash half a run's results and
+    # redirect the rest of it into a different folder.
+    variable state
+    if {![_op_in_progress]} { return 0 }
+    set state(status) "Cannot $what while an analysis is running."
+    return 1
+}
+
+proc ::VMDPathFinder::_mem_slot_clicked {id} {
+    variable state
+    if {[_mem_guard_busy "switch memory"]} { return }
+    if {![_mem_activate $id]} { return }
+    _mem_refresh_row
+    catch {refresh_results_list}
+    catch {apply_display_change}
+    set state(status) "Memory $id."
+}
+
+proc ::VMDPathFinder::_mem_add_clicked {} {
+    variable state
+    if {[_mem_guard_busy "add a memory"]} { return }
+    set id [_mem_new]
+    _mem_refresh_row
+    catch {refresh_results_list}
+    set state(status) "Memory $id - set the parameters and press Run. The other analyses stay on screen."
+}
+
+proc ::VMDPathFinder::_mem_delete_clicked {} {
+    variable state
+    variable pore_memory_active
+    if {[_mem_guard_busy "delete a memory"]} { return }
+    set id $pore_memory_active
+    if {![_mem_delete $id]} {
+        set state(status) "The last memory cannot be deleted."
+        return
+    }
+    _mem_refresh_row
+    catch {refresh_results_list}
+    catch {apply_display_change}
+    set state(status) "Memory $id deleted."
+}
+
+proc ::VMDPathFinder::_mem_sync_clicked {} {
+    variable state
+    if {[_mem_guard_busy "sync"]} { return }
+    set n [_mem_sync_presentation]
+    _mem_refresh_row
+    set state(status) "Presentation synced to $n other [expr {$n == 1 ? {memory} : {memories}}]."
+}
+
+proc ::VMDPathFinder::_mem_sig_field {sig key} {
+    # One field out of the pipe-joined run_signature string.
+    set parts [split $sig "|"]
+    set n [llength $parts]
+    for {set i 0} {$i < $n - 1} {incr i 2} {
+        if {[lindex $parts $i] eq $key} { return [lindex $parts [expr {$i+1}]] }
+    }
+    return ""
+}
+
+proc ::VMDPathFinder::_mem_sig_shared_fields {} {
+    # The run_signature fields that must MATCH across memories loaded together.
+    # These are the settings that change what was computed, so two memories that
+    # disagree on any of them are not comparable however they are drawn:
+    #   sample  - the axial step the profile was measured on
+    #   method  - spherical / connolly / capsule
+    #   search  - Monte Carlo vs Nelder-Mead
+    #   conneng - which Connolly implementation produced the sphere set
+    # The mesher and the colours are NOT here: those are re-derived at draw time
+    # from the live shared settings, so they cannot disagree between memories.
+    return {sample method search conneng}
+}
+
+proc ::VMDPathFinder::_mem_run_dir_signature {dir} {
+    # The signature a saved run recorded for itself. Read from the first frame
+    # that has one, since run_analysis stamps the same string into every frame.
+    foreach fd [lsort [glob -nocomplain -directory $dir -type d "frame_*"]] {
+        set sf [file join $fd vmdpathfinder_signature.dat]
+        if {![file exists $sf]} { continue }
+        if {[catch {open $sf r} fh]} { continue }
+        set sig [string trim [read $fh]]
+        close $fh
+        if {$sig ne ""} { return $sig }
+    }
+    return ""
+}
+
+proc ::VMDPathFinder::_mem_discover_roots {root} {
+    # The memory folders under a run root, as {id dir} pairs: frame_* sitting
+    # directly in the root is memory 1 (which is how every run that predates
+    # this feature is laid out), and each "mem_N" subfolder is memory N.
+    set out {}
+    if {[llength [glob -nocomplain -directory $root -type d "frame_*"]] > 0} {
+        lappend out [list 1 $root]
+    }
+    foreach d [lsort [glob -nocomplain -directory $root -type d "mem_*"]] {
+        if {![regexp {^mem_([0-9]+)$} [file tail $d] -> id]} { continue }
+        if {[llength [glob -nocomplain -directory $d -type d "frame_*"]] == 0} { continue }
+        lappend out [list [scan $id %d] $d]
+    }
+    return [lsort -integer -index 0 $out]
+}
+
+proc ::VMDPathFinder::_mem_load_incoherent {pairs} {
+    # Loading several memories at once is the one path that CAN build the state
+    # the shared settings otherwise make unreachable: memory 1 saved at sample
+    # 0.25 next to memory 2 saved at 1.0. Nothing downstream could tell the
+    # difference, and the user would be comparing a sampling artefact with a
+    # structural one. Returns a human-readable description of the first field
+    # that disagrees, or "" when the set is coherent.
+    set seen [dict create]
+    foreach pr $pairs {
+        lassign $pr id dir
+        set sig [_mem_run_dir_signature $dir]
+        if {$sig eq ""} { continue }
+        foreach k [_mem_sig_shared_fields] {
+            set v [_mem_sig_field $sig $k]
+            if {![dict exists $seen $k]} {
+                dict set seen $k [list $v $id]
+                continue
+            }
+            lassign [dict get $seen $k] v0 id0
+            if {$v ne $v0} {
+                return "memory $id0 was computed with $k='$v0' but memory $id with                        $k='$v' - these are not comparable, so they cannot be loaded together"
+            }
+        }
+    }
+    return ""
+}
+
+proc ::VMDPathFinder::_mem_adopt_shared_from_sig {sig} {
+    # After a load, the live shared settings must describe what is on screen.
+    # Only the fields the signature actually records are adopted; the rest keep
+    # their current values, which are draw-time settings and cannot be wrong.
+    variable state
+    foreach {k skey} {sample sample method pore_method search search_engine conneng conn_engine} {
+        set v [_mem_sig_field $sig $k]
+        if {$v ne ""} { set state($skey) $v }
+    }
+    _mem_sync_shared_labels
+}
+
+proc ::VMDPathFinder::_mem_sync_shared_labels {} {
+    # The *_disp fields the option menus show. Set alongside their values, or a
+    # loaded run silently displays the previous run's method in the panel.
+    # Set directly rather than through _set_pore_method / _set_search_engine:
+    # those call clear_results_for_new_settings, which would wipe the results
+    # the load just brought in.
+    variable state
+    array set lbl {
+        pore_method   {circular Spherical connolly Connolly capsule Capsule}
+        search_engine {mc {Monte Carlo} nm {Nelder-Mead}}
+        conn_engine   {hole {HOLE conn} fast {Fast port}}
+    }
+    foreach k [array names lbl] {
+        if {![info exists state($k)]} { continue }
+        array set m $lbl($k)
+        if {[info exists m($state($k))]} { set state(${k}_disp) $m($state($k)) }
+        array unset m
+    }
+}
+
+proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
+    # Copy the ACTIVE memory's display settings to every other memory, then
+    # REDRAW them. Rewriting the stored dict alone changes nothing on screen -
+    # the other memories keep the colour and material they were drawn with until
+    # something re-renders them, and "sync presentation" that leaves the picture
+    # untouched is not sync. Each memory is activated in turn so the ordinary
+    # render path runs for it, then the original memory is restored.
+    # Run geometry is never copied: that is what makes each memory its own pore.
+    variable state
+    variable pore_memories
+    variable pore_memory_active
+    if {$pore_memory_active eq ""} { return 0 }
+    _mem_stash_active
+    set home $pore_memory_active
+    set src [dict get [dict get $pore_memories $home] params]
+    set n 0
+    set touched {}
+    dict for {id rec} $pore_memories {
+        if {$id eq $home} { continue }
+        set p [dict get $rec params]
+        foreach k [_mem_display_keys] {
+            if {[dict exists $src $k]} { dict set p $k [dict get $src $k] }
+        }
+        dict set rec params $p
+        dict set pore_memories $id $rec
+        lappend touched $id
+        incr n
+    }
+    if {$redraw} {
+        # apply_display_change pumps the event loop between render chunks (see
+        # its own re-entrancy comment), so without a bracket a slot click
+        # arriving mid-sync would switch memories underneath this loop and the
+        # remaining redraws would land on the wrong one.
+        _begin_calc
+        if {[catch {
+            foreach id $touched {
+                if {![_mem_activate $id]} { continue }
+                catch {apply_display_change}
+            }
+            _mem_activate $home
+            catch {apply_display_change}
+        } _serr _sopts]} {
+            _end_calc
+            return -options $_sopts $_serr
+        }
+        _end_calc
+    }
+    return $n
+}
+
 proc ::VMDPathFinder::activate_molecule {molid} {
     # Make `molid` the live molecule: stash the outgoing molecule's results,
     # restore this one's cached set (empty if never analyzed), re-point the
@@ -26400,9 +27022,20 @@ proc ::VMDPathFinder::activate_molecule {molid} {
     if {$molid eq "" || ![string is integer -strict $molid]} { return }
     if {$active_molid eq $molid} { return }
 
+    # Memories belong to the MOLECULE, exactly as results do. Without this the
+    # slot list would follow the user to a different structure and offer five
+    # pores of the previous one, whose CPOINTs mean nothing here.
+    variable pore_memories
+    variable pore_memory_active
+    variable pore_memory_next
+    variable pore_memory_runsig
+    variable mol_memories
     if {$active_molid ne ""} {
         set mol_results($active_molid) $results
         set mol_result_frames($active_molid) $result_frames
+        _mem_stash_active
+        set mol_memories($active_molid) [list $pore_memories $pore_memory_active \
+                                              $pore_memory_next $pore_memory_runsig]
     }
     if {[info exists mol_results($molid)]} {
         set results $mol_results($molid)
@@ -26411,16 +27044,36 @@ proc ::VMDPathFinder::activate_molecule {molid} {
         set results [dict create]
         set result_frames {}
     }
+    if {[info exists mol_memories($molid)]} {
+        lassign $mol_memories($molid) pore_memories pore_memory_active \
+                                      pore_memory_next pore_memory_runsig
+    } else {
+        set pore_memories [dict create]
+        set pore_memory_active ""
+        set pore_memory_next 1
+        set pore_memory_runsig ""
+    }
     set active_molid $molid
 
-    if {[info exists surface_mols($molid)] && ![catch {molinfo $surface_mols($molid) get name}]} {
-        set current_surface_mol $surface_mols($molid)
+    # Same resolution order as ensure_surface_mol: under spherical the track
+    # belongs to the active memory, and surface_mols no longer holds it.
+    variable mem_surface_mols
+    set _sm ""
+    set _mk "$molid|$pore_memory_active"
+    if {[_mem_enabled] && $pore_memory_active ne "" && [info exists mem_surface_mols($_mk)]} {
+        set _sm $mem_surface_mols($_mk)
+    } elseif {[info exists surface_mols($molid)]} {
+        set _sm $surface_mols($molid)
+    }
+    if {$_sm ne "" && ![catch {molinfo $_sm get name}]} {
+        set current_surface_mol $_sm
     } else {
         set current_surface_mol -1
     }
 
     update_frame_trace
     refresh_results_list
+    catch {_mem_refresh_row}
     if {[llength $result_frames] > 0} {
         select_result [lindex $result_frames 0]
     } else {
@@ -26771,6 +27424,20 @@ proc ::VMDPathFinder::get_molecule_basename {molid} {
     return "mol$molid"
 }
 
+proc ::VMDPathFinder::_mem_root_suffix {root kind} {
+    # Memory 2+ writes into its own "mem_N" folder under the run root, exactly
+    # as tunnels get "tunnels". Memory 1 keeps the root unchanged, so an
+    # existing run, an import path and every older result folder still resolve
+    # to what they always did. Done HERE rather than by rewriting
+    # state(work_dir) because work_dir is usually the literal "auto", which is
+    # not a path to append to.
+    if {$kind eq "tunnel"} { return $root }
+    variable pore_memory_active
+    if {![_mem_enabled]} { return $root }
+    if {$pore_memory_active eq "" || $pore_memory_active == 1} { return $root }
+    return [file join $root [format "mem_%d" $pore_memory_active]]
+}
+
 proc ::VMDPathFinder::resolve_output_root {molid {kind hole}} {
     # kind: hole (default, unchanged behaviour) | tunnel.
     # Tunnel output NEVER shares a folder with HOLE's. Both write frame-indexed
@@ -26785,6 +27452,7 @@ proc ::VMDPathFinder::resolve_output_root {molid {kind hole}} {
         # An explicitly assigned work_dir is still honoured; tunnels get their
         # own subfolder inside it rather than a sibling elsewhere.
         if {$kind eq "tunnel"} { set root [file join $root "tunnels"] }
+        set root [_mem_root_suffix $root $kind]
         file mkdir $root
         return [list $root 0]
     }
@@ -26792,12 +27460,13 @@ proc ::VMDPathFinder::resolve_output_root {molid {kind hole}} {
     if {$state(save_results)} {
         set src [get_molecule_source_dir $molid]
         if {$src ne "" && [file writable $src]} {
-            set root [file join $src "${leaf}_${molname}"]
+            set root [_mem_root_suffix [file join $src "${leaf}_${molname}"] $kind]
             file mkdir $root
             return [list [file normalize $root] 0]
         }
     }
-    set root [file join [get_temp_base] "vmdpathfinder_[pid]" "${leaf}_${molname}"]
+    set root [_mem_root_suffix \
+        [file join [get_temp_base] "vmdpathfinder_[pid]" "${leaf}_${molname}"] $kind]
     file mkdir $root
     if {[lsearch -exact $temporary_roots $root] < 0} { lappend temporary_roots $root }
     return [list [file normalize $root] 1]
@@ -26917,6 +27586,79 @@ proc ::VMDPathFinder::find_existing_asset {run_dir sph_file {molid -1} {frame 0}
     # run sph_process + sos_triangle on every frame, i.e. feel like a full HOLE
     # recompute. The first shown frame still builds once; the rest stay deferred.
     return {}
+}
+
+proc ::VMDPathFinder::import_memories_from_folder {{root ""}} {
+    # Load EVERY memory saved under one run root in a single action, each into
+    # its own slot, and refuse the load outright when they were not computed the
+    # same way. Delegates each folder to the ordinary single-folder import, so
+    # there is one loader and no second code path to drift.
+    #
+    # The coherence check runs BEFORE anything is loaded. A partial load would
+    # leave the panel holding some memories from this root and some from
+    # whatever was there before, which is worse than not loading at all.
+    variable state
+    variable pore_memories
+    variable pore_memory_active
+    variable pore_memory_next
+    variable pore_memory_runsig
+    if {$root eq ""} { set root [string trim $state(import_dir)] }
+    if {$root eq "" || ![file isdirectory $root]} {
+        set state(status) "Load: folder not found."
+        return 0
+    }
+    set pairs [_mem_discover_roots $root]
+    if {[llength $pairs] == 0} {
+        set state(status) "Load: no results found under $root."
+        return 0
+    }
+    set bad [_mem_load_incoherent $pairs]
+    if {$bad ne ""} {
+        set state(status) "Load refused: $bad."
+        if {[_have_tk]} {
+            tk_messageBox -icon error -type ok -title "Load memories" \
+                -message "These saved analyses cannot be shown together.\n\n$bad."
+        }
+        return 0
+    }
+    # Adopt the shared settings the saved runs were produced under, so the live
+    # panel describes what is about to appear on screen.
+    set sig0 [_mem_run_dir_signature [lindex [lindex $pairs 0] 1]]
+    if {$sig0 ne ""} { _mem_adopt_shared_from_sig $sig0 }
+
+    # Start from an empty slot list: these memories replace whatever was held,
+    # rather than being appended to an unrelated set.
+    foreach id [dict keys $pore_memories] { _mem_forget_tracks $id }
+    set pore_memories [dict create]
+    set pore_memory_active ""
+    set pore_memory_next 1
+    set loaded 0
+    foreach pr $pairs {
+        lassign $pr id dir
+        set pore_memory_active $id
+        if {$pore_memory_next <= $id} { set pore_memory_next [expr {$id+1}] }
+        set state(import_dir) $dir
+        set pore_memory_runsig ""
+        if {[catch {import_results_from_folder} err]} {
+            set state(status) "Load: memory $id failed: $err"
+            continue
+        }
+        # stamp the settings this run actually recorded, so a later change to
+        # the live sampling or engine shows these results as stale
+        set pore_memory_runsig [_mem_shared_signature]
+        dict set pore_memories $id [_mem_capture]
+        incr loaded
+    }
+    set state(import_dir) $root
+    if {$loaded == 0} {
+        set state(status) "Load: nothing could be loaded from $root."
+        return 0
+    }
+    set pore_memory_active [lindex [lsort -integer [dict keys $pore_memories]] 0]
+    _mem_apply [dict get $pore_memories $pore_memory_active]
+    _mem_refresh_row
+    set state(status) "Loaded $loaded [expr {$loaded == 1 ? {memory} : {memories}}] from $root."
+    return $loaded
 }
 
 proc ::VMDPathFinder::import_results_from_folder {{dialog {}}} {
@@ -27479,9 +28221,28 @@ proc ::VMDPathFinder::import_all_results_from_folder {{dialog {}}} {
         }
     }
     if {$have_hole} {
-        # Owns dialog-closing and its own status/error messaging exactly as
-        # the plain HOLE-only import always has.
-        import_results_from_folder $dialog
+        # A root holding several memories (mem_2, mem_3, ... beside the frame_*
+        # of memory 1) loads all of them in this ONE action, so the picture the
+        # user saved comes back whole rather than one pore at a time. The
+        # multi-memory loader refuses a set whose runs disagree on sampling,
+        # pore method or search engine, since those cannot be compared. A root
+        # with only memory 1 in it is the ordinary case and takes the plain
+        # path, unchanged.
+        set _mpairs [_mem_discover_roots $chosen]
+        set _mneeded [expr {[llength $_mpairs] > 1}]
+        # A root holding ONLY mem_2 (memory 1 was never run) still has to go
+        # through the memory loader: the plain import would find those frames
+        # via its one-level fallback and drop them into whichever slot happens
+        # to be active, so memory 2's analysis would come back as memory 1.
+        foreach _mp $_mpairs { if {[lindex $_mp 0] != 1} { set _mneeded 1 } }
+        if {$_mneeded} {
+            import_memories_from_folder $chosen
+            if {$dialog ne "" && [winfo exists $dialog]} { destroy $dialog }
+        } else {
+            # Owns dialog-closing and its own status/error messaging exactly as
+            # the plain HOLE-only import always has.
+            import_results_from_folder $dialog
+        }
         if {$_tnote ne ""} { append state(status) $_tnote }
     } else {
         if {$_tnote ne ""} { set state(status) [string trimleft $_tnote] }
@@ -33326,6 +34087,9 @@ proc ::VMDPathFinder::_run_uses_card {cardname} {
 }
 
 proc ::VMDPathFinder::_set_pore_method {val disp} {
+    # The memory row is spherical-only; leaving spherical also hides the other
+    # memories' surfaces so they are not read as part of a Connolly result.
+    after idle ::VMDPathFinder::_mem_refresh_row
     # A result set must never mix two pore methods - run_analysis already refuses
     # that on its own signature check, but until the next run the panel would go
     # on showing spherical numbers under a CONNOLLY heading. Loaded results are
@@ -40676,6 +41440,11 @@ proc ::VMDPathFinder::run_analysis {} {
         update
         refresh_results_list
         update_frame_trace
+        # These results were produced under the shared settings in force now.
+        # Stamping it here is what lets the panel later say a memory is stale
+        # because the sampling or the engine has since been changed.
+        catch {_mem_mark_fresh}
+        catch {_mem_refresh_row}
 
         if {[llength $result_frames] == 0} {
             error "HOLE produced no readable output for any selected frame."
@@ -49280,10 +50049,27 @@ proc ::VMDPathFinder::ensure_surface_mol {protein_mol} {
     # closing the plugin and can be toggled/deleted independently.
     variable current_surface_mol
     variable surface_mols
-    # Reuse this reference molecule's own track if it already has one, so each
-    # analyzed molecule keeps a separate surface and switching never clobbers
-    # the other molecule's pore.
-    if {[info exists surface_mols($protein_mol)] && \
+    variable mem_surface_mols
+    variable pore_memory_active
+    # With memory slots the track is per MEMORY, not per molecule: five pores of
+    # one structure have to be on screen together, and one shared track would
+    # mean each new analysis wiped the last. Memory 1 keeps the molecule's
+    # original track so an existing run's surface is not orphaned.
+    # Memory 1 included: its track has to be hideable and deletable like any
+    # other, or leaving spherical would strand one pore on screen under a
+    # Connolly or Tunnel result and deleting memory 1 would orphan its surface.
+    # _mem_ensure_first adopts any pre-existing surface_mols entry into this
+    # array, so an already-drawn pore is not abandoned.
+    set _memkey ""
+    if {[_mem_enabled] && $pore_memory_active ne ""} {
+        set _memkey "$protein_mol|$pore_memory_active"
+        if {[info exists mem_surface_mols($_memkey)] && \
+                ![catch {molinfo $mem_surface_mols($_memkey) get name}]} {
+            set current_surface_mol $mem_surface_mols($_memkey)
+            sync_surface_view $current_surface_mol $protein_mol
+            return $current_surface_mol
+        }
+    } elseif {[info exists surface_mols($protein_mol)] && \
             ![catch {molinfo $surface_mols($protein_mol) get name}]} {
         set current_surface_mol $surface_mols($protein_mol)
         sync_surface_view $current_surface_mol $protein_mol
@@ -49294,8 +50080,13 @@ proc ::VMDPathFinder::ensure_surface_mol {protein_mol} {
     catch {set pv [molinfo $protein_mol get \
         {center_matrix rotate_matrix scale_matrix global_matrix}]}
     set m [mol new]
-    mol rename $m "HOLE surface (mol $protein_mol)"
-    set surface_mols($protein_mol) $m
+    if {$_memkey ne ""} {
+        mol rename $m "HOLE surface (mol $protein_mol, memory $pore_memory_active)"
+        set mem_surface_mols($_memkey) $m
+    } else {
+        mol rename $m "HOLE surface (mol $protein_mol)"
+        set surface_mols($protein_mol) $m
+    }
     set current_surface_mol $m
     if {$pv ne ""} {
         # Align the new mol to the protein, and restore the protein's view in

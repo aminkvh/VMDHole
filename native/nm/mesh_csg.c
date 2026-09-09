@@ -228,6 +228,8 @@ static int build_axis(double origin, int ncoarse, const double *ivlo, const doub
     *out = t;
     return n;
 }
+static int dbg_normsrc = 0;
+static long dbg_clipdom = 0, dbg_vtot = 0;
 static float *fpos, *fclip;      /* per-corner signed distances, init +INF */
 static int *fown, *fownc;        /* per-corner nearest DOT / CLIP sphere (argmin) */
 
@@ -411,6 +413,8 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     for (size_t i = 0; i < ncorner; i++) { fpos[i] = 1e9f; fclip[i] = 1e9f; fown[i] = -1; fownc[i] = -1; }
     double t1 = now_ms();
 
+    dbg_normsrc = getenv("CSG_DEBUG_NORMSRC") ? 1 : 0;
+    dbg_clipdom = dbg_vtot = 0;
     fill_field(fpos, 0);
     fill_field(fclip, 1);
     /* smoothing: the mean of every frame's field, marched in place of the
@@ -439,7 +443,18 @@ static long mesh_run(const char *outpath, const char *plotpath) {
        fpos, while the surface is fval = max(fpos, -fclip). Where the clip term
        dominates, the normal is the gradient of a different function than the
        one that defined the surface. That is a latent inconsistency in the
-       ordinary path, not in smoothing. */
+       ordinary path, not in smoothing.
+
+       MEASURED (CSG_DEBUG_NORMSRC=1, which counts emitted vertices where
+       -fclip > fpos): 118 of 4986 (2.37%) on the 1GRM fixture, 952 of 78255
+       (1.22%) on a 160k-atom pore. It stays that small because the centroid
+       test above already discards facets the clip term owns; what survives is
+       the rim of each mouth, where the two terms cross. So the affected
+       normals are a thin ring at both ends, not the pore wall. Fixing it would
+       mean taking the normal from whichever term governs at that vertex, which
+       moves every existing normal in that ring - left alone deliberately until
+       someone asks for it. The probe is inert unless the variable is set
+       (verified byte-identical output). */
     float *favg = NULL;
     if (nwith > 0) {
         /* fill_field only evaluates a sphere within radius+2h, so every corner
@@ -584,6 +599,15 @@ static long mesh_run(const char *outpath, const char *plotpath) {
                     /* outward normal = gradient of f (central differences) */
                     double e = 0.5 * hf;
                     const float *nf = favg ? favg : fpos;
+                    /* CSG_DEBUG_NORMSRC=1: count vertices where the clip term
+                       decides the surface, i.e. where taking the normal from
+                       fpos differs from the gradient of fval. */
+                    if (dbg_normsrc) {
+                        if (-trisample(fclip, vv[q][0], vv[q][1], vv[q][2]) >
+                             trisample(fpos,  vv[q][0], vv[q][1], vv[q][2]))
+                            __sync_fetch_and_add(&dbg_clipdom, 1);
+                        __sync_fetch_and_add(&dbg_vtot, 1);
+                    }
                     double nx2 = trisample(nf, vv[q][0]+e, vv[q][1], vv[q][2]);
                     double nx1 = trisample(nf, vv[q][0]-e, vv[q][1], vv[q][2]);
                     double ny2 = trisample(nf, vv[q][0], vv[q][1]+e, vv[q][2]);
@@ -695,6 +719,9 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     }
     for (int th = 0; th < nslab; th++) free(tbuf[th]);
     free(tbuf); free(tcnt); free(tcap);
+    if (dbg_normsrc)
+        fprintf(stderr, "CSG_NORMSRC clip_dominated=%ld of %ld vertices (%.4f%%)\n",
+                dbg_clipdom, dbg_vtot, dbg_vtot ? 100.0*dbg_clipdom/dbg_vtot : 0.0);
     free(fpos); free(fclip); free(fown); free(fownc); free(favg);
     fpos = fclip = NULL; fown = fownc = NULL;
     free(tx); free(ty); free(tz); tx = ty = tz = NULL;
