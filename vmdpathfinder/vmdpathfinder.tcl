@@ -2003,6 +2003,7 @@ proc ::VMDPathFinder::build_gui {w} {
     $w.mbar add cascade -label "File" -menu $w.mbar.file
     $w.mbar.file add command -label "Load Saved Analysis..."     -command ::VMDPathFinder::show_import_dialog
     $w.mbar.file add command -label "Reset (clear results)..."   -command ::VMDPathFinder::reset_session
+    $w.mbar.file add command -label "Save Package..."            -command ::VMDPathFinder::save_package
     # Export items live on each plot tab's own Export ▸ CSV / Figure menu.
     $w.mbar.file add separator
     $w.mbar.file add command -label "Settings..."               -command ::VMDPathFinder::show_settings_dialog
@@ -53586,6 +53587,152 @@ proc ::VMDPathFinder::_profile_property_series {frame} {
     set cs {}; set hs {}
     foreach t $tr { lassign $t c r h; lappend cs $c; lappend hs $h }
     return [list $cs $hs $sch]
+}
+
+# ---------------------------------------------------------------------------
+# Save package: every export the current results can produce, in one folder.
+# ---------------------------------------------------------------------------
+
+proc ::VMDPathFinder::_pkg_tabs {} {
+    # {tab-key label csv-command figure-command}. The same pairs each plot
+    # tab's own Export menu is built from, so the package can never drift from
+    # what the buttons produce - it calls exactly those procs.
+    variable w
+    return [list \
+        profile   "Pore profile"  ::VMDPathFinder::export_profile_csv \
+                  [list ::VMDPathFinder::_export_fig profile profile] \
+        minr      "Trends"        ::VMDPathFinder::export_metrics_csv \
+                  [list ::VMDPathFinder::_export_fig trends $w.plotframe.nb.minr.cv] \
+        heatmap   "Over time"     ::VMDPathFinder::export_heatmap_csv \
+                  [list ::VMDPathFinder::_export_fig heatmap $w.plotframe.nb.heatmap.cv {heatmap_indicator}] \
+        mean      "Mean profile"  ::VMDPathFinder::export_mean_profile_csv \
+                  [list ::VMDPathFinder::_export_fig mean $w.plotframe.nb.mean.cv] \
+        hist      "Histogram"     ::VMDPathFinder::export_histogram_csv \
+                  [list ::VMDPathFinder::_export_fig hist $w.plotframe.nb.hist.cv] \
+        hydration "Hydration"     ::VMDPathFinder::export_hydration_csv \
+                  [list ::VMDPathFinder::_export_fig hydration $w.plotframe.nb.hydration.cv] \
+        ionflow   "Ion and water" ::VMDPathFinder::export_ion_flow_csv \
+                  [list ::VMDPathFinder::_export_fig ionflow $w.plotframe.nb.ionflow.cv]]
+}
+
+proc ::VMDPathFinder::_pkg_capture_on {dir} {
+    # Point every export's save dialog at $dir instead of asking, and silence
+    # the "nothing to export" message boxes. Done by proxying the two Tk
+    # commands rather than by adding a path argument to nineteen call sites -
+    # which is also what guarantees the package writes the same bytes the
+    # buttons do.
+    variable _pkg_dir
+    variable _pkg_written
+    variable _pkg_notes
+    set _pkg_dir $dir
+    set _pkg_written {}
+    set _pkg_notes {}
+    if {[llength [info commands ::_vpf_real_getsave]]} { return }
+    rename ::tk_getSaveFile ::_vpf_real_getsave
+    proc ::tk_getSaveFile {args} {
+        array set o {-initialfile export.dat -defaultextension ""}
+        array set o $args
+        set n [file tail $o(-initialfile)]
+        # The real dialog appends -defaultextension when the name has none.
+        # Without this the figures landed with no .ps and nothing would open them.
+        if {[file extension $n] eq "" && $o(-defaultextension) ne ""} {
+            append n $o(-defaultextension)
+        }
+        set f [file join [set ::VMDPathFinder::_pkg_dir] $n]
+        lappend ::VMDPathFinder::_pkg_written $f
+        return $f
+    }
+    rename ::tk_messageBox ::_vpf_real_msgbox
+    proc ::tk_messageBox {args} {
+        array set o {-message ""}
+        array set o $args
+        lappend ::VMDPathFinder::_pkg_notes $o(-message)
+        return ok
+    }
+}
+
+proc ::VMDPathFinder::_pkg_capture_off {} {
+    if {[llength [info commands ::_vpf_real_getsave]]} {
+        rename ::tk_getSaveFile {}
+        rename ::_vpf_real_getsave ::tk_getSaveFile
+    }
+    if {[llength [info commands ::_vpf_real_msgbox]]} {
+        rename ::tk_messageBox {}
+        rename ::_vpf_real_msgbox ::tk_messageBox
+    }
+}
+
+proc ::VMDPathFinder::save_package {} {
+    # One folder holding every table and figure the results on hand can
+    # produce, plus the parameters that produced them. What goes in is decided
+    # by what has data - the same test the export bars use to show or hide
+    # themselves - so a tab you never computed is listed as skipped rather
+    # than written empty.
+    variable w
+    variable state
+    variable _pkg_written
+    variable _pkg_notes
+    if {![_have_tk]} { return }
+    set any 0
+    foreach {k lbl c f} [_pkg_tabs] { if {[_tab_has_data $k]} { set any 1; break } }
+    if {!$any} {
+        tk_messageBox -icon info -type ok -title "Save package" \
+            -message "Nothing to package yet - run an analysis first."
+        return
+    }
+    set parent [tk_chooseDirectory -title "Where to write the package folder" \
+        -initialdir [export_initial_dir] -mustexist 1]
+    if {$parent eq ""} { return }
+    set stamp [expr {[info exists state(run_id)] && $state(run_id) ne "" \
+        ? $state(run_id) : [clock format [clock seconds] -format "%Y%m%d-%H%M%S"]}]
+    set dir [file join $parent "vmdpathfinder_package_$stamp"]
+    if {[catch {file mkdir $dir} _e]} {
+        tk_messageBox -icon error -type ok -title "Save package" -message "Could not create $dir: $_e"
+        return
+    }
+    set done {}; set skipped {}
+    _begin_calc
+    _pkg_capture_on $dir
+    if {[catch {
+        foreach {k lbl csv_cmd fig_cmd} [_pkg_tabs] {
+            if {![_tab_has_data $k]} { lappend skipped $lbl; continue }
+            set state(status) "Packaging: $lbl..."
+            catch {update idletasks}
+            catch {uplevel #0 $csv_cmd}
+            catch {uplevel #0 $fig_cmd}
+            lappend done $lbl
+        }
+    } _perr]} { }
+    _pkg_capture_off
+    # The parameters that produced all of it, beside it.
+    set _files {}
+    foreach f $_pkg_written { if {[file exists $f]} { lappend _files [file tail $f] } }
+    catch {
+        set _mol [resolve_molid_or -1]
+        set _frames [expr {[info exists state(frame_spec)] ? $state(frame_spec) : ""}]
+        _write_run_parameters $dir $stamp $_mol $state(selection) $_frames
+    }
+    _pkg_write_readme $dir $stamp $done $skipped $_files
+    _end_calc
+    set state(status) "Package written to $dir - [llength $_files] file(s)."
+    tk_messageBox -icon info -type ok -title "Save package" -message \
+        "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped (no data): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+}
+
+proc ::VMDPathFinder::_pkg_write_readme {dir stamp done skipped files} {
+    if {[catch {open [file join $dir README.txt] w} fh]} { return }
+    puts $fh "VMDPathFinder package $stamp"
+    puts $fh "Written [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S %Z}]"
+    puts $fh ""
+    puts $fh "run_$stamp.txt lists every parameter used. The tables are CSV; the"
+    puts $fh "figures are PostScript, which most vector editors and LaTeX read."
+    puts $fh ""
+    puts $fh "Included:  [expr {[llength $done] ? [join $done {, }] : {nothing}}]"
+    puts $fh "Skipped (nothing computed): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    puts $fh ""
+    puts $fh "Files:"
+    foreach f [lsort $files] { puts $fh "  $f" }
+    close $fh
 }
 
 proc ::VMDPathFinder::export_profile_csv {} {

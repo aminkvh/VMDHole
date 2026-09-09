@@ -4923,6 +4923,25 @@ chk "...and reach the CSV too" \
 chk "no private capsule tube remains" \
     [expr {[llength [info procs ::VMDPathFinder::_build_capsule_stadium*]] == 0 \
         && [llength [info procs ::VMDPathFinder::_capsule_slice_property]] == 0}] 1
+# Save Package must call the SAME exporters the buttons do, or the package and
+# the buttons can drift apart. Asserted on the table those pairs come from.
+set _pkgt [::VMDPathFinder::_pkg_tabs]
+chk "the package covers every plot tab that has an Export menu" \
+    [expr {[llength $_pkgt] / 4}] 7
+chk "...and names the real exporter procs" \
+    [expr {[lsearch -exact $_pkgt ::VMDPathFinder::export_profile_csv] >= 0
+        && [lsearch -exact $_pkgt ::VMDPathFinder::export_ion_flow_csv] >= 0}] 1
+# The capture proxies must always be taken back down: leaving them in place
+# would silently redirect every later Save/Export in the session to the package
+# folder, or swallow every message box.
+chk "the package restores tk_getSaveFile and tk_messageBox" \
+    [expr {[string first {rename ::_vpf_real_getsave ::tk_getSaveFile} \
+              [info body ::VMDPathFinder::_pkg_capture_off]] >= 0
+        && [string first {rename ::_vpf_real_msgbox ::tk_messageBox} \
+              [info body ::VMDPathFinder::_pkg_capture_off]] >= 0}] 1
+chk "...and save_package always calls the teardown" \
+    [expr {[string first {_pkg_capture_off} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+
 chk "the mesher serves capsule runs" \
     [expr {[string first {capsule} [info body ::VMDPathFinder::_csg_can_mesh]] >= 0}] 1
 
