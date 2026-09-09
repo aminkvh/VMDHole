@@ -4411,8 +4411,14 @@ destroy $w.about
 # Built under CONNOLLY: the Connolly-only rows are hidden for other methods, and
 # this block checks every row is drawn inside the window.
 set _svpm0 $::VMDPathFinder::state(pore_method)
+set _svse0 $::VMDPathFinder::state(search_engine)
 set ::VMDPathFinder::state(pore_method) connolly
+# Monte Carlo, because the MC rows checked below are hidden under Nelder-Mead
+# by design (_update_search_rows). Without this the check fails or passes
+# depending on what the saved config last selected.
+set ::VMDPathFinder::state(search_engine) mc
 ::VMDPathFinder::show_hole_params_settings
+::VMDPathFinder::_update_search_rows
 update idletasks; update
 set _hp $w.hole_params_settings
 report "the HOLE parameters dialog opens" [winfo exists $_hp] ""
@@ -5117,6 +5123,7 @@ if {[winfo exists $_hp]} {
     }
     report "the Connolly knobs come back under CONNOLLY" $_shown ""
     set ::VMDPathFinder::state(pore_method) $_svpm0
+    set ::VMDPathFinder::state(search_engine) $_svse0
     ::VMDPathFinder::_update_conn_controls
 
     # pore_lat splits the CONNOLLY cloud, so it is offered only under CONNOLLY -

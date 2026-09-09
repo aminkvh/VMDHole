@@ -23135,23 +23135,26 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     grid [label $d.hp.sa_l -text "SAMPLE" -anchor w]                                  -row 0 -column 2 -sticky w
     grid [entry $d.hp.sa_e -textvariable ::VMDPathFinder::state(sample) -width 7]           -row 0 -column 3 -sticky w -padx {2 6}
     grid [label $d.hp.ig_l -text "IGNORE" -anchor w]                                  -row 1 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ig_e -textvariable ::VMDPathFinder::state(ignore) -width 40]          -row 1 -column 1 -columnspan 5 -sticky w -padx {4 0}
+    grid [entry $d.hp.ig_e -textvariable ::VMDPathFinder::state(ignore) -width 34]          -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0}
     # Rows a choice enables come AFTER the choice: the Monte Carlo rows and
     # HOLE's own cards (seed, SHORTO, extra cards) follow the Search picker and
     # show for Monte Carlo only; Nelder-Mead is deterministic, prints nothing
     # of HOLE's and takes no cards (_update_search_rows).
+    # Two label+field pairs per row, never three. A third pair added columns 4
+    # and 5 that no other row used, and those two columns set the whole dialog's
+    # width - which is what pushed MC kT past every row above it.
     grid [label $d.hp.ms_l -text "MC steps" -anchor w]                                -row 4 -column 0 -sticky w -pady 3
     grid [entry $d.hp.ms_e -textvariable ::VMDPathFinder::state(mcstep) -width 7]           -row 4 -column 1 -sticky w -padx {2 6}
     grid [label $d.hp.md_l -text "MC step size" -anchor w]                            -row 4 -column 2 -sticky w
     grid [entry $d.hp.md_e -textvariable ::VMDPathFinder::state(mcdisp) -width 7]           -row 4 -column 3 -sticky w -padx {2 6}
-    grid [label $d.hp.mk_l -text "MC kT" -anchor w]                                   -row 4 -column 4 -sticky w
-    grid [entry $d.hp.mk_e -textvariable ::VMDPathFinder::state(mckt) -width 7]             -row 4 -column 5 -sticky w -padx {4 0}
-    grid [label $d.hp.rs_l -text "Random seed" -anchor w]                             -row 5 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.rs_e -textvariable ::VMDPathFinder::state(random_seed) -width 7]      -row 5 -column 1 -sticky w -padx {2 6}
-    grid [label $d.hp.sh_l -text "SHORTO" -anchor w]                                  -row 5 -column 2 -sticky w
-    grid [entry $d.hp.sh_e -textvariable ::VMDPathFinder::state(shorto) -width 7]           -row 5 -column 3 -sticky w -padx {2 6}
-    grid [label $d.hp.ex_l -text "Extra HOLE cards" -anchor w]                        -row 6 -column 0 -sticky w -pady 3
-    grid [entry $d.hp.ex_e -textvariable ::VMDPathFinder::state(extra_cards) -width 40]     -row 6 -column 1 -columnspan 5 -sticky w -padx {4 0}
+    grid [label $d.hp.mk_l -text "MC kT" -anchor w]                                   -row 5 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.mk_e -textvariable ::VMDPathFinder::state(mckt) -width 7]             -row 5 -column 1 -sticky w -padx {2 6}
+    grid [label $d.hp.rs_l -text "Random seed" -anchor w]                             -row 5 -column 2 -sticky w
+    grid [entry $d.hp.rs_e -textvariable ::VMDPathFinder::state(random_seed) -width 7]      -row 5 -column 3 -sticky w -padx {2 6}
+    grid [label $d.hp.sh_l -text "SHORTO" -anchor w]                                  -row 6 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.sh_e -textvariable ::VMDPathFinder::state(shorto) -width 7]           -row 6 -column 1 -sticky w -padx {2 6}
+    grid [label $d.hp.ex_l -text "Extra HOLE cards" -anchor w]                        -row 7 -column 0 -sticky w -pady 3
+    grid [entry $d.hp.ex_e -textvariable ::VMDPathFinder::state(extra_cards) -width 34]     -row 7 -column 1 -columnspan 3 -sticky w -padx {4 0}
     # Pore-detection method: pick Spherical (default plain HOLE) / Connolly /
     # Capsule instead of typing a card. Sets pore_method (see write_control_file).
     grid [label $d.hp.pm_l -text "Pore method" -anchor w]                             -row 2 -column 0 -sticky w -pady 3
@@ -23197,7 +23200,7 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     after idle ::VMDPathFinder::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
         -variable ::VMDPathFinder::state(conn_pore_gate)
-    grid $d.hp.cgate_c -row 3 -column 2 -columnspan 4 -sticky w -pady 2
+    grid $d.hp.cgate_c -row 3 -column 2 -columnspan 2 -sticky w -pady 2
     add_tooltip $d.hp.cgate_c "Drops the Connolly volume that escapes sideways through openings, keeping the pore. Its Margin lives on the main panel, next to Show nearby."
     # Margin itself is NOT here - it moved to the main panel's color row, in
     # front of Color, because it governs what pore_lat/pore_lobes SHOW and is
@@ -23205,12 +23208,12 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
 
     checkbutton $d.hp.fixnm_c -text "Rename unreadable atoms" \
         -variable ::VMDPathFinder::state(hole_fix_atom_names)
-    grid $d.hp.fixnm_c -row 7 -column 0 -columnspan 2 -sticky w -pady 2
+    grid $d.hp.fixnm_c -row 8 -column 0 -columnspan 2 -sticky w -pady 2
     add_tooltip $d.hp.fixnm_c "For CHARMM lipid names like C210, which HOLE reads as 210. Only matters if your selection includes lipid - it does not add lipid to the selection itself. Tunnel mode does not need it."
 
     checkbutton $d.hp.ionrad_c -text "Ionic radii fallback" \
         -variable ::VMDPathFinder::state(ion_radius_fallback)
-    grid $d.hp.ionrad_c -row 7 -column 2 -columnspan 2 -sticky w -pady 2
+    grid $d.hp.ionrad_c -row 8 -column 2 -columnspan 2 -sticky w -pady 2
     add_tooltip $d.hp.ionrad_c "Your radius file is never modified. When a van der Waals radius is missing for an atom in your selection - e.g. K+/CHARMM's POT with simple.rad, which stops the run - a temporary copy is used with crystal ionic radii appended, from Nightingale, E.R. Jr. (1959) J. Phys. Chem. 63, 1381-1387, Table I. Also turns on \"Rename unreadable atoms\" above, for systems that hit both problems at once."
     grid $d.hp -row $row -column 0 -columnspan 3 -sticky w -padx 8
     incr row
@@ -23235,20 +23238,21 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     label $d.pb_hdr -text "Playback & session" -font {Helvetica 9 bold}
     grid $d.pb_hdr -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady {12 2}
     incr row
-    checkbutton $d.prebuild_c -text "Pre-build all surfaces after a run" \
-        -variable ::VMDPathFinder::state(prebuild_surfaces)
-    grid $d.prebuild_c -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 3
-    add_tooltip $d.prebuild_c "Smoother scrubbing; slower right after a run on a big trajectory."
-    incr row
+    # All three on one row, with Close. Shorter labels: what each keeps, or
+    # builds, is in its tooltip.
     frame $d.oc2
-    checkbutton $d.oc2.keep_c -text "Keep visualization on close" -variable ::VMDPathFinder::state(keep_visualization)
-    checkbutton $d.oc2.keeppdb_c -text "Keep input_frame.pdb" -variable ::VMDPathFinder::state(keep_input_pdb)
-    pack $d.oc2.keep_c -side left
-    pack $d.oc2.keeppdb_c -side left -padx {18 0}
-    add_tooltip $d.oc2.keeppdb_c "Uncheck to save disk space - surfaces still redraw fine from the .sph file."
-    grid $d.oc2 -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 3
+    checkbutton $d.oc2.keep_c    -text "Keep visualization" -variable ::VMDPathFinder::state(keep_visualization)
+    checkbutton $d.oc2.keeppdb_c -text "Keep input PDB"     -variable ::VMDPathFinder::state(keep_input_pdb)
+    checkbutton $d.oc2.prebuild_c -text "Pre-build surfaces" -variable ::VMDPathFinder::state(prebuild_surfaces)
+    pack $d.oc2.keep_c $d.oc2.keeppdb_c $d.oc2.prebuild_c -side left -padx {0 12}
+    add_tooltip $d.oc2.keep_c "Leave the pore and its surface in the VMD scene after this window closes."
+    add_tooltip $d.oc2.keeppdb_c "Keep each frame's input_frame.pdb. Uncheck to save disk space - surfaces\
+        still redraw fine from the .sph file."
+    add_tooltip $d.oc2.prebuild_c "Build every frame's surface right after a run. Smoother scrubbing; slower\
+        right after a run on a big trajectory."
+    grid $d.oc2 -row $row -column 0 -columnspan 4 -sticky w -padx 8 -pady 3
     incr row
-    grid [_settings_btn_row $d] -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady {10 10}
+    grid [_settings_btn_row $d] -row $row -column 0 -columnspan 4 -sticky w -padx 8 -pady {8 10}
     incr row
     _center_toplevel $d
     # After sizing, so the window is measured with the Connolly rows in place -
