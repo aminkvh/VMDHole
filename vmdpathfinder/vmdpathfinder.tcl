@@ -606,6 +606,8 @@ namespace eval ::VMDPathFinder:: {
         surface_color_disp hole_def
         surface_material Opaque
         overwrite_results 1
+        log_hide_frames 1
+        run_id {}
         hydro_scheme kd
         hydro_scheme_disp "kyte-doolittle"
         hydro_fast auto
@@ -1585,10 +1587,20 @@ proc ::VMDPathFinder::_note {text {level info}} {
     _log_msg $level $text
 }
 
+proc ::VMDPathFinder::_frame_progress_line {text} {
+    # Is this one of the line-per-frame progress messages? Matched here, where
+    # every status line already passes through, rather than at the dozens of
+    # places that write one.
+    return [regexp -nocase \
+        {^(frame [0-9]|processing frame|building surface|loading surface|rendering frame|\
+           surface [0-9]+ of|smoothing frame|pre-building|analys(ing|ed) frame)} \
+        [string trim $text]]
+}
+
 proc ::VMDPathFinder::_log_status_line {name1 name2 op} {
     variable state
     if {$name2 ne "status"} { return }
-    catch {_log_msg info $state(status)}
+    catch {_log_msg [expr {[_frame_progress_line $state(status)] ? "frame" : "info"}] $state(status)}
     # The status bar is ONE line. A long message used to wrap to several and
     # push the panel around, taking usable area away from everything below it;
     # the whole text is in the log either way, which is where a long message
@@ -1625,7 +1637,13 @@ proc ::VMDPathFinder::show_message_log {} {
     pack $d.t -fill both -expand 1 -padx 8 -pady {8 4}
     $d.t.txt tag configure warn -foreground "#a0522d"
     $d.t.txt tag configure err  -foreground "#b00020"
+    $d.t.txt tag configure run  -foreground "#00668a"
     frame $d.btn
+    checkbutton $d.btn.hidefr -text "Hide per-frame progress" \
+        -variable ::VMDPathFinder::state(log_hide_frames) \
+        -command ::VMDPathFinder::_refresh_msg_log
+    add_tooltip $d.btn.hidefr "Leave out the line-per-frame progress messages, so the run summaries,\
+        warnings and errors are not buried in them."
     button $d.btn.copy -text "Copy" -command {
         clipboard clear
         clipboard append [$::VMDPathFinder::w.msglog.t.txt get 1.0 end-1c]
@@ -1636,6 +1654,7 @@ proc ::VMDPathFinder::show_message_log {} {
     }
     button $d.btn.close -text "Close" -command [list destroy $d]
     pack $d.btn.copy $d.btn.clear -side left -padx {0 6}
+    pack $d.btn.hidefr -side left -padx {12 0}
     pack $d.btn.close -side right
     pack $d.btn -fill x -padx 8 -pady {0 8}
     _refresh_msg_log
@@ -1646,6 +1665,7 @@ proc ::VMDPathFinder::show_message_log {} {
 proc ::VMDPathFinder::_refresh_msg_log {} {
     variable w
     variable msg_log
+    variable state
     set t "$w.msglog.t.txt"
     if {![winfo exists $t]} { return }
     $t configure -state normal
@@ -1653,9 +1673,15 @@ proc ::VMDPathFinder::_refresh_msg_log {} {
     if {![info exists msg_log] || ![llength $msg_log]} {
         $t insert end "Nothing logged yet."
     } else {
+        set hide [expr {[info exists state(log_hide_frames)] && $state(log_hide_frames)}]
+        set nhidden 0
         foreach e $msg_log {
             lassign $e when level text
+            if {$hide && $level eq "frame"} { incr nhidden; continue }
             $t insert end "$when  " "" "$text\n" [expr {$level eq "info" ? "" : $level}]
+        }
+        if {$nhidden} {
+            $t insert end "\n($nhidden per-frame progress line(s) hidden)\n" run
         }
     }
     $t see end
@@ -19249,6 +19275,68 @@ proc ::VMDPathFinder::_cavity_structure_molid {} {
     return -1
 }
 
+proc ::VMDPathFinder::_cavity_effective_color {tid} {
+    # This pocket's flat colour: its own gear override, else the rank colour.
+    # The gear stored an override that nothing read, so every pocket drew in
+    # the rank colour whatever the menu said.
+    variable cavity_gear_color
+    if {[info exists cavity_gear_color] && [dict exists $cavity_gear_color $tid]} {
+        set v [dict get $cavity_gear_color $tid]
+        if {$v ne "auto" && $v ne ""} { return $v }
+    }
+    return [_tunnel_color [expr {$tid+11}]]
+}
+
+proc ::VMDPathFinder::_cavity_effective_material {tid} {
+    # This pocket's material: its own gear override, else the window default.
+    variable cavity_gear_material
+    variable state
+    if {[info exists cavity_gear_material] && [dict exists $cavity_gear_material $tid]} {
+        set v [dict get $cavity_gear_material $tid]
+        if {$v ne "auto" && $v ne ""} { return $v }
+    }
+    return [expr {[info exists state(cavity_solid)] && $state(cavity_solid) \
+        ? "Opaque" : "Transparent"}]
+}
+
+proc ::VMDPathFinder::_cavity_effective_spheres {tid} {
+    # 1 to draw the clearance spheres themselves, 0 to mesh a surface over
+    # them. Gear override first, then the window default.
+    variable cavity_gear_style
+    variable state
+    if {[info exists cavity_gear_style] && [dict exists $cavity_gear_style $tid]} {
+        switch -exact -- [dict get $cavity_gear_style $tid] {
+            spheres { return 1 }
+            surface { return 0 }
+        }
+    }
+    return [expr {[info exists state(cavity_spheres)] && $state(cavity_spheres)}]
+}
+
+proc ::VMDPathFinder::_cavity_show_lining_track {tid} {
+    # Act on the pocket in the frame being viewed, not the frame the window was
+    # built on. MOLE re-ranks cavities every frame, so a rank frozen into the
+    # button pointed at a different pocket - or at nothing - after a scrub.
+    set frame [_tunnel_display_frame]
+    set id [_cavity_rank_in_frame $tid $frame]
+    if {$id eq ""} { return }
+    _cavity_show_lining $frame $id
+}
+
+proc ::VMDPathFinder::_cavity_use_as_start_track {tid} {
+    set frame [_tunnel_display_frame]
+    set id [_cavity_rank_in_frame $tid $frame]
+    if {$id eq ""} { return }
+    _cavity_use_as_start $frame $id
+}
+
+proc ::VMDPathFinder::_cavity_residues_track {tid} {
+    set frame [_tunnel_display_frame]
+    set id [_cavity_rank_in_frame $tid $frame]
+    if {$id eq ""} { return }
+    _tunnel_cavity_residues $frame $id
+}
+
 proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     # Draw every ticked cavity of $frame onto the CAVITY track. One .sph + mesh
     # per cavity beside the frame's tunnel files, reused on the mtime rule the
@@ -19280,8 +19368,6 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     set cm [ensure_cavity_mol $molid]
     catch {graphics $cm delete all}
     if {$fd eq ""} { set fd [file join $tunnel_root [format "tunnel_%05d" $frame]] }
-    set mat [expr {[info exists state(cavity_solid)] && $state(cavity_solid) \
-        ? "Opaque" : "Transparent"}]
     set prop [expr {[info exists state(cavity_prop)] ? $state(cavity_prop) : "none"}]
     if {$prop ne "none" && $prop ne "" && $prop ni [_cavity_prop_tokens]} { set prop "none" }
     # A CAP on how many pockets are meshed at once. Each one is a full
@@ -19307,11 +19393,14 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         if {![file exists $sph]} {
             if {[catch {write_stock_sph_file $spheres $sph}]} continue
         }
-        if {[info exists state(cavity_spheres)] && $state(cavity_spheres)} {
+        # Per pocket, so one pocket's gear cannot decide how the others draw.
+        set mat [_cavity_effective_material $tid]
+        set col [_cavity_effective_color $tid]
+        if {[_cavity_effective_spheres $tid]} {
             # CAVER Analyst's "Locked Probes": the clearance spheres themselves
             # rather than a surface over them, which is the cavity as the
             # engine actually represents it.
-            catch {render_sph_points_to_mol $sph $cm [_tunnel_color [expr {$tid+11}]] 0.6}
+            catch {render_sph_points_to_mol $sph $cm $col 0.6}
             continue
         }
         set plot [surface_plot_name $fd [format "cavity_%02d" $id] draw 1]
@@ -19361,7 +19450,7 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
             }
         }
         if {!$done} {
-            catch {render_vmd_plot_to_mol $plot $cm 1 [_tunnel_color [expr {$tid+11}]] "" $mat 0 0}
+            catch {render_vmd_plot_to_mol $plot $cm 1 $col "" $mat 0 0}
         }
         incr _drawn
     }
@@ -19586,8 +19675,18 @@ proc ::VMDPathFinder::_cavity_refresh {} {
             }
         }
     }
+    # Collected, then written back after the loop - editing the dict being
+    # iterated is not safe.
+    set _remap [dict create]
     dict for {r pair} $_cavity_row_map {
-        lassign $pair tid id
+        lassign $pair tid _stale_id
+        # MOLE re-ranks cavities in every frame, so the rank captured when the
+        # window was built is not this frame's rank. Re-resolving it is what
+        # makes the Seen light and the row buttons follow the frame: a pocket
+        # missing from the build frame had no rank at all, so it stayed red and
+        # greyed out for the whole trajectory.
+        set id [_cavity_rank_in_frame $tid $frame]
+        dict set _remap $r [list $tid $id]
         set here [expr {$id ne "" && [dict exists $cavs $id]}]
         set cv [expr {$here ? [dict get $cavs $id] : {}}]
         # Every value that depends on the frame, refreshed together. Only
@@ -19626,6 +19725,19 @@ proc ::VMDPathFinder::_cavity_refresh {} {
             }
         }
         if {[winfo exists $g.lin$r]} { _cavity_lining_btn_sync $g.lin$r $tid }
+    }
+    set _cavity_row_map $_remap
+    # A lining drawn from another frame shows that frame's residues. Redraw the
+    # ones that are on, so the overlay follows the structure like everything
+    # else in this window.
+    variable _cavity_lining_on
+    if {[info exists _cavity_lining_on]} {
+        dict for {_ltid _on} $_cavity_lining_on {
+            if {!$_on} continue
+            set _lid [_cavity_rank_in_frame $_ltid $frame]
+            if {$_lid eq ""} continue
+            catch {_cavity_redraw_lining $frame $_lid $_ltid}
+        }
     }
 }
 
@@ -19669,6 +19781,20 @@ proc ::VMDPathFinder::_cavity_lining_btn_sync {btn tid} {
     catch {$btn configure -relief [expr {$on ? "sunken" : "raised"}]}
 }
 
+proc ::VMDPathFinder::_cavity_material_names {} {
+    # Whatever VMD actually has, including any the user defined. A hardcoded
+    # list left most of the stock materials unreachable here while the tunnel
+    # gear offered all of them.
+    set mats {}
+    catch {set mats [material list]}
+    if {![llength $mats]} {
+        set mats {Opaque Transparent BrushedMetal Diffuse Ghost Glass1 Glass2 Glass3
+                  Glossy HardPlastic MetallicPastel Steel Translucent Edgy EdgyShiny
+                  EdgyGlass Goodsell AOShiny AOChalky AOEdgy BlownGlass GlassBubble RTChrome}
+    }
+    return $mats
+}
+
 proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     # Per-pocket display override, the cavity counterpart of
     # show_tunnel_gear_settings. Colour and material ride the same
@@ -19695,9 +19821,9 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     set state(cavgear_style)    [expr {[dict exists $cavity_gear_style $tid]    ? [dict get $cavity_gear_style $tid]    : "auto"}]
     set r 0
     foreach {var label opts tip} [list \
-        cavgear_color "Colour" {auto blue red gray orange yellow tan green white pink cyan purple lime mauve ochre iceblue black} \
+        cavgear_color "Color" [concat auto [_vmd_color_names {white black}]] \
             "Flat colour for this pocket. Only applies when it is not coloured by a property - property colouring bakes per-triangle colours into the mesh." \
-        cavgear_material "Material" {auto Opaque Transparent Glass1 Glossy EdgyShiny AOChalky} \
+        cavgear_material "Material" [concat auto [_cavity_material_names]] \
             "VMD material for this pocket's surface." \
         cavgear_style "Draw as" {auto surface spheres} \
             "surface = one mesh over the clearance spheres. spheres = the clearance spheres themselves (CAVER Analyst's \"Locked Probes\"). auto follows the window default."] {
@@ -19881,9 +20007,31 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
         return
     }
     dict set _cavity_lining_on $_key_tid 1
+    _cavity_redraw_lining $frame $id $_key_tid
+    # The SHOW path has to sync the button too, or it stays raised while the
+    # lining is on and the only way to tell is that the structure changed.
+    catch {_cavity_refresh}
+}
+
+proc ::VMDPathFinder::_cavity_redraw_lining {frame id key_tid} {
+    # Point the two lining reps at THIS frame's residues. Split out of
+    # _cavity_show_lining, which is a toggle: the frame-change path has to
+    # redraw a lining that is already on, not turn it off. It must not call
+    # _cavity_refresh - refresh is what calls this.
+    variable state
+    variable tunnel_lining
+    variable _cavity_lining_rep
+    if {![info exists tunnel_lining($frame)] \
+            || ![dict exists $tunnel_lining($frame) cav.$id]} { return }
+    set molid [_cavity_structure_molid]
+    if {$molid eq "" || $molid < 0} { return }
+    if {![info exists _cavity_lining_rep]} { set _cavity_lining_rep [dict create] }
+    set _key_tid $key_tid
     set cv [dict get $tunnel_lining($frame) cav.$id]
     set n 0
-    foreach {which colour} {bres 7 ires 1} {
+    # 4 is yellow, 1 is red - the colours the button tooltip and the status
+    # line have always named. 7 is green.
+    foreach {which colour} {bres 4 ires 1} {
         set sel {}
         foreach e [dict get $cv $which] {
             lappend sel "(resid [dict get $e resid] and chain [dict get $e chain])"
@@ -19916,9 +20064,6 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
     # per-frame rank and is a different number on most frames.
     set _lbl $_key_tid
     set state(status) "Pocket $_lbl lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red), $n residues on molecule $molid."
-    # The SHOW path has to sync the button too, or it stays raised while the
-    # lining is on and the only way to tell is that the structure changed.
-    catch {_cavity_refresh}
 }
 
 proc ::VMDPathFinder::_cavity_export_csv {} {
@@ -20043,14 +20188,22 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     set frame [_tunnel_display_frame]
     set cavs [_tunnel_cavities $frame]
     set t $w.tuncav
-    if {[winfo exists $t]} { destroy $t }
-    toplevel $t
-    wm withdraw $t
+    # Rebuild INTO the existing window. Destroying the toplevel made a sort or
+    # a filter change look like the window closing and reopening - and with a
+    # few hundred pockets the row build between the two is long enough to read
+    # as a hang.
+    set _rebuild [winfo exists $t]
+    if {$_rebuild} {
+        foreach _c [winfo children $t] { catch {destroy $_c} }
+    } else {
+        toplevel $t
+        wm withdraw $t
+    }
     wm title $t "Cavities - frame $frame"
     if {![llength $cavs]} {
         pack [label $t.none -justify left -wraplength 420 -text \
             "No cavity records for this frame.\n\nCavities come from the compiled MOLE engine (mole_tunnel_engine); a run made with an older build, or the pure-Tcl fallback, has none. Re-run the tunnel search."] -padx 12 -pady 12
-        wm deiconify $t
+        if {!$_rebuild} { wm deiconify $t }
         return
     }
     foreach {k d} {cavity_sort_col vol cavity_sort_dir desc cavity_origin_rule mole
@@ -20064,10 +20217,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     frame $t.ctl
     # One checkbox over the per-row ones, as the tunnel list has - two buttons
     # for the same pair of states was a control the checkbox already is.
-    checkbutton $t.ctl.allc -text "" \
-        -variable ::VMDPathFinder::state(cavity_shown_all) \
-        -command ::VMDPathFinder::_cavity_show_all_toggle
-    label $t.ctl.pl -text "  Colour by:"
+    label $t.ctl.pl -text "  Color by:"
     menubutton $t.ctl.pm -textvariable ::VMDPathFinder::state(cavity_prop_disp) \
         -relief raised -indicatoron 1 -menu $t.ctl.pm.m -width 14
     menu $t.ctl.pm.m -tearoff 0
@@ -20086,10 +20236,10 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         -command [list ::VMDPathFinder::_cavity_set_rule mole "deepest point (MOLE)"]
     $t.ctl.rm.m add command -label "largest sphere (CAVER)" \
         -command [list ::VMDPathFinder::_cavity_set_rule caver "largest sphere (CAVER)"]
-    pack $t.ctl.allc $t.ctl.pl $t.ctl.pm \
+    pack $t.ctl.pl $t.ctl.pm \
         $t.ctl.rl $t.ctl.rm -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
-    add_tooltip $t.ctl.allc "Tick to draw every pocket in the list; untick to hide them all. Only the pockets currently listed are affected, and at most [_cavity_draw_cap] are drawn at once."
+
     add_tooltip $t.ctl.pm "Colour EVERY pocket by a chemical property of the residues lining it - how water-repelling they are, their charge, and so on. This is the default for all pockets; a single pocket can override it from its own gear button."
     add_tooltip $t.ctl.rl "A pocket is where a tunnel search BEGINS. \"Use as start\" copies this point into the Start point box, so the next search looks for routes leading out of that pocket. The two rules pick that point differently."
     add_tooltip $t.ctl.rm "Where inside the pocket a search would start.\n\ndeepest point (MOLE) - the point furthest from the surface, which MOLE itself would pick.\nlargest sphere (CAVER) - the centre of the biggest sphere that fits, which is what CAVER Analyst uses.\n\nThey usually differ by a few Angstroms; the Start pt column shows the point you would get."
@@ -20153,6 +20303,18 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         set _txt $label
         if {$_sortable && $state(cavity_sort_col) eq $key} {
             append _txt [expr {$state(cavity_sort_dir) eq "asc" ? " \u25b2" : " \u25bc"}]
+        }
+        if {$key eq "draw"} {
+            # Column 0 is the draw ticks, so the tick-them-all control belongs
+            # here - directly above them and left of Id - not off in the
+            # controls lane where it read as unrelated.
+            checkbutton $hg.h$c -variable ::VMDPathFinder::state(cavity_shown_all) \
+                -command ::VMDPathFinder::_cavity_show_all_toggle -padx 0 -pady 0
+            grid $hg.h$c -row 0 -column $c -sticky w -padx 4 -pady {0 3}
+            add_tooltip $hg.h$c "Tick to draw every pocket in the list; untick to hide them all.\
+                Only the pockets currently listed are affected, and at most [_cavity_draw_cap] are drawn at once."
+            incr c
+            continue
         }
         label $hg.h$c -text $_txt -font {Helvetica 9 bold} -anchor w
         if {$_sortable} {
@@ -20231,20 +20393,20 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             incr c
         }
         button $g.lin$r -text "Lining" -font {Helvetica 8} -padx 3 -pady 0 \
-            -command [list ::VMDPathFinder::_cavity_show_lining $frame $id]
+            -command [list ::VMDPathFinder::_cavity_show_lining_track $tid]
         if {!$_here} { $g.lin$r configure -state disabled }
         _cavity_lining_btn_sync $g.lin$r $tid
         grid $g.lin$r -row $r -column $c -sticky w -padx {2 2}
         add_tooltip $g.lin$r "Draw this pocket's lining on the structure: boundary residues yellow, inner red. Click again to remove it."
         incr c
         button $g.use$r -text "Use as start" -font {Helvetica 8} -padx 3 -pady 0 \
-            -command [list ::VMDPathFinder::_cavity_use_as_start $frame $id]
+            -command [list ::VMDPathFinder::_cavity_use_as_start_track $tid]
         if {!$_here} { $g.use$r configure -state disabled }
         grid $g.use$r -row $r -column $c -sticky w -padx {8 2}
         add_tooltip $g.use$r "Put this cavity's start point into the tunnel Start point field, by the rule chosen above."
         incr c
         button $g.res$r -text "Residues" -font {Helvetica 8} -padx 3 -pady 0 \
-            -command [list ::VMDPathFinder::_tunnel_cavity_residues $frame $id]
+            -command [list ::VMDPathFinder::_cavity_residues_track $tid]
         if {!$_here} { $g.res$r configure -state disabled }
         grid $g.res$r -row $r -column $c -sticky w -padx {2 4}
         incr c
@@ -20266,8 +20428,12 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     grid $t.note -row 3 -column 0 -sticky ew -padx 8 -pady {4 8}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
-    _center_toplevel $t 900 [expr {$_th + 180}]
-    wm deiconify $t
+    # Only on a first open: re-centring on every sort would move the window
+    # out from under the pointer.
+    if {!$_rebuild} {
+        _center_toplevel $t 900 [expr {$_th + 180}]
+        wm deiconify $t
+    }
     _sync_cavity_header_columns $t
 }
 
@@ -40904,6 +41070,69 @@ proc ::VMDPathFinder::confirm_overwrite_dialog {root_dir existing_count} {
     return $result
 }
 
+proc ::VMDPathFinder::_run_id {molid seltext} {
+    # A run's identity: when it ran, plus a short hash of everything that
+    # decides what it computes (run_signature). Two runs with different
+    # parameters get different ids; two runs a second apart do as well. Format
+    # YYYYMMDD-HHMMSS-xxxxxx, so a plain sort puts runs in time order.
+    set sig ""
+    catch {set sig [run_signature $molid $seltext]}
+    set h 5381
+    foreach c [split $sig ""] {
+        set h [expr {(($h * 33) + [scan $c %c]) & 0xFFFFFFFF}]
+    }
+    return [format "%s-%06x" \
+        [clock format [clock seconds] -format "%Y%m%d-%H%M%S"] [expr {$h & 0xFFFFFF}]]
+}
+
+proc ::VMDPathFinder::_run_parameter_lines {run_id molid seltext frames} {
+    # Everything needed to repeat this run, as plain "key: value" lines.
+    variable state
+    set out {}
+    lappend out "run id: $run_id"
+    lappend out "when: [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S %Z}]"
+    lappend out "plugin: VMDPathFinder [set ::VMDPathFinder::version]"
+    catch {lappend out "structure: [molinfo $molid get filename]"}
+    lappend out "selection: $seltext"
+    lappend out "frames: [llength $frames] ([string trim $state(frame_spec)])"
+    lappend out "cpoint: [_run_axis_manifest cpoint]"
+    lappend out "cvect: [_run_axis_manifest cvect]"
+    foreach {k label} {pore_method "pore method" search_engine "search engine"
+                       conn_engine "connolly engine" mesher mesher
+                       sample sample endrad endrad shorto shorto ignore ignore
+                       extra_cards "extra cards" random_seed "random seed"
+                       mcstep "mc steps" mcdisp "mc step size" mckt "mc kT"
+                       surface_smooth "smoothing window"} {
+        if {![info exists state($k)]} continue
+        set v [string trim $state($k)]
+        lappend out "$label: [expr {$v eq "" ? "(HOLE default)" : $v}]"
+    }
+    catch {lappend out "radius file: [_effective_radius_file]"}
+    return $out
+}
+
+proc ::VMDPathFinder::_write_run_parameters {root run_id molid seltext frames} {
+    # One file per run, named by its id, so a later run cannot overwrite it.
+    if {$root eq ""} { return "" }
+    set f [file join $root "run_${run_id}.txt"]
+    if {[catch {set fh [open $f w]}]} { return "" }
+    puts $fh "# VMDPathFinder run parameters. Everything needed to repeat this run."
+    foreach l [_run_parameter_lines $run_id $molid $seltext $frames] { puts $fh $l }
+    close $fh
+    return $f
+}
+
+proc ::VMDPathFinder::_log_run_summary {run_id molid seltext frames} {
+    # A short summary in the Log only - NOT the status bar, which is one line
+    # and belongs to whatever is running now.
+    variable state
+    set bits {}
+    foreach k {pore_method search_engine mesher sample endrad} {
+        if {[info exists state($k)]} { lappend bits "$k $state($k)" }
+    }
+    _log_msg run "Run $run_id - [llength $frames] frame(s), sel \"$seltext\", [join $bits {, }]"
+}
+
 proc ::VMDPathFinder::run_signature {molid seltext} {
     # A canonical fingerprint of every INPUT that changes what HOLE computes for a
     # frame: the atom selection, the pore start/direction, sampling/end-radius, the
@@ -41035,6 +41264,12 @@ proc ::VMDPathFinder::run_analysis {} {
 
         lassign [resolve_output_root $molid] root_dir is_temporary
         set state(last_root_dir) $root_dir
+        # Stamp the run. The parameter file is named by the id, so a later run
+        # writes a new one beside it rather than over it, and the Log carries a
+        # one-line summary of what was asked for.
+        set state(run_id) [_run_id $molid $state(selection)]
+        catch {_write_run_parameters $root_dir $state(run_id) $molid $state(selection) $frames}
+        catch {_log_run_summary $state(run_id) $molid $state(selection) $frames}
         # Prime the import dialog so "File > Import" after a run immediately
         # shows the correct folder without the user having to browse.
         if {!$is_temporary} { set state(import_dir) $root_dir }
