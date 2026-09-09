@@ -429,6 +429,8 @@ namespace eval ::VMDPathFinder:: {
         _2dmap_memo               {form array tags {results}}
         _tunnel_esp_cache         {form array tags {run results}}
         _cavity_track_cache       {form dict  tags {run results}}
+        _pore_axis_memo           {form dict  tags {run results}}
+        _conn_occ_memo            {form dict  tags {run results}}
         hydro_topo_cache          {form dict  tags {run} free _free_hydro_topo_cache}
         sphere_atom_cache         {form dict  tags {run}}
         hydro3d_props_cache       {form dict  tags {run}}
@@ -696,6 +698,7 @@ namespace eval ::VMDPathFinder:: {
         conn_lobe_tolz 6.0
         conn_lobe_tola 35.0
         conn_lobe_minseen 25
+        conn_lobe_minshare 2.0
         conn_lobe_all 1
         conn_lobe_sort_col ""
         conn_lobe_sort_dir -1
@@ -1083,6 +1086,7 @@ proc ::VMDPathFinder::save_config {} {
         mole_strict_interior tunnel_cluster_maxdev
         conn_pore_gate conn_pore_margin conn_draft_dotden
         mean_3d_mode mean_display_mode conn_lobe_tolz conn_lobe_tola conn_lobe_minseen
+        conn_lobe_minshare
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
         conn_lobe_sort_col conn_lobe_sort_dir
         mole_exit mole_path_a mole_path_b mole_vdw tunnel_cluster
@@ -1551,6 +1555,7 @@ proc ::VMDPathFinder::_loggable_setting_labels {} {
         conn_lobe_tolz           "Opening match tolerance, axial"
         conn_lobe_tola           "Opening match tolerance, angular"
         conn_lobe_minseen        "Minimum frames an opening is seen in, %"
+        conn_lobe_minshare       "Minimum size of an opening, % of sideways dots"
     }
 }
 
@@ -6686,9 +6691,13 @@ proc ::VMDPathFinder::_tab_has_data {tab} {
     variable hydration_data
     variable ion_flow_cache
     variable tunnel_result_frames
+    # profile asks whether a RUN exists, not whether the selected route is in
+    # THIS frame. Keyed on the route, the whole export bar - Fill included -
+    # disappeared on every frame that route is missing from, which reads as the
+    # control being gone rather than the route being absent.
     if {[analysis_mode] eq "tunnel"} {
         switch -- $tab {
-            profile { return [expr {[_tunnel_selected_tuple] ne ""}] }
+            profile { return [expr {[llength $tunnel_result_frames] > 0}] }
             minr - heatmap - mean - hist {
                 return [expr {[llength $tunnel_result_frames] > 0}]
             }
@@ -18541,6 +18550,7 @@ proc ::VMDPathFinder::_set_mesher {val disp} {
     set last_geom_key ""
     _update_mesher_rows
     catch {apply_display_change}
+    catch {_render_tunnels_now}
 }
 
 # Persistent mesher: one `mesh_csg --serve` child per session, one request per
@@ -23140,6 +23150,14 @@ proc ::VMDPathFinder::show_settings_dialog {} {
     entry $d.ms_vx.e1 -textvariable ::VMDPathFinder::state(csg_voxel) -width 4
     label $d.ms_vx.l2 -text "neck"
     entry $d.ms_vx.e2 -textvariable ::VMDPathFinder::state(csg_voxel_fine) -width 4
+    # Commit on Enter or on leaving the field, as every other numeric entry in
+    # this plugin does. A -textvariable alone writes on each keystroke and
+    # nothing redraws, so typing a new cell size changed nothing on screen.
+    foreach _e {e1 e2} {
+        bind $d.ms_vx.$_e <Return>   ::VMDPathFinder::_commit_csg_voxel
+        bind $d.ms_vx.$_e <KP_Enter> ::VMDPathFinder::_commit_csg_voxel
+        bind $d.ms_vx.$_e <FocusOut> ::VMDPathFinder::_commit_csg_voxel
+    }
     pack $d.ms_vx.l1 $d.ms_vx.e1 $d.ms_vx.l2 $d.ms_vx.e2 -side left -padx {0 2}
     # the mesher's own knob sits beside it on the same row: grid/neck for
     # marching cubes, dot density for sos_triangle (_update_mesher_rows)
@@ -31003,6 +31021,32 @@ proc ::VMDPathFinder::on_scalebar_visibility_changed {args} {
     }
 }
 
+proc ::VMDPathFinder::_commit_csg_voxel {args} {
+    # A new mesher cell size is new geometry, so drop what is cached and
+    # redraw - the same two steps _set_mesher takes.
+    variable state
+    variable last_geom_key
+    foreach k {csg_voxel csg_voxel_fine} {
+        set v [string trim $state($k)]
+        if {![string is double -strict $v] || $v <= 0} { return }
+    }
+    set last_geom_key ""
+    catch {apply_display_change}
+    catch {_render_tunnels_now}
+}
+
+proc ::VMDPathFinder::_render_tunnels_now {} {
+    # Redraw the tunnel scene for the frame on screen. apply_display_change is
+    # the HOLE path only - it works off state(selected_result_frame) and the
+    # pore results - so a mesher or grid change had no visible effect in tunnel
+    # mode until something unrelated forced a redraw.
+    if {[analysis_mode] ne "tunnel"} { return }
+    if {[tunnel_surface_is_hidden]} { return }
+    set fr [_tunnel_display_frame]
+    if {$fr eq ""} { return }
+    catch {render_tunnels_for_frame $fr}
+}
+
 proc ::VMDPathFinder::surface_geom_key {} {
     # Identity of the .vmd_plot FILE the current Display+Color needs. Two states
     # that share this key render from the same cached geometry, so switching
@@ -31019,9 +31063,15 @@ proc ::VMDPathFinder::surface_geom_key {} {
     # the same geometry and re-renders without rebuilding any frame's surface.
     # triangulated and wireframe collapse to one mesh (wireframe is a draw flag);
     # centerline (a sphere path) and dots are distinct.
+    # The mesher's own grid is part of the geometry's identity. Without it a
+    # changed cell size wrote a differently-named plot that was never asked
+    # for: the key compared equal, so the cached asset for every frame stayed,
+    # and the setting looked inert.
+    set _vx ""
+    if {[_csg_active]} { catch {set _vx "|v[_csg_voxel_spec]"} }
     switch -- $state(display_mode) {
-        centerline { return "centerline" }
-        dots       { return "dots" }
+        centerline { return "centerline$_vx" }
+        dots       { return "dots$_vx" }
         default    {
             # pore_lat and the sideways gate are the exceptions to "color is a
             # draw-time override": both are separate MESHES, so they need their
@@ -31029,9 +31079,9 @@ proc ::VMDPathFinder::surface_geom_key {} {
             # carry _conn_surface_suffix (trim/gate/draft) - without it, toggling
             # Trim while viewing either split coloring computed an unchanged
             # key, so the pre-toggle mesh kept rendering (a silent no-op).
-            if {[_conn_lobes_active]}    { return "mesh_lobes_[_conn_lobes_tag][_conn_surface_suffix]" }
-            if {[_conn_two_tone_active]} { return "mesh_2tone_[_conn_margin_tag][_conn_surface_suffix]" }
-            return "mesh[_conn_surface_suffix]"
+            if {[_conn_lobes_active]}    { return "mesh_lobes_[_conn_lobes_tag][_conn_surface_suffix]$_vx" }
+            if {[_conn_two_tone_active]} { return "mesh_2tone_[_conn_margin_tag][_conn_surface_suffix]$_vx" }
+            return "mesh[_conn_surface_suffix]$_vx"
         }
     }
 }
@@ -35369,6 +35419,35 @@ proc ::VMDPathFinder::_commit_conn_lobe_tol {} {
     _refresh_conn_lobes_panel
 }
 
+proc ::VMDPathFinder::_conn_lobe_min_share {} {
+    # Smallest share of the lateral cloud, in percent, that still counts as an
+    # opening rather than noise. One definition, read by the classifier and by
+    # the field that sets it.
+    variable state
+    if {[info exists state(conn_lobe_minshare)] \
+            && [string is double -strict $state(conn_lobe_minshare)] \
+            && $state(conn_lobe_minshare) >= 0} {
+        return $state(conn_lobe_minshare)
+    }
+    return 2.0
+}
+
+proc ::VMDPathFinder::_commit_conn_lobe_minshare {} {
+    # A new speck cut re-classifies, so the cached split and the drawn regions
+    # both have to go.
+    variable state
+    variable last_geom_key
+    set v [string trim $state(conn_lobe_minshare)]
+    if {![string is double -strict $v] || $v < 0 || $v > 100} {
+        set state(conn_lobe_minshare) [_conn_lobe_min_share]
+        return
+    }
+    catch {cache_clear results}
+    set last_geom_key ""
+    catch {apply_display_change}
+    catch {_refresh_conn_lobes_panel}
+}
+
 proc ::VMDPathFinder::_commit_conn_lobe_minseen {} {
     # Same unchanged-guard as the tolerances, and for the same reason. The
     # site table itself is untouched - only which of its rows are drawn - so
@@ -36105,6 +36184,20 @@ proc ::VMDPathFinder::_conn_gear_dialog {sid} {
         grid $d.c.sf -row $row -column 1 -sticky w -padx 6 -pady 2
         add_tooltip $d.c.sf.e "Hides openings that appear in only a few frames. Set it to 0 to list every one found."
         incr row
+        label $d.c.ml -text "At least" -anchor w
+        frame $d.c.mf
+        if {![info exists state(conn_lobe_minshare)]} { set state(conn_lobe_minshare) [_conn_lobe_min_share] }
+        entry $d.c.mf.e -textvariable ::VMDPathFinder::state(conn_lobe_minshare) -width 4
+        label $d.c.mf.l -text "% of the sideways dots" -font {Helvetica 8}
+        pack $d.c.mf.e $d.c.mf.l -side left -padx {0 3}
+        bind $d.c.mf.e <Return>   {::VMDPathFinder::_commit_conn_lobe_minshare}
+        bind $d.c.mf.e <FocusOut> {::VMDPathFinder::_commit_conn_lobe_minshare}
+        grid $d.c.ml -row $row -column 0 -sticky w -pady 2
+        grid $d.c.mf -row $row -column 1 -sticky w -padx 6 -pady 2
+        add_tooltip $d.c.mf.e "How big a patch has to be before it is called an opening rather than noise,\
+            as a share of all the dots outside the pore. Applied before the Seen filter, so anything it drops\
+            is not counted in the \"below the floor\" line either. Lower it to see small openings."
+        incr row
     }
     # Export goes LAST, after every field that is typed into.
     ttk::separator $d.c.sep -orient horizontal
@@ -36510,6 +36603,16 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
     if {![info exists ion_flow_raw] || ![dict exists $ion_flow_raw traces]} { return {} }
     set table [_conn_site_table]
     if {![dict size $table] || [dict get $table status] ne "ok"} { return {} }
+    # Memoised: this classifies EVERY analysed frame, and the openings panel
+    # refreshes on every region tick. Nothing it reads changes when a region is
+    # shown or hidden, so the answer is the same until the run, the margin or
+    # the ion scan changes.
+    variable _conn_occ_memo
+    variable plot_data_version
+    if {![info exists _conn_occ_memo]} { set _conn_occ_memo [dict create] }
+    set _okey "$plot_data_version|[_conn_pore_margin]|[llength $result_frames]"
+    catch {append _okey "|[dict size [dict get $ion_flow_raw traces]]"}
+    if {[dict exists $_conn_occ_memo $_okey]} { return [dict get $_conn_occ_memo $_okey] }
     set _cv [normalize_triplet_value $state(cvect)]
     set _cp [normalize_triplet_value $state(cpoint)]
     if {[llength $_cp] != 3} {
@@ -36632,6 +36735,7 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         dict set e nframes [dict size [dict get $e frames]]
         dict set out $sid $e
     }
+    dict set _conn_occ_memo $_okey $out
     return $out
 }
 
@@ -37527,8 +37631,14 @@ proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {bas
     }
     set cls [_conn_classify_sph $in_sph $cvect_s $cpoint_s $margin $basis_s]
     if {![info exists _conn_cls_memo]} { set _conn_cls_memo [dict create] }
-    # Each entry holds a whole cloud's line lists, so only a couple are kept.
-    if {[dict size $_conn_cls_memo] >= 3} { set _conn_cls_memo [dict create] }
+    # Each entry holds a whole cloud's line lists, so the cache stays small -
+    # but it drops the OLDEST entry, not all of them. Emptying it whole gave a
+    # 100% miss rate to anything that walks the trajectory (the openings
+    # occupancy pass does, on every region toggle) AND threw away the displayed
+    # frame's entry, which the redraw on that same click then needed.
+    while {[dict size $_conn_cls_memo] >= 8} {
+        set _conn_cls_memo [dict remove $_conn_cls_memo [lindex [dict keys $_conn_cls_memo] 0]]
+    }
     dict set _conn_cls_memo $key $cls
     return $cls
 }
@@ -38492,10 +38602,14 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
         if {[llength $idx]} { lappend _out2 $idx }
     }
     set out $_out2
-    # Drop specks: a lobe worth coloring holds at least 2% of the lateral cloud.
+    # Drop specks: a lobe worth colouring holds at least this share of the
+    # lateral cloud. Tunable, because it runs BEFORE the persistence floor and
+    # so removes openings the panel's "N below the floor" note never counts -
+    # there was no way to see them or to ask for them.
+    set _speck [expr {[_conn_lobe_min_share] / 100.0}]
     set lobes {}
     foreach idx $out {
-        if {[llength $idx] < $nlat * 0.02} continue
+        if {[llength $idx] < $nlat * $_speck} continue
         set zs 0.0; set sa 0.0; set ca 0.0
         set nesc 0
         set neck_a {}; set neck_b {}
