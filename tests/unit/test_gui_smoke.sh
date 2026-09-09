@@ -424,7 +424,139 @@ update
 set other [dict get [dict get $pore_memories 2] params surface_color]
 puts "MEMSYNC other=$other here=$state(surface_color)\
     [expr {$other eq {red} && $state(surface_color) eq {red} ? {OK} : {BAD}}]"
-# 11. deleting the current memory leaves the other one active
+# 11. the row sits at the BOTTOM of the panel
+set myrow [lindex [grid info $row] [expr {[lsearch [grid info $row] -row]+1}]]
+set maxrow 0
+foreach kid [winfo children $_runpanel] {
+    set gi [grid info $kid]
+    set i [lsearch $gi -row]
+    if {$i < 0} { continue }
+    set r [lindex $gi [expr {$i+1}]]
+    if {$r > $maxrow} { set maxrow $r }
+}
+puts "MEMBOTTOM row=$myrow max=$maxrow [expr {$myrow == $maxrow ? {OK} : {BAD}}]"
+# 12. the 3-D cues follow the memory. The write trace on state(cvect) clears
+#     the cue by design, so restoring the parameters is not enough on its own -
+#     without an explicit re-sync a switch left the previous memory's cue up.
+#     The stubbed harness cannot create marker molecules, so this checks that
+#     the re-sync is DRIVEN, and with the restored point already in place.
+#     Renamed INSIDE the namespace: renaming a proc into the global namespace
+#     silently breaks its own `variable` lookups.
+set ::CUECALLS {}
+rename _sync_point_marker _real_sync_point_marker
+proc _sync_point_marker {key show_key args} {
+    lappend ::CUECALLS "$key=$::VMDPathFinder::state(cpoint)"
+    return [_real_sync_point_marker $key $show_key {*}$args]
+}
+rename _sync_cvect_handles _real_sync_cvect_handles
+proc _sync_cvect_handles {args} {
+    lappend ::CUECALLS "cvect=$::VMDPathFinder::state(cvect)"
+    return [_real_sync_cvect_handles {*}$args]
+}
+_mem_slot_clicked 1
+set state(cpoint) "5 6 7"; set state(cvect) "0 0 1"
+_mem_stash_active
+_mem_slot_clicked 2
+set state(cpoint) "20 21 22"
+_mem_stash_active
+set ::CUECALLS {}
+_mem_slot_clicked 1
+update
+rename _sync_point_marker {}; rename _real_sync_point_marker _sync_point_marker
+rename _sync_cvect_handles {}; rename _real_sync_cvect_handles _sync_cvect_handles
+set sawpt [expr {[lsearch $::CUECALLS "cpoint=5 6 7"] >= 0}]
+set sawcv [expr {[lsearch -glob $::CUECALLS "cvect=*"] >= 0}]
+puts "MEMCUE calls={$::CUECALLS} pt=$sawpt cv=$sawcv\
+    [expr {$sawpt && $sawcv && $state(cpoint) eq {5 6 7} ? {OK} : {BAD}}]"
+# 13. END RADIUS is per memory - two pores of one structure legitimately end
+#     at different radii, and a new memory starts from the shipped default
+_mem_slot_clicked 1
+set state(endrad) 22.5
+_mem_stash_active
+_mem_slot_clicked 2
+set e2new $state(endrad)
+set state(endrad) 8.0
+_mem_stash_active
+_mem_slot_clicked 1
+set e1 $state(endrad)
+_mem_slot_clicked 2
+puts "MEMENDRAD m1=$e1 m2=$state(endrad) newdefault=$e2new\
+    [expr {$e1 == 22.5 && $state(endrad) == 8.0 ? {OK} : {BAD}}]"
+# 14. creating a new memory must NOT take the previous one's surface track with
+#     it: current_surface_mol used to stay pointed at the old memory's track, so
+#     the new memory's first clear_surface deleted the previous pore
+# real stub molecules, since _mem_point_surface_mol correctly refuses a track
+# whose molecule VMD no longer has
+lappend ::STUB_MOLS {41 memtrack1 1} {42 memtrack2 1}
+_mem_slot_clicked 1
+set mem_surface_mols(0|1) 41
+set mem_surface_mols(0|2) 42
+_mem_point_surface_mol
+set p1 $current_surface_mol
+_mem_slot_clicked 2
+set p2 $current_surface_mol
+puts "MEMTRACK m1=$p1 m2=$p2 [expr {$p1 == 41 && $p2 == 42 ? {OK} : {BAD}}]"
+# 15. clear_surface must drop the deleted track from the MEMORY registry too,
+#     or that memory points at a dead mol and loses its surface silently
+set mem_surface_mols(0|1) 41
+set mem_surface_mols(0|2) 42
+set current_surface_mol 42
+clear_surface
+puts "MEMCLEAR left=[lsort [array names mem_surface_mols]]\
+    [expr {![info exists mem_surface_mols(0|2)] && [info exists mem_surface_mols(0|1)] ? {OK} : {BAD}}]"
+array unset mem_surface_mols
+# 16. the draw cache is per TRACK. One global value alternated between two
+#     memories' tracks, so it never hit - and could match the wrong track.
+set _drawn_key [dict create]
+dict set _drawn_key 41 keyA
+dict set _drawn_key 42 keyB
+puts "MEMDRAWKEY a=[dict get $_drawn_key 41] b=[dict get $_drawn_key 42]\
+    [expr {[dict get $_drawn_key 41] ne [dict get $_drawn_key 42] ? {OK} : {BAD}}]"
+# 17. every memory holding a result for the frame is rendered, not just the
+#     active one - "with play it only plays one memory"
+set ::RENDERED {}
+rename load_surface_for_frame _real_load_surface_for_frame
+proc load_surface_for_frame {frame {draft 0}} {
+    lappend ::RENDERED "$::VMDPathFinder::pore_memory_active:$frame"
+}
+dict set pore_memories 1 results [dict create 7 {a b}]
+dict set pore_memories 1 frames {7}
+dict set pore_memories 2 results [dict create 7 {c d}]
+dict set pore_memories 2 frames {7}
+set was $pore_memory_active
+_mem_render_other_memories 7 1
+rename load_surface_for_frame {}; rename _real_load_surface_for_frame load_surface_for_frame
+puts "MEMPLAY rendered={$::RENDERED} active_restored=[expr {$pore_memory_active eq $was}]\
+    [expr {[llength $::RENDERED] == 1 && $pore_memory_active eq $was ? {OK} : {BAD}}]"
+# 18. switching memories keeps the FRAME the user is on. Falling back to the
+#     memory's first frame is what made the Over Time indicator jump and the
+#     3-D surface snap on every switch.
+set results [dict create]; set result_frames {}
+dict set pore_memories 1 results [dict create 10 {a b} 20 {a b} 30 {a b}]
+dict set pore_memories 1 frames {10 20 30}
+dict set pore_memories 2 results [dict create 5 {c d} 30 {c d}]
+dict set pore_memories 2 frames {5 30}
+set pore_memory_active 1
+_mem_apply [dict get $pore_memories 1]
+set state(selected_result_frame) 30
+_mem_activate 2
+set kept $state(selected_result_frame)
+# a frame the other memory does NOT have falls to the NEAREST, not to the first
+_mem_activate 1
+set state(selected_result_frame) 20
+_mem_activate 2
+# frame 20 is absent from {5 30}: nearest is 30 (10 away) not 5 (15 away)
+puts "MEMFRAME kept=$kept nearest=$state(selected_result_frame)\
+    [expr {$kept == 30 && $state(selected_result_frame) == 30 ? {OK} : {BAD}}]"
+# 19. the stabilizer/tracker SCOPE fields are per memory - two pores need
+#     different scope radii, and sharing them meant editing one memory's scope
+#     silently changed what the other memory's next run would do
+set keys [_mem_run_keys]
+set want {stab_radius_inner stab_radius_outer stab_rmsd_warn track_radius}
+set missing {}
+foreach k $want { if {[lsearch -exact $keys $k] < 0} { lappend missing $k } }
+puts "MEMSTAB missing={$missing} [expr {$missing eq {} ? {OK} : {BAD}}]"
+# 20. deleting the current memory leaves the other one active
 _mem_delete_clicked
 update
 puts "MEMDEL left=[dict keys $pore_memories] active=$pore_memory_active\

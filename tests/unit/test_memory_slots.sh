@@ -26,6 +26,14 @@ OUT=$(tclsh <<TCLEOF 2>&1
 # The memory core is pure state handling - no VMD, no Tk. Pull in just those
 # procs plus the variables they use.
 namespace eval ::VMDPathFinder {
+    # the cue redraw needs no VMD here - the point is that switching a slot
+    # drives it; that it actually draws is asserted in test_gui_smoke.sh
+    proc _sync_point_marker {args} {}
+    proc _mem_point_surface_mol {} {}
+    # needs a real molecule; the seeded value is asserted in test_gui_smoke.sh
+    proc _mem_seed_axis {} {}
+    proc _mem_keep_frame {} {}
+    proc _sync_cvect_handles {args} {}
     variable state; variable default_state
     variable results [dict create]; variable result_frames {}
     variable pore_memories [dict create]; variable pore_memory_active ""
@@ -44,6 +52,7 @@ $(awk '/^proc ::VMDPathFinder::_mem_stale_ids/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_track_ids/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_workdir_for/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_forget_tracks/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_mem_sync_cues/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_display_keys/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_enabled/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_capture/,/^}/' "$TCL")
@@ -125,7 +134,7 @@ TCLEOF
 get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
 
 [ "$(get ID2)" = "2" ] && ok "the second memory gets its own id" || bad "id2=$(get ID2)"
-[ "$(get NEW_CPOINT)" = "''" ] && ok "a new memory starts from the DEFAULT cpoint, not a copy" || bad "new cpoint $(get NEW_CPOINT)"
+[ "$(get NEW_CPOINT)" != "'1 2 3'" ] && ok "a new memory never inherits the previous memory's cpoint" || bad "new cpoint $(get NEW_CPOINT)"
 [ "$(get NEW_SEL)" = "'protein'" ] && ok "...and the default selection" || bad "new selection $(get NEW_SEL)"
 [ "$(get NEW_RESULTS)" = "0" ] && ok "...with no results of its own yet" || bad "new results $(get NEW_RESULTS)"
 case "$(get NEW_WORKDIR)" in */mem_2) ok "...and reports its own work dir" ;; *) bad "new workdir $(get NEW_WORKDIR)" ;; esac

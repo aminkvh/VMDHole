@@ -22010,8 +22010,6 @@ proc ::VMDPathFinder::build_run_panel {parent} {
     add_tooltip $parent.mem.sync "Copy this memory's colour, material and dot density to every other\
         memory and redraw them, so all the pores on screen read as one picture."
     add_tooltip $parent.mem.del "Delete the current memory and its surface. The last memory cannot be deleted."
-    grid $parent.mem -row $row -column 0 -columnspan 3 -sticky ew -padx 8 -pady {4 2}
-    incr row
 
     # ---- HOLE parameters: what the pore search is run on (through CVECT below);
     # the "Graphics" header further down separates these from the render controls.
@@ -22329,6 +22327,12 @@ proc ::VMDPathFinder::build_run_panel {parent} {
         ::VMDPathFinder::on_scalebar_visibility_changed
     _trace_once ::VMDPathFinder::state(scalebar_corner) write \
         ::VMDPathFinder::on_scalebar_visibility_changed
+    # The Memory row sits at the BOTTOM of the panel: it acts on the whole
+    # analysis above it, so it reads as a footer rather than a heading. Built
+    # at the top of this proc with the other widgets, gridded here, after the
+    # last row number is known.
+    grid $parent.mem -row $row -column 0 -columnspan 3 -sticky ew -padx 8 -pady {6 4}
+    incr row
     update_color_row_visibility $parent
 }
 
@@ -24014,6 +24018,16 @@ proc ::VMDPathFinder::close_gui {} {
                 catch {mol delete $surface_mols($k)}
             }
             unset surface_mols($k)
+        }
+        # Memory tracks live in their own array (a memory's surface is not the
+        # molecule's), so this loop would otherwise leave every memory's pore
+        # floating in the viewer after the window closed.
+        variable mem_surface_mols
+        foreach k [array names mem_surface_mols] {
+            if {![catch {molinfo $mem_surface_mols($k) get name}]} {
+                catch {mol delete $mem_surface_mols($k)}
+            }
+            unset mem_surface_mols($k)
         }
         # Marker spheres (CPOINT / tunnel start) live in their own mols and
         # were the one visual left floating in the viewer after every
@@ -26455,7 +26469,8 @@ proc ::VMDPathFinder::_mem_run_keys {} {
     return {selection cpoint cvect endrad ignore shorto extra_cards
             random_seed mcstep mcdisp mckt cvect_def_p1 cvect_def_p2
             stabilize_cpoint track_cpoint stabilize_cvect cvect_exact
-            frame_spec}
+            stab_radius_inner stab_radius_outer stab_rmsd_warn track_radius
+            dynamic_axis frame_spec}
 }
 
 proc ::VMDPathFinder::_mem_shared_keys {} {
@@ -26667,7 +26682,10 @@ proc ::VMDPathFinder::_mem_new {} {
     set result_frames {}
     set pore_memory_runsig ""
     set pore_memory_active $id
+    _mem_seed_axis
+    _mem_point_surface_mol
     dict set pore_memories $id [_mem_capture]
+    _mem_sync_cues
     return $id
 }
 
@@ -26681,7 +26699,135 @@ proc ::VMDPathFinder::_mem_activate {id} {
     _mem_stash_active
     set pore_memory_active $id
     _mem_apply [dict get $pore_memories $id]
+    _mem_keep_frame
+    _mem_point_surface_mol
+    _mem_sync_cues
     return 1
+}
+
+proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
+    # Draw the frame for every memory OTHER than the active one. Playback and
+    # scrubbing render the live `results` only, so with five pores held, four of
+    # them froze at whatever frame was on screen when the slot was left - "with
+    # play it only plays one memory".
+    #
+    # Each memory is swapped in just far enough to render: its results, its
+    # display settings and its own track. Deliberately NOT _mem_activate, which
+    # also restores run parameters, redraws the cues and bumps
+    # plot_data_version - all wrong to do per frame, and visible as flicker in
+    # the panel. The active memory is left to the ordinary path so the common
+    # single-memory case runs exactly as it always has.
+    variable pore_memories
+    variable pore_memory_active
+    variable results
+    variable result_frames
+    variable current_surface_mol
+    variable state
+    if {![_mem_enabled] || [dict size $pore_memories] < 2} { return }
+    set save_results $results
+    set save_frames  $result_frames
+    set save_mol     $current_surface_mol
+    set save_active  $pore_memory_active
+    set save_disp [dict create]
+    foreach k [_mem_display_keys] {
+        if {[info exists state($k)]} { dict set save_disp $k $state($k) }
+    }
+    foreach id [lsort -integer [dict keys $pore_memories]] {
+        if {$id eq $save_active} { continue }
+        set rec [dict get $pore_memories $id]
+        if {![dict exists [dict get $rec results] $frame]} { continue }
+        set results       [dict get $rec results]
+        set result_frames [dict get $rec frames]
+        set pore_memory_active $id
+        dict for {k v} [dict get $rec params] {
+            if {[lsearch -exact [_mem_display_keys] $k] >= 0} { set state($k) $v }
+        }
+        _mem_point_surface_mol
+        catch {load_surface_for_frame $frame $draft}
+        # write back, since rendering caches the built asset into results
+        dict set rec results $results
+        dict set pore_memories $id $rec
+    }
+    set results        $save_results
+    set result_frames  $save_frames
+    set pore_memory_active $save_active
+    set current_surface_mol $save_mol
+    dict for {k v} $save_disp { set state($k) $v }
+}
+
+proc ::VMDPathFinder::_mem_keep_frame {} {
+    # Keep the frame the user is on across a memory switch. The frame belongs to
+    # the trajectory, not to a memory, but the new memory may hold no result for
+    # it - falling back to that memory's FIRST frame made the Over Time indicator
+    # jump and the 3-D surface snap. Nearest available is the smallest move that
+    # still shows something.
+    variable state
+    variable result_frames
+    if {![llength $result_frames]} { set state(selected_result_frame) {}; return }
+    set want $state(selected_result_frame)
+    if {$want ne "" && [lsearch -exact $result_frames $want] >= 0} { return }
+    if {$want eq "" || ![string is integer -strict $want]} {
+        set state(selected_result_frame) [lindex $result_frames 0]
+        return
+    }
+    set best [lindex $result_frames 0]
+    set bestd [expr {abs($best - $want)}]
+    foreach f $result_frames {
+        set d [expr {abs($f - $want)}]
+        if {$d < $bestd} { set bestd $d; set best $f }
+    }
+    set state(selected_result_frame) $best
+}
+
+proc ::VMDPathFinder::_mem_seed_axis {} {
+    # A new memory's blank CPOINT/CVECT draws no cue, so there is nothing to
+    # grab. Seed it with what HOLE's own CGUESS resolves a blank field to
+    # (_run_axis_init): visible and draggable, and identical to what a blank run
+    # would have used. Silent on failure - blank stays valid.
+    variable state
+    variable _run_axis_cp
+    variable _run_axis_cv
+    if {[catch {resolve_molid} molid] || $molid < 0} { return }
+    set seltext [string trim $state(selection)]
+    if {$seltext eq ""} { set seltext "all" }
+    set frame 0
+    catch {set frame [molinfo $molid get frame]}
+    if {[catch {_run_axis_init $molid $frame $seltext}]} { return }
+    if {[info exists _run_axis_cp] && $_run_axis_cp ne ""} { set state(cpoint) $_run_axis_cp }
+    if {[info exists _run_axis_cv] && $_run_axis_cv ne ""} { set state(cvect) $_run_axis_cv }
+}
+
+proc ::VMDPathFinder::_mem_point_surface_mol {} {
+    # Re-point current_surface_mol at the ACTIVE memory's track. Without this a
+    # new memory inherited the previous one's track pointer, and the first
+    # clear_surface of its run deleted the previous memory's surface - the
+    # "creating a new memory hides the first one" report.
+    variable current_surface_mol
+    variable mem_surface_mols
+    variable pore_memory_active
+    set current_surface_mol -1
+    if {$pore_memory_active eq ""} { return }
+    foreach k [array names mem_surface_mols "*|$pore_memory_active"] {
+        if {![catch {molinfo $mem_surface_mols($k) get name}]} {
+            set current_surface_mol $mem_surface_mols($k)
+            return
+        }
+        unset mem_surface_mols($k)
+    }
+}
+
+proc ::VMDPathFinder::_mem_sync_cues {} {
+    # Redraw the CPOINT sphere, the CVECT handles and the axis stick for the
+    # memory now active. Restoring the parameters is not enough on its own: the
+    # write trace on state(cvect) CLEARS the cue by design (a cvect typed by
+    # hand invalidates a two-point definition), so a switch left the previous
+    # memory's cue on screen or no cue at all. The cue shows the axis, it does
+    # not define it, so redrawing it here changes nothing about the run.
+    # Not _axis_stick_cue_on: that belongs to the stick dialog, which saves the
+    # checkbox states it overrode so Close can put them back. Calling it from
+    # outside the dialog would corrupt that saved set.
+    catch {_sync_point_marker cpoint show_cpoint_marker}
+    catch {_sync_cvect_handles}
 }
 
 proc ::VMDPathFinder::_mem_delete {id} {
@@ -26711,7 +26857,12 @@ proc ::VMDPathFinder::_mem_track_ids {id} {
 proc ::VMDPathFinder::_mem_forget_tracks {id} {
     variable mem_surface_mols
     foreach k [array names mem_surface_mols "*|$id"] {
-        catch {mol delete $mem_surface_mols($k)}
+        # Check the mol still exists before deleting it: `mol delete` on an id
+        # VMD has already dropped is the crash this file guards against
+        # everywhere else it deletes a track.
+        if {![catch {molinfo $mem_surface_mols($k) get name}]} {
+            catch {mol delete $mem_surface_mols($k)}
+        }
         unset mem_surface_mols($k)
     }
 }
@@ -49934,6 +50085,7 @@ proc ::VMDPathFinder::show_selected_surface {{draft 0}} {
     if {[catch {load_surface_for_frame $state(selected_result_frame) $draft} msg]} {
         set state(status) $msg
     }
+    catch {_mem_render_other_memories $state(selected_result_frame) $draft}
 }
 
 proc ::VMDPathFinder::toggle_frame_list {} {
@@ -50889,7 +51041,7 @@ proc ::VMDPathFinder::render_sph_points_to_mol {sph_file mol color {radius 0.4} 
 }
 
 proc ::VMDPathFinder::clear_surface {} {
-    set ::VMDPathFinder::_drawn_key {}
+    set ::VMDPathFinder::_drawn_key [dict create]
     # Clears only the *active* molecule's surface track; other molecules' tracks
     # (in surface_mols) are left intact so switching does not erase them.
     variable current_surface_mol
@@ -50898,9 +51050,16 @@ proc ::VMDPathFinder::clear_surface {} {
     if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
         catch {mol delete $current_surface_mol}
     }
-    # Drop the deleted track from the per-molecule registry.
+    # Drop the deleted track from BOTH registries. Leaving it in
+    # mem_surface_mols left that memory pointing at a deleted molecule, so its
+    # surface never came back until the slot was re-activated - which is exactly
+    # what "creating a new memory hides the previous one" looked like.
     foreach k [array names surface_mols] {
         if {$surface_mols($k) == $current_surface_mol} { unset surface_mols($k) }
+    }
+    variable mem_surface_mols
+    foreach k [array names mem_surface_mols] {
+        if {$mem_surface_mols($k) == $current_surface_mol} { unset mem_surface_mols($k) }
     }
     set current_surface_mol -1
     if {$centerline_mol >= 0 && ![catch {molinfo $centerline_mol get name}]} {
@@ -51011,14 +51170,16 @@ proc ::VMDPathFinder::load_surface_for_frame {frame {draft 0}} {
     # way CAPSULE does, instead of leaving the last mesh on screen.
     if {[dict exists $asset kind] && [dict get $asset kind] eq "lobes_none"} {
         if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-            catch {graphics $current_surface_mol delete all}; set ::VMDPathFinder::_drawn_key {}
+            catch {graphics $current_surface_mol delete all}
+            catch {dict unset ::VMDPathFinder::_drawn_key $current_surface_mol}
         }
         catch {remove_hydro_scalebar}
         return
     }
     if {[dict exists $asset kind] && [dict get $asset kind] eq "capsule_skip"} {
         if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-            catch {graphics $current_surface_mol delete all}; set ::VMDPathFinder::_drawn_key {}
+            catch {graphics $current_surface_mol delete all}
+            catch {dict unset ::VMDPathFinder::_drawn_key $current_surface_mol}
             catch {mol rename $current_surface_mol "HOLE surface (CAPSULE: no 3D surface)"}
         }
         catch {remove_hydro_scalebar}
@@ -51110,19 +51271,21 @@ proc ::VMDPathFinder::load_surface_for_frame {frame {draft 0}} {
     # handed to VMD one at a time - and the settle pass after a scrub asks for
     # exactly the surface the draft pass just drew.
     variable _drawn_key
+    if {![info exists _drawn_key]} { set _drawn_key [dict create] }
+    if {[llength $_drawn_key] % 2} { set _drawn_key [dict create] }
     set _dk [list $mol $asset_kind $render_path $stride $material \
         [expr {$property_uncached ? "gray" : ""}] $state(surface_color) \
         $state(display_mode) $state(show_centerline) \
         [expr {$draft && ![_csg_active]}] \
         [expr {[catch {file mtime $render_path} _mt] ? 0 : $_mt}]]
-    if {[info exists _drawn_key] && $_drawn_key ne {} && $_dk eq $_drawn_key} {
+    if {[dict exists $_drawn_key $mol] && [dict get $_drawn_key $mol] eq $_dk} {
         variable _last_rendered_frame
         set _last_rendered_frame $frame
         catch {mol rename $mol "HOLE surface (frame $frame)"}
         if {$old_top >= 0 && ![catch {molinfo $old_top get name}]} { mol top $old_top }
         return
     }
-    set _drawn_key {}
+    dict unset _drawn_key $mol
     catch {graphics $mol delete all}
     catch {graphics $mol material $material}
     switch -- $asset_kind {
@@ -51134,7 +51297,7 @@ proc ::VMDPathFinder::load_surface_for_frame {frame {draft 0}} {
         capsule_lines { render_vmd_plot_to_mol $render_path $mol $stride }
         default { error "Unsupported asset type for frame $frame." }
     }
-    set _drawn_key $_dk
+    dict set _drawn_key $mol $_dk
     catch {mol rename $mol "HOLE surface (frame $frame)"}
     # The frame now on screen - apply_display_change's repaint target when no
     # result row is selected.
@@ -51351,6 +51514,7 @@ proc ::VMDPathFinder::_draft_render_frame {frame} {
     # update the ellipse below, so the ellipse follows frames even without the pore.
     if {$state(display_mode) ne "none" && ![surface_is_hidden]} {
         catch { load_surface_for_frame $frame 1 }
+        catch { _mem_render_other_memories $frame 1 }
     }
     # Follow the frame with the reshaped-ellipse surface too, when it's active (render-paced,
     # inside the same busy guard so the play watchdog treats the whole frame as one render).
@@ -51534,7 +51698,8 @@ proc ::VMDPathFinder::blank_surface_for_frame {frame} {
     # animates - only the pore surface is hidden).
     variable current_surface_mol
     if {$current_surface_mol >= 0 && ![catch {molinfo $current_surface_mol get name}]} {
-        catch {graphics $current_surface_mol delete all}; set ::VMDPathFinder::_drawn_key {}
+        catch {graphics $current_surface_mol delete all}
+        catch {dict unset ::VMDPathFinder::_drawn_key $current_surface_mol}
         catch {mol rename $current_surface_mol "HOLE surface (frame $frame: no data)"}
     }
     remove_hydro_scalebar

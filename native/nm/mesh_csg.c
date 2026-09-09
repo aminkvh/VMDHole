@@ -457,31 +457,27 @@ static long mesh_run(const char *outpath, const char *plotpath) {
        (verified byte-identical output). */
     float *favg = NULL;
     if (nwith > 0) {
-        /* fill_field only evaluates a sphere within radius+2h, so every corner
-           outside that band keeps the 1e9 SENTINEL. Averaging a sentinel with a
-           real distance is meaningless: a feature present in one frame and
-           beyond the band in another was being pulled towards 1e9 and erased
-           rather than averaged. Each corner is therefore averaged over the
-           frames that actually produced a value there; a corner no frame
-           reached stays at the sentinel.
+        /* Every corner is averaged over ALL frames, sentinel included.
+           A corner beyond fill_field's radius+2h band is NOT unknown - it is
+           known to be far OUTSIDE in that frame - so the 1e9 must count.
+           Dividing instead by "frames that reached this corner" (tried
+           2026-09-09, reverted) gave a corner reached by 1 frame of N that one
+           frame's value at FULL strength: a transient bulge survived smoothing
+           undiminished and appeared as a blob or a false lateral opening.
            Accumulated in DOUBLE: three identical float fields summed and
            divided in float round by an ULP, which flips a corner across the
            isosurface and changed a smoothed mesh of identical inputs from 3308
            to 3309 triangles. In double the sum of n identical floats divided by
            n returns the float exactly, so averaging identical frames is the
-           identity it should be. */
-        #define CSG_SENTINEL 1e8f
+           identity it should be. That part is kept. */
         double *acc = malloc(ncorner * sizeof(double));
-        int *accn = malloc(ncorner * sizeof(int));
         favg = malloc(ncorner * sizeof(float));
-        for (size_t i = 0; i < ncorner; i++) {
-            float v = fval(i);
-            if (v < CSG_SENTINEL) { acc[i] = v; accn[i] = 1; } else { acc[i] = 0.0; accn[i] = 0; }
-        }
+        for (size_t i = 0; i < ncorner; i++) acc[i] = fval(i);
         sphset centre = sph_save();
         float *fp2 = malloc(ncorner * sizeof(float)), *fc2 = malloc(ncorner * sizeof(float));
         float *sp = fpos, *sc = fclip;
         track_own = 0;
+        int nused = 1;
         for (int k = 0; k < nwith; k++) {
             if (!load_sph(with_path[k])) continue;
             for (size_t i = 0; i < ncorner; i++) { fp2[i] = 1e9f; fc2[i] = 1e9f; }
@@ -490,37 +486,31 @@ static long mesh_run(const char *outpath, const char *plotpath) {
             fill_field(fclip, 1);
             for (size_t i = 0; i < ncorner; i++) {
                 float a = fp2[i], b = -fc2[i];
-                float v = a > b ? a : b;
-                if (v < CSG_SENTINEL) { acc[i] += v; accn[i]++; }
+                acc[i] += a > b ? a : b;
             }
+            nused++;
             sph_free_current();
         }
         fpos = sp; fclip = sc;
         track_own = 1;
         free(fp2); free(fc2);
         sph_restore(centre);
-        for (size_t i = 0; i < ncorner; i++) {
-            favg[i] = accn[i] > 0 ? (float)(acc[i] / (double)accn[i]) : 1e9f;
-        }
+        for (size_t i = 0; i < ncorner; i++) favg[i] = (float)(acc[i] / (double)nused);
         /* CSG_DEBUG_IDENT=1: report how far the averaged field is from the
-           centre's own. Zero cost unless the variable is set; the smoothing
-           identity test reads this line. */
+           centre's own. Zero cost unless set; the identity test reads this. */
         if (getenv("CSG_DEBUG_IDENT")) {
-            double mx = 0; size_t nd = 0, nsent = 0, ncnt[8] = {0};
+            double mx = 0; size_t nd = 0, nsent = 0;
             for (size_t i = 0; i < ncorner; i++) {
                 float v = fval(i);
-                if (accn[i] < 8) ncnt[accn[i]]++;
                 if (v >= 1e8f || favg[i] >= 1e8f) { nsent++; continue; }
                 double d = fabs((double)favg[i] - (double)v);
                 if (d > 0) nd++;
                 if (d > mx) mx = d;
             }
-            fprintf(stderr, "IDENT corners=%zu differing=%zu maxdiff=%.9g sentinel=%zu"
-                            " accn0=%zu accn1=%zu accn2=%zu accn3=%zu\n",
-                    ncorner, nd, mx, nsent, ncnt[0], ncnt[1], ncnt[2], ncnt[3]);
+            fprintf(stderr, "IDENT corners=%zu differing=%zu maxdiff=%.9g sentinel=%zu\n",
+                    ncorner, nd, mx, nsent);
         }
-        free(acc); free(accn);
-        #undef CSG_SENTINEL
+        free(acc);
     }
     double t2 = now_ms();
 
