@@ -75,6 +75,15 @@ in-memory cache. Relevant controls are:
 Prebuilding improves interactive playback but increases initial runtime and
 disk use. A larger cache reduces rebuilding but increases memory use.
 
+## Mean Profile curves
+
+The Mean Profile gear chooses which curves are drawn: the mean line, the +/-1
+standard-deviation spread, and the min/max envelope. All three are on by
+default. **Fill** colours the area under the curve by the sphere-mean property
+and reaches up to the outermost curve still shown, so turning the min/max
+envelope off fills to the standard-deviation band instead. The legend names
+only what is actually drawn.
+
 ## Mean 3D surface
 
 Mean Profile can revolve the mean radius profile into a trajectory-average 3D

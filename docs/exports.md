@@ -24,6 +24,32 @@ Additional exports include summary metrics, bottleneck residues, unrolled
 pore-wall layers, and tunnel lining data. Inspect the CSV header: it is the
 authoritative statement of columns and units for that export.
 
+## Save Package
+
+**File > Save Package** writes one folder holding every table and figure the
+results on hand can produce, so a whole analysis can be handed on in one piece.
+It runs the same exporters the per-tab Export menus run, so the files are
+identical to the ones those buttons write.
+
+The folder also contains:
+
+| File | Contents |
+|---|---|
+| `run_<id>.txt` | every parameter the run used - selection, frames, CPOINT/CVECT, method, engines, sampling, seed, radius file |
+| `README.txt` | which tabs were included, which were skipped for having nothing computed, and the file list |
+
+A tab with nothing computed is listed as skipped rather than written empty, so
+an empty file in the package always means an export failed.
+
+## Run identity
+
+Every run is stamped with an id: the date, the time, and a short hash of every
+input that decides what HOLE computes. Two runs with different parameters
+cannot share an id, and neither can two runs a second apart. It appears in the
+`run_<id>.txt` file written beside the results, in the export filenames, and in
+a one-line summary in the Log - so a figure can always be traced back to the
+parameters that produced it.
+
 ## Connolly openings
 
 With **Color** set to `pore_lobes`, each region gear exports the pore or one

@@ -105,6 +105,13 @@ structure and reaches the molecular surface. Use **Lining…** to inspect its
 contacting residues. Route rank is a search score; visual inspection remains
 part of validating a candidate pathway.
 
+## Keeping the result
+
+**File > Save Package** writes every table and figure the run can produce into
+one folder, together with a file listing the parameters that produced them. It
+is the quickest way to keep a complete record of an analysis - see
+[Export and import](exports.md).
+
 ## Next steps
 
 Choose the [Pore or Tunnel tutorial](tutorials.md) for the mode you just ran.

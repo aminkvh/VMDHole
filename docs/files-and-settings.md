@@ -44,7 +44,6 @@ selected binaries. See [Installation](installation.md) for recommended builds.
 | Parallel jobs | More simultaneous frames; higher CPU and temporary-storage use |
 | Prebuild surfaces | Longer initial run; smoother later playback |
 | Surface cache | More memory; fewer mesh rebuilds |
-| Smoothing | Average the surface over neighbouring analysed frames: *Follow VMD* takes the trajectory-smoothing window of the shown representations, *Off*, or a fixed half-width. The marching mesher averages the frames' distance fields, sos_triangle averages the dot clouds dot by dot; numbers stay per frame |
 | Playback stride (`sos_triangle` mesher only) | Draw every Nth triangle while the trajectory plays; the frame at rest is full detail. The marching-cubes mesher draws one full-detail mesh throughout |
 | Mean frame cap | Bounds expensive mean/property work on long trajectories |
 | Accurate 3D | Better property projection; higher calculation cost |

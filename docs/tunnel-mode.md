@@ -74,6 +74,7 @@ Select **Run Tunnel**. The route table reports:
 | Rts | Number of route instances represented by the cluster |
 | Bneck | Mean bottleneck radius |
 | Len | Mean route length |
+| Vol | Mean tube volume: a circular tube of the profile's own radius swept along the centreline, averaged over the frames the route appears in |
 | Phob | MOLE length-weighted hydrophobicity mean |
 | Chg | Mean net formal charge |
 | Seen | Percentage of analysed frames containing the tracked route |
@@ -130,7 +131,9 @@ next to the net charge.
 ## 7. Available downstream analyses
 
 Tunnel mode supports the radius/profile, Over Time, Mean Profile, Trends,
-Histogram, property, lining, and Ion & Water views. Ion & Water measures the
+Histogram, property, lining, and Ion & Water views. Trends plots the selected
+route's bottleneck radius, length or tube volume across the trajectory - pick
+which with the **Metric** control beside the Export menu. Ion & Water measures the
 selected route along itself, as distance along the route and distance from
 it, so a bent tunnel plots as it is. It does not provide
 tunnel hydration, tunnel ellipse fitting, or pore-mode bulk-to-bulk permeation.
@@ -156,7 +159,16 @@ inside - whether your ligand fits at all), depth, the **Boundary / Inner**
 residue counts, and the **Start pt** the chosen rule below would search from.
 Click a column header to sort. **Residues** opens the two residue sets - boundary
 residues line the opening, inner residues are buried in it - with their MOLE
-properties and a ready-made VMD selection string.
+properties and a ready-made VMD selection string. **Lining** draws them on the
+structure, boundary residues yellow and inner residues red, and follows the
+frame you move to.
+
+Every value that depends on the frame - volume, depth, the residue counts, the
+rank and the start point - is re-read when you change frames, and the **Seen**
+cell turns green when the pocket exists in the frame you are looking at and red
+when it does not. The **⚙** at the end of each row sets that pocket's own
+colour, material, and whether it is drawn as a surface or as the clearance
+spheres themselves.
 
 Most cavities are transient. On a 50-frame trajectory a typical run tracks ~315
 of them, of which ~108 appear in 5% of frames or fewer and only ~11 in half or

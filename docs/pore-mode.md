@@ -100,9 +100,12 @@ models are available:
 Keep the method fixed when comparing structures. Method names and equivalent
 radii are not interchangeable.
 
-**Surface smoothing.** Settings can average the surface over neighbouring
-analysed frames, either following VMD's own trajectory-smoothing window of the
-shown representations or with a fixed half-width. It is a local average of the
+**Surface smoothing.** The **Smooth** box beside the playback buttons averages
+the surface over that many neighbouring analysed frames either side; 0 is off.
+The same number is written to VMD's own trajectory smoothing on every
+representation of the molecule, so the protein and the pore inside it are
+always averaged over the same window, and changing it in Graphics >
+Representations updates the box. It is a local average of the
 surfaces themselves, not of the atom coordinates and not of the centreline: a
 feature most frames share stays where it is, a flicker averages down, and
 curvature and lateral openings survive. The marching mesher averages the
@@ -151,6 +154,19 @@ The table reports how often each opening is **Seen**, its neck radius and
 extension beyond the margin, and its axial and azimuthal location. Use each row
 to show, color, annotate, or export one opening; use the header gear for all
 regions. The matching controls and **Seen** floor are also in that gear.
+
+**Neck** is the clearance between the opening's point of closest approach to
+the axis and the traced pore wall at that height - the width of the opening
+where it leaves the pore, not its distance from the axis. **Margin** does not
+appear in that formula, but it decides which dots count as lateral in the first
+place, so changing it can select a different closest-approach point and move
+the reported neck.
+
+Two filters decide what the table lists, and both are in the header gear.
+**Seen in at least N% of frames** hides openings that come and go; the panel
+reports how many it dropped. **At least N% of the sideways dots** is the size
+cut applied *before* that, so anything it removes is not in the dropped count
+either - lower it to see small openings.
 
 For a two-dimensional view, choose **Unrolled** and **Connolly reach**. This
 maps how far the Connolly surface extends from the centreline at each axial and
