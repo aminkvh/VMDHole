@@ -25520,6 +25520,16 @@ proc ::VMDPathFinder::_cvect_stab_excl {d which} {
     variable state
     if {$which eq "stab" && $state(stabilize_cvect)} { set state(cvect_exact) 0 }
     if {$which eq "exact" && $state(cvect_exact)}     { set state(stabilize_cvect) 0 }
+    # Say it at the moment the choice is made, not only at run time.
+    if {[_have_tk] && [winfo exists $d.sb.note]} {
+        set _nw [_cvect_exact_nonprotein]
+        if {[llength $_nw]} {
+            $d.sb.note configure -text "⚠ non-protein endpoint - see the run warnings"                 -foreground "#b00000"
+            set state(status) [lindex $_nw 0]
+        } else {
+            $d.sb.note configure -text "" -foreground gray40
+        }
+    }
 }
 
 proc ::VMDPathFinder::_cvect_guess {d} {
@@ -26475,6 +26485,41 @@ proc ::VMDPathFinder::migrate_hydrophobic_mode {} {
     }
 }
 
+proc ::VMDPathFinder::_cvect_exact_nonprotein {} {
+    # Under EXACT, and only under Exact, the two endpoint selections are
+    # re-resolved literally at every frame - so whatever they match is what the
+    # axis follows. A non-protein pick moves with its own dynamics: measured
+    # over 20 frames, a protein residue's centre moves 0.63 A per frame, a water
+    # shell 1.84, and one fixed water molecule 83 A (it diffuses and wraps at
+    # the periodic boundary).
+    #
+    # Static and Stabilize are NOT checked: a static selection is resolved once
+    # into a coordinate and never re-read, so what it matched cannot drift.
+    # A literal x,y,z is skipped too - under Exact it re-derives the same vector
+    # every frame and is inert.
+    variable state
+    set out {}
+    if {![info exists state(cvect_exact)] || !$state(cvect_exact)} { return {} }
+    set molid ""
+    if {[catch {resolve_molid} molid] || $molid eq "" || $molid < 0} { return {} }
+    foreach {key label} [list cvect_def_p1 "CVECT point 1" cvect_def_p2 "CVECT point 2"] {
+        if {![info exists state($key)]} { continue }
+        set v [string trim $state($key)]
+        if {$v eq "" || [normalize_triplet_value $v] ne {}} { continue }
+        set n 0; set nnp 0; set nw 0
+        if {[catch {
+            set _s [atomselect $molid $v];                  set n   [$_s num]; $_s delete
+            set _n [atomselect $molid "($v) and not protein"]; set nnp [$_n num]; $_n delete
+            set _w [atomselect $molid "($v) and water"];    set nw  [$_w num]; $_w delete
+        }]} { continue }
+        if {$n == 0 || $nnp == 0} { continue }
+        set what [expr {$nw == $nnp ? "water" : "not protein"}]
+        lappend out [format "%s is set to Exact on a selection that is %s (%d of %d atoms%s). Exact re-resolves it every frame, so the axis follows those atoms: a protein residue's centre moves ~0.6 A per frame, a water shell ~1.8, a single water ~83 A once it diffuses and wraps. Use a protein selection, or switch this endpoint off Exact - Static resolves the selection once and cannot drift." \
+            $label $what $nnp $n [expr {$nw && $nw != $nnp ? ", $nw of them water" : ""}]]
+    }
+    return $out
+}
+
 proc ::VMDPathFinder::collect_input_warnings {} {
     # Soft, non-blocking warnings for settings that are valid but commonly
     # produce confusing results. Returned as a list of human-readable strings.
@@ -26494,6 +26539,7 @@ proc ::VMDPathFinder::collect_input_warnings {} {
         lappend warns "Dot density = $state(dot_density) can exceed the stock sos_triangle's polygon limit, which makes the surface fail to render (the funnel disappears). Use 10-20, or point Settings at the accelerated sos_triangle, whose limit is far higher."
     }
     foreach w [_ion_fallback_ambiguity_warnings] { lappend warns $w }
+    foreach w [_cvect_exact_nonprotein] { lappend warns $w }
     return $warns
 }
 
