@@ -33892,7 +33892,12 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     # set once, rarely revisited, and inline they cost the list two rows of
     # height it needs for openings.
     frame $d.msg
-    label $d.msg.l -text "" -font {Helvetica 8} -fg "#666666" -wraplength 210 -justify left
+    # ONE line, and no wrapping. At -wraplength 210 this note ran to two or
+    # three lines and the panel's fixed height cut the last one off, so the part
+    # that said what to do was the part you could not read. The full text is on
+    # hover.
+    label $d.msg.l -text "" -font {Helvetica 8} -fg "#666666" -wraplength 0 \
+        -justify left -height 1 -anchor w
     pack $d.msg.l -side left
     pack $d.msg -anchor w -pady {2 0}
     # "ew", not "w": with a west-anchored frame the panel is only as wide as its
@@ -34142,7 +34147,8 @@ proc ::VMDPathFinder::_refresh_conn_lobes_panel {} {
     # height computed against the previous pass's layout.
     set msg [_conn_lobe_color_warning [llength $rows]]
     append msg [_conn_lobe_frame_drop_note]
-    catch {$d.msg.l configure -text $msg}
+    catch {$d.msg.l configure -text [_elide_to_width [string trim $msg] {Helvetica 8} 205]}
+    catch {add_tooltip $d.msg.l [string trim "[string trim $msg]  Colours repeat past the palette length, so check an opening's name before reading two same-coloured ones as one. Openings under the floor are drawn but not listed."]}
     # Nothing to say - give the row back to the list.
     if {[string trim $msg] eq ""} {
         catch {pack forget $d.msg}
@@ -34949,7 +34955,22 @@ proc ::VMDPathFinder::_conn_lobe_frame_drop_note {} {
     if {$n < 1} { return "" }
     # One line. It sits above the list and every extra clause pushes the rows
     # down, so it says what is missing and where to see it, and stops.
-    return [format "  +%d drawn, under the %s%% floor." $n [_conn_lobe_min_seen]]
+    return [format "  +%d under the %s%% floor." $n [_conn_lobe_min_seen]]
+}
+
+proc ::VMDPathFinder::_elide_to_width {text fnt px} {
+    # Trim text until it FITS, measured in the font it will be drawn in - a
+    # character count is the wrong unit here: 45 characters of Helvetica 8
+    # measured 221 px against a 210 px panel, and any font change moves that
+    # again.
+    if {![_have_tk] || $text eq ""} { return $text }
+    if {[catch {font measure $fnt $text} wpx]} { return $text }
+    if {$wpx <= $px} { return $text }
+    for {set n [string length $text]} {$n > 4} {incr n -1} {
+        set try "[string range $text 0 [expr {$n-1}]]…"
+        if {![catch {font measure $fnt $try} _w] && $_w <= $px} { return $try }
+    }
+    return $text
 }
 
 proc ::VMDPathFinder::_conn_lobe_color_warning {nregions} {
@@ -34959,8 +34980,7 @@ proc ::VMDPathFinder::_conn_lobe_color_warning {nregions} {
     # user infer it.
     set np [llength [_conn_lobe_palette]]
     if {$np <= 0 || $nregions <= $np} { return "" }
-    return [format "  \u26a0 %d regions but only %d distinct colors - colors repeat, so check the name before reading two same-colored openings as one." \
-        $nregions $np]
+    return [format "  \u26a0 %d regions, %d colours - colours repeat." $nregions $np]
 }
 
 proc ::VMDPathFinder::_conn_lobe_reset_colors {} {
