@@ -700,6 +700,9 @@ namespace eval ::VMDPathFinder:: {
         conn_lobe_tola 35.0
         conn_lobe_minseen 25
         conn_lobe_minshare 2.0
+        mean_show_mean 1
+        mean_show_sd 1
+        mean_show_minmax 1
         conn_lobe_all 1
         conn_lobe_sort_col ""
         conn_lobe_sort_dir -1
@@ -1087,7 +1090,7 @@ proc ::VMDPathFinder::save_config {} {
         mole_strict_interior tunnel_cluster_maxdev
         conn_pore_gate conn_pore_margin conn_draft_dotden
         mean_3d_mode mean_display_mode conn_lobe_tolz conn_lobe_tola conn_lobe_minseen
-        conn_lobe_minshare
+        conn_lobe_minshare mean_show_mean mean_show_sd mean_show_minmax
         mean_vol_enabled mean_vol_voxel mean_vol_sigma mean_vol_thresh mean_vol_thresh_open
         conn_lobe_sort_col conn_lobe_sort_dir
         mole_exit mole_path_a mole_path_b mole_vdw tunnel_cluster
@@ -23686,6 +23689,18 @@ proc ::VMDPathFinder::show_mean_profile_settings {} {
         -command ::VMDPathFinder::on_mean_fill_toggled
     grid $d.fill -row $row -column 0 -sticky w -padx 8 -pady 3; incr row
 
+    foreach {_mv _mlbl _mtip} [list \
+            mean_show_mean   "Mean line" "The mean radius in each bin." \
+            mean_show_sd     "\u00b11 std"    "The spread either side of the mean, as a band - or as dashed lines when Fill is on." \
+            mean_show_minmax "Min / max" "The narrowest and widest value seen in each bin, across the frames averaged."] {
+        if {![info exists state($_mv)]} { set state($_mv) 1 }
+        checkbutton $d.$_mv -text $_mlbl -variable ::VMDPathFinder::state($_mv) \
+            -command ::VMDPathFinder::draw_mean_profile
+        grid $d.$_mv -row $row -column 0 -sticky w -padx 20 -pady 1; incr row
+        add_tooltip $d.$_mv $_mtip
+    }
+    add_tooltip $d.fill "Colour the area under the curve by the sphere-mean property.\
+        It reaches up to the outermost curve still shown, so turning Min / max off fills to the std band instead."
     checkbutton $d.swap -text "Swap X/Y" \
         -variable ::VMDPathFinder::state(mean_swap) -command ::VMDPathFinder::draw_mean_profile
     grid $d.swap -row $row -column 0 -sticky w -padx 8 -pady 3; incr row
@@ -54960,6 +54975,25 @@ proc ::VMDPathFinder::_mean_profile_nbins {} {
     return 100
 }
 
+proc ::VMDPathFinder::_mean_show {which} {
+    # Which curves the Mean Profile draws. Default on for all three, so the
+    # plot is unchanged until the user turns one off.
+    variable state
+    set k "mean_show_$which"
+    if {![info exists state($k)]} { return 1 }
+    return [expr {$state($k) ? 1 : 0}]
+}
+
+proc ::VMDPathFinder::_mean_fill_top {} {
+    # The curve the Fill reaches up to: the outermost envelope still on show.
+    # Filling to a min/max curve that is not drawn leaves a coloured area with
+    # no boundary, which reads as the fill being wrong rather than as a hidden
+    # curve.
+    if {[_mean_show minmax]} { return "min" }
+    if {[_mean_show sd]}     { return "sdlo" }
+    return "mean"
+}
+
 proc ::VMDPathFinder::draw_mean_profile {} {
     # Thin wrapper so the abort button (the same busy cue Over Time's Compute
     # uses) shows for however long the real draw takes - collect_binned_property
@@ -55284,9 +55318,15 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
             set _tr [_tunnel_property_range_pooled $_msch]
             if {$_tr ne ""} { lassign $_tr _esp_lo _esp_hi }
         }
+        # Reach up to whatever envelope is actually drawn - see _mean_fill_top.
+        switch -- [_mean_fill_top] {
+            min  { set _ftop $mns }
+            sdlo { set _ftop $los }
+            default { set _ftop $means }
+        }
         for {set i 0} {$i < $npt-1} {incr i} {
-            set c0 [axis_xy $swap [lindex $zs $i] [lindex $mns $i] $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
-            set c1 [axis_xy $swap [lindex $zs [expr {$i+1}]] [lindex $mns [expr {$i+1}]] $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
+            set c0 [axis_xy $swap [lindex $zs $i] [lindex $_ftop $i] $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
+            set c1 [axis_xy $swap [lindex $zs [expr {$i+1}]] [lindex $_ftop [expr {$i+1}]] $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
             set g1 [axis_xy $swap [lindex $zs [expr {$i+1}]] $ymin $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
             set g0 [axis_xy $swap [lindex $zs $i] $ymin $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
             set col "#cfe3f7"
@@ -55321,7 +55361,7 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
                 -text "[dict get $_mm hiend] ([format %.2f $_hi])" \
                 -anchor ne -font {Helvetica 7} -fill "#444444"
         }
-    } else {
+    } elseif {[_mean_show sd]} {
         # \u00b11 std band (filled polygon: forward along upper, back along lower)
         set poly {}
         for {set i 0} {$i < $npt} {incr i} {
@@ -55333,7 +55373,7 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
         $cv create polygon $poly -fill #cfe3f7 -outline ""
     }
     # min / max envelope (thin dashed)
-    foreach series [list $mns $mxs] {
+    foreach series [expr {[_mean_show minmax] ? [list $mns $mxs] : {}}] {
         set pts {}
         for {set i 0} {$i < $npt} {incr i} {
             lappend pts {*}[axis_xy $swap [lindex $zs $i] [lindex $series $i] $ml $mt $pw $ph $ax0 $axsp $ay0 $aysp]
@@ -55344,7 +55384,7 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
     # spread is drawn as dashed \u00b11 std LINES on top instead (the band is kept only in
     # the non-fill view). This is why enabling Fill "turns off" the filled band - the
     # std itself is still shown, just as lines.
-    if {$do_fill} {
+    if {$do_fill && [_mean_show sd]} {
         foreach series [list $ups $los] {
             set pts {}
             for {set i 0} {$i < $npt} {incr i} {
@@ -55401,7 +55441,7 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
         $cv create text [expr {$ml+4}] [expr {$mt+$ph-4}] -anchor sw -font {Helvetica 7} \
             -fill "#666666" -text [format "%d axial stretch%s open sideways, %d of %d bins - plain HOLE radius (grey) used there" \
                 [llength $_runs] [expr {[llength $_runs] == 1 ? {} : {es}}] $_mixed $npt]
-    } else {
+    } elseif {[_mean_show mean]} {
         $cv create line $mpts -fill blue -width 2
     }
     # Where the wait actually is. Printed only when the draw is slow enough to
@@ -55415,8 +55455,14 @@ proc ::VMDPathFinder::_draw_mean_profile_body {} {
             [expr {$_t_end-$_t_cue}] [expr {$_t_data-$_t_cue}] $_fms \
             [expr {$_t_end-$_t_data-$_fms}]]}
     }
-    set _leg [expr {$do_fill ? "blue = mean   fill = property   gray = min/max   blue-dash = \u00b11 std" \
-                             : "blue = mean   band = \u00b11 std   dashed = min/max"}]
+    # Only what is actually on the canvas - a legend naming a curve the user
+    # just turned off is worse than no legend.
+    set _lg {}
+    if {[_mean_show mean]} { lappend _lg "blue = mean" }
+    if {$do_fill} { lappend _lg "fill = property" }
+    if {[_mean_show sd]} { lappend _lg [expr {$do_fill ? "blue-dash = \u00b11 std" : "band = \u00b11 std"}] }
+    if {[_mean_show minmax]} { lappend _lg [expr {$do_fill ? "gray = min/max" : "dashed = min/max"}] }
+    set _leg [join $_lg "   "]
     $cv create text [expr {$ml + $pw - 4}] [expr {$mt + 4}] -anchor ne -font {Helvetica 8} \
         -text $_leg
 }
