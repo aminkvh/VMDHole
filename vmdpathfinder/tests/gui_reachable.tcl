@@ -2407,16 +2407,22 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
         report "global gear's Property control is hidden while Color is not Property" \
                [expr {![winfo ismapped $GGD.pm]}] \
                "(ismapped=[winfo ismapped $GGD.pm])"
-        set _h_noprop [winfo reqheight $GGD]
+        set _h_noprop [lindex [wm minsize $GGD] 1]
         ::VMDPathFinder::_tunnel_global_gear_color_set property
         update idletasks; update
         report "global gear's Property control appears once Color is set to Property" \
                [expr {[winfo ismapped $GGD.pm]}] \
                "(ismapped=[winfo ismapped $GGD.pm])"
-        set _h_prop [winfo reqheight $GGD]
-        report "global gear popup height does not change when Property toggles (shares Color's row)" \
-               [expr {$_h_prop == $_h_noprop}] \
-               "(no-property height=$_h_noprop property height=$_h_prop)"
+        set _h_prop [lindex [wm minsize $GGD] 1]
+        # Property is a ROW of its own now, so the REQUESTED height genuinely
+        # differs between the two states. What must not change is the window
+        # the user sees, and that is guaranteed by the minsize the dialog pins
+        # while every conditional control is still gridded - so that is what is
+        # asserted, rather than a requested size that was only equal because
+        # Property used to share Color's row.
+        report "global gear popup cannot shrink when Property toggles" \
+               [expr {$_h_prop == $_h_noprop && $_h_prop > 0}] \
+               "(pinned height without property=$_h_noprop with property=$_h_prop)"
         # Task 207 + D3: the two data-driven modes lead, not the 30-odd fixed
         # colors - Auto rank color first, then Property. The Color control is a
         # scrolling combobox now, not a menu, so this reads its -values list

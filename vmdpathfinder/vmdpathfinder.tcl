@@ -7671,7 +7671,7 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
         ![info exists state(tunnel_display_mode)] ? "Isosurface" :
         ($state(tunnel_display_mode) eq "wire" ? "Wireframe" :
         ($state(tunnel_display_mode) eq "centerline" ? "Centerline" : "Isosurface"))}]
-    menubutton $d.rep -textvariable ::VMDPathFinder::_tgear_grep_disp -menu $d.rep.m -relief raised -indicatoron 1
+    menubutton $d.rep -width 16 -anchor w -textvariable ::VMDPathFinder::_tgear_grep_disp -menu $d.rep.m -relief raised -indicatoron 1
     menu $d.rep.m -tearoff 0
     foreach {lbl val} {Isosurface iso Wireframe wire Centerline centerline} {
         $d.rep.m add radiobutton -label $lbl -value $lbl -variable ::VMDPathFinder::_tgear_grep_disp \
@@ -7680,8 +7680,9 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
     grid $d.rep -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.rep "Default representation for every tunnel. A tunnel with its OWN gear override (⚙ on its row) keeps that instead."
 
+    incr row
     label $d.mat_l -text "Material"
-    grid $d.mat_l -row $row -column 2 -sticky w -padx {16 8} -pady 3
+    grid $d.mat_l -row $row -column 0 -sticky w -padx 8 -pady 3
     set mats {Opaque Transparent BrushedMetal GlassBubble Glass1 Glass2 Glass3 \
               Glossy Diffuse Ghost AOChalky AOShiny AOEdgy BlownGlass RTChrome \
               MetallicPastel Steel Translucent Edgy EdgyShiny EdgyGlass}
@@ -7689,7 +7690,7 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
     if {![info exists state(tunnel_display_material)] || $state(tunnel_display_material) eq ""} {
         set state(tunnel_display_material) Opaque
     }
-    menubutton $d.mat -width 14 -anchor w -textvariable ::VMDPathFinder::state(tunnel_display_material) \
+    menubutton $d.mat -width 16 -anchor w -textvariable ::VMDPathFinder::state(tunnel_display_material) \
         -menu $d.mat.m -relief raised -indicatoron 1
     menu $d.mat.m -tearoff 0
     foreach mv $mats {
@@ -7697,14 +7698,13 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
             -command [list ::VMDPathFinder::_tunnel_global_gear_set material $mv]
     }
     _menu_apply_column_breaks $d.mat.m
-    grid $d.mat -row $row -column 3 -sticky w -padx 8 -pady 3
+    grid $d.mat -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.mat "Default material for every tunnel. A tunnel with its OWN gear override (⚙ on its row) keeps that instead."
     incr row
 
-    # Row 2: Color | Property (only when Color=Property, immediately to its
-    # RIGHT). Color takes columns 0-1 so it always sits at the panel's left
-    # edge, aligned under Representation - Property must not hold that slot,
-    # or the row leaves an empty gap whenever it is ungridded.
+    # One control per row, all the same width. Two label+control pairs per row
+    # made each row as wide as the widest pair on it, and nothing lined up down
+    # the dialog.
     label $d.col_l -text "Color"
     grid $d.col_l -row $row -column 0 -sticky w -padx 8 -pady 3
     if {![info exists state(tunnel_display_color)] || $state(tunnel_display_color) eq ""} {
@@ -7718,15 +7718,16 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
     # combobox, not a long menu (see _color_menu).
     _color_menu $d.sc ::VMDPathFinder::_tgear_gcol_disp \
         [concat [list "Rank" "Property"] [_tunnel_color_names]] \
-        ::VMDPathFinder::_tunnel_global_gear_color_pick 10
+        ::VMDPathFinder::_tunnel_global_gear_color_pick 16
     grid $d.sc -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.sc "Default color for every tunnel: a fixed choice, or Property to color by a MOLE lining property. A tunnel with its OWN gear override (⚙ on its row) keeps that instead."
 
+    incr row
     label $d.prop_l -text "Property"
-    grid $d.prop_l -row $row -column 2 -sticky w -padx {16 8} -pady 3
+    grid $d.prop_l -row $row -column 0 -sticky w -padx 8 -pady 3
     # Fixed to the longest label ("MOLE hydrophobicity"), so picking a property
     # does not resize the control and the per-tunnel gear lines up with this one.
-    menubutton $d.pm -width 14 -anchor w -textvariable ::VMDPathFinder::state(tunnel_prop_disp) -menu $d.pm.m -relief raised -indicatoron 1
+    menubutton $d.pm -width 16 -anchor w -textvariable ::VMDPathFinder::state(tunnel_prop_disp) -menu $d.pm.m -relief raised -indicatoron 1
     menu $d.pm.m -tearoff 0
     # The one menu still carrying a hardcoded 9-token list - which is why the
     # pore-mode scales (kd / ww / lipophilicity) never appeared HERE even
@@ -7737,7 +7738,7 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
             -command [list ::VMDPathFinder::_tunnel_global_gear_set prop $tok]
     }
     _menu_two_columns $d.pm.m
-    grid $d.pm -row $row -column 3 -sticky w -padx 8 -pady 3
+    grid $d.pm -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.pm "Which MOLE property colors every tunnel, when Color is set to Property."
     # Real "none" value never picked from this menu any more (Color is the
     # on/off switch now) - if nothing was ever chosen, land on a real
@@ -8330,7 +8331,7 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
         [info exists tunnel_gear_wire($i)] && $tunnel_gear_wire($i) ne "" \
             ? [_tunnel_repr_label [_tunnel_effective_repr $i]] \
             : [_tunnel_inherited_repr_label $i]}]
-    menubutton $d.rep -textvariable ::VMDPathFinder::_tgear_rep_disp -menu $d.rep.m -relief raised -indicatoron 1
+    menubutton $d.rep -width 16 -anchor w -textvariable ::VMDPathFinder::_tgear_rep_disp -menu $d.rep.m -relief raised -indicatoron 1
     menu $d.rep.m -tearoff 0
     $d.rep.m add radiobutton -label [_tunnel_inherited_repr_label $i] \
         -value [_tunnel_inherited_repr_label $i] -variable ::VMDPathFinder::_tgear_rep_disp \
@@ -8343,8 +8344,9 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
     grid $d.rep -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.rep "How THIS tunnel is drawn. \"(auto)\" means it makes no choice of its own and follows the header gear. Dots is not available for tunnels."
 
+    incr row
     label $d.mat_l -text "Material"
-    grid $d.mat_l -row $row -column 2 -sticky w -padx {16 8} -pady 3
+    grid $d.mat_l -row $row -column 0 -sticky w -padx 8 -pady 3
     set mats {Opaque Transparent BrushedMetal GlassBubble Glass1 Glass2 Glass3 \
               Glossy Diffuse Ghost AOChalky AOShiny AOEdgy BlownGlass RTChrome \
               MetallicPastel Steel Translucent Edgy EdgyShiny EdgyGlass}
@@ -8352,7 +8354,7 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
     set ::VMDPathFinder::_tgear_mat_disp [expr {[info exists tunnel_gear_material($i)] \
         && $tunnel_gear_material($i) ne "" ? $tunnel_gear_material($i) \
         : [_tunnel_inherited_material_label $i]}]
-    menubutton $d.mat -textvariable ::VMDPathFinder::_tgear_mat_disp -menu $d.mat.m -relief raised -indicatoron 1
+    menubutton $d.mat -width 16 -anchor w -textvariable ::VMDPathFinder::_tgear_mat_disp -menu $d.mat.m -relief raised -indicatoron 1
     menu $d.mat.m -tearoff 0
     $d.mat.m add radiobutton -label [_tunnel_inherited_material_label $i] \
         -value [_tunnel_inherited_material_label $i] -variable ::VMDPathFinder::_tgear_mat_disp \
@@ -8362,7 +8364,7 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
             -command [list ::VMDPathFinder::_tunnel_gear_set_from_popup $i material $mv]
     }
     _menu_apply_column_breaks $d.mat.m
-    grid $d.mat -row $row -column 3 -sticky w -padx 8 -pady 3
+    grid $d.mat -row $row -column 1 -sticky w -padx 8 -pady 3
     incr row
 
     # Row 2: Color | Property (only when this tunnel's EFFECTIVE colormode -
@@ -8392,12 +8394,13 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
     # point of the change.
     _color_menu $d.sc ::VMDPathFinder::_tgear_col_disp \
         [concat [list "Property" [_tunnel_inherited_label $i]] [_tunnel_color_names]] \
-        [list ::VMDPathFinder::_tunnel_gear_color_pick $i] 10
+        [list ::VMDPathFinder::_tunnel_gear_color_pick $i] 16
     grid $d.sc -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.sc "This tunnel's own color: the global default (header gear), a fixed choice, or Property to color it by a MOLE lining property."
 
+    incr row
     label $d.prop_l -text "Property"
-    grid $d.prop_l -row $row -column 2 -sticky w -padx {16 8} -pady 3
+    grid $d.prop_l -row $row -column 0 -sticky w -padx 8 -pady 3
     # This picker was the last "Global default" left in the dialog - the one
     # wording the user has flagged repeatedly. It named a place to inherit from
     # instead of the property actually on screen.
@@ -8405,7 +8408,7 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
         && $tunnel_gear_prop($i) ne "none"}]
     set ::VMDPathFinder::_tgear_prop_disp [expr {$_own \
         ? [_tunnel_prop_label_short $tunnel_gear_prop($i)] : [_tunnel_inherited_prop_label $i]}]
-    menubutton $d.pm -width 14 -anchor w -textvariable ::VMDPathFinder::_tgear_prop_disp -menu $d.pm.m -relief raised -indicatoron 1
+    menubutton $d.pm -width 16 -anchor w -textvariable ::VMDPathFinder::_tgear_prop_disp -menu $d.pm.m -relief raised -indicatoron 1
     menu $d.pm.m -tearoff 0
     $d.pm.m add radiobutton -label [_tunnel_inherited_prop_label $i] \
         -value [_tunnel_inherited_prop_label $i] -variable ::VMDPathFinder::_tgear_prop_disp \
@@ -8416,7 +8419,7 @@ proc ::VMDPathFinder::show_tunnel_gear_settings {i} {
             -command [list ::VMDPathFinder::_tunnel_gear_set_from_popup $i prop $tok]
     }
     _menu_two_columns $d.pm.m
-    grid $d.pm -row $row -column 3 -sticky w -padx 8 -pady 3
+    grid $d.pm -row $row -column 1 -sticky w -padx 8 -pady 3
     add_tooltip $d.pm "Which MOLE property colors THIS tunnel, when its Color is (or defaults to) Property. \"auto\" means it makes no choice of its own and follows the header gear."
     incr row
 
