@@ -4311,9 +4311,25 @@ chk "reset puts every region back to auto" \
 chk "...and clears the per-row property choice too" \
     [expr {[string first {conn_site_scheme,*} \
         [info body ::VMDPathFinder::_conn_lobe_reset_colors]] >= 0}] 1
+# The gear must be the LAST column, whatever that number happens to be. The
+# guards used to search for a literal "-column 7" and so failed the moment an
+# Ions column was added between the data and the gear - even though the gear
+# was still last, which is the property they exist to protect.
+proc _max_col {body} {
+    set m -1
+    foreach {_all n} [regexp -all -inline {-column ([0-9]+)} $body] {
+        if {$n > $m} { set m $n }
+    }
+    return $m
+}
+proc _col_of {body pat} {
+    if {[regexp "$pat\\s+-row\\s+\\S+\\s+-column\\s+(\[0-9\]+)" $body -> n]} { return $n }
+    return -1
+}
 chk "rows start with the show checkbox and END with their own gear" \
     [expr {[string first {grid $f.sh$sid -row $r -column 0} $_rp] >= 0 \
-        && [string first {grid $f.gr$sid -row $r -column 7} $_rp] >= 0}] 1
+        && [_col_of $_rp {grid \$f\.gr\$sid}] == [_max_col $_rp]
+        && [_col_of $_rp {grid \$f\.gr\$sid}] > 0}] 1
 chk "openings are labelled OP<n>, not 'Opening <n>'" \
     [expr {[string first {"OP$sid"} \
         [info body ::VMDPathFinder::_refresh_conn_lobes_panel]] >= 0}] 1
@@ -4380,8 +4396,9 @@ chk "reset lives in the global gear, not a header strip" \
     [expr {[string first {_conn_lobe_reset_colors} \
         [info body ::VMDPathFinder::_conn_gear_dialog]] >= 0}] 1
 chk "the global gear sits in the list header's last column" \
-    [expr {[string first {grid $d.hdr.gg  -row 0 -column 7} \
-        [info body ::VMDPathFinder::_build_conn_lobe_panel]] >= 0}] 1
+    [expr {[set _bp [info body ::VMDPathFinder::_build_conn_lobe_panel]]
+            [_col_of $_bp {grid \$d\.hdr\.gg}] == [_max_col $_bp]
+            && [_col_of $_bp {grid \$d\.hdr\.gg}] > 0}] 1
 chk "...and hosts the matching tolerance and persistence entries" \
     [expr {[string first {conn_lobe_tolz} [info body ::VMDPathFinder::_conn_gear_dialog]] >= 0 \
         && [string first {conn_lobe_minseen} [info body ::VMDPathFinder::_conn_gear_dialog]] >= 0}] 1
