@@ -4267,6 +4267,28 @@ proc ::VMDPathFinder::_tunnel_ensure_clusters {} {
     _tunnel_ensure_clusters_for [_tunnel_display_frame]
 }
 
+proc ::VMDPathFinder::_tunnel_showall_clicked {} {
+    # Show all can take the row count from a dozen to several hundred, and each
+    # new row is nine widgets Tk has to create: measured at 48.9 s for 454
+    # routes, against 45 ms for the 12 the Seen floor keeps. The widgets are
+    # kept and reused afterwards, so only the FIRST time is slow - but the
+    # first time has to say so, or the plugin looks hung.
+    variable state
+    if {[info exists state(tunnel_list_show_all)] && $state(tunnel_list_show_all)} {
+        set _n [llength [_tunnel_cluster_rows]]
+        set state(status) "Building the full route list - $_n route(s). The first time is slow;\
+            afterwards the rows are reused."
+        catch {update idletasks}
+    }
+    set _t0 [clock milliseconds]
+    refresh_tunnel_tab
+    set _ms [expr {[clock milliseconds] - $_t0}]
+    if {$_ms > 1000} {
+        set state(status) [format "Route list rebuilt in %.1f s. Showing it again is fast." \
+            [expr {$_ms/1000.0}]]
+    }
+}
+
 proc ::VMDPathFinder::_sync_tunlist_showall_vis {} {
     # "Show all" only means something once there are tracked routes to hide.
     # Before a run it is a control that cannot do anything, so it is not shown
@@ -7350,7 +7372,7 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     # once there are tracked routes, not here.
     checkbutton $parent.tunctl.showall -text "Show all" \
         -variable ::VMDPathFinder::state(tunnel_list_show_all) \
-        -command ::VMDPathFinder::refresh_tunnel_tab
+        -command ::VMDPathFinder::_tunnel_showall_clicked
     # refresh_tunnel_tab overrides this with the live hidden count.
     add_tooltip $parent.tunctl.showall "Show every tracked route."
     button $parent.tunctl.prev -text "<" -width 2 -command {::VMDPathFinder::_tunnel_select_step -1}
