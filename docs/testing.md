@@ -21,7 +21,7 @@ follows two house rules:
 | Tier | Where | Question it answers | Needs | Run it with |
 |---|---|---|---|---|
 | Unit regression | `tests/unit/` | one defect each, in isolation | `sh`, a C compiler, `tclsh`; Tk + an X display for the GUI smoke test | `sh tests/unit/run_unit_tests.sh` |
-| Main suite | `vmdpathfinder/tests/` | the plugin, end to end — 23 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdpathfinder/tests/run_tests.sh` |
+| Main suite | `vmdpathfinder/tests/` | the plugin, end to end - 26 groups | VMD for most groups; locally built engines; reference HOLE for parity groups | `vmdpathfinder/tests/run_tests.sh` |
 | Pure-Tcl engine | `vmdpathfinder/hole_tcl/tests/` | the Tcl HOLE engine vs a reference binary | a reference `hole` build | `vmdpathfinder/hole_tcl/tests/run_all.sh` (`profile_vs_reference.sh <pdb>` is the by-hand comparison harness) |
 | Native verifications | `native/` | byte-identity of the accelerated binaries vs stock HOLE | stock `hole2` tree (source and/or binaries) | `native/verify.sh`, `native/connolly_patches/test_hcapen_cache.sh` |
 
@@ -33,10 +33,10 @@ release-integrity, and a hand-picked set of VMD-free main-suite groups.
 
 | Variable | Effect |
 |---|---|
-| `VMDPATHFINDER_HOLE_EXE_DIR` | directory searched FIRST for `hole` and its siblings — honoured by the plugin's own discovery (`find_hole_exe`) and by the reference-dependent tests. Point it at `native/build` on a tree that builds there. |
+| `VMDPATHFINDER_HOLE_EXE_DIR` | directory searched FIRST for `hole` and its siblings - honoured by the plugin's own discovery (`find_hole_exe`) and by the reference-dependent tests. Point it at `native/build` on a tree that builds there. |
 | `VMDPATHFINDER_CONFIG_FILE` | overrides `~/.vmdpathfinder_config`. `run_tests.sh` exports a per-run temp file automatically, so the suite never reads or rewrites the user's real config. |
 | `VMD` / `VMD_BIN` | which VMD binary the wrappers drive (`VMD_BIN` for `test_gui_reachable.sh` and `test_adapter_schema.sh`, `VMD` elsewhere). |
-| `VMDPATHFINDER_RELEASE=1` | a skipped group becomes a FAILURE — required before tagging. |
+| `VMDPATHFINDER_RELEASE=1` | a skipped group becomes a FAILURE - required before tagging. |
 | `EXE`, `STOCK`, `SRC` | `test_accel_parity.sh`'s accelerated dir, stock `sph_process`, and patched `hole2/src` tree. |
 | `GUI_TEST_*` | `test_gui_reachable.sh`'s fixture overrides (PDB, HET residue, selection, start point, engine). |
 
@@ -59,11 +59,11 @@ produced the fixes they guard.
 | `test_headless_scratch_reclaim.sh` | `/dev/shm` scratch reclaim reachable only through the GUI |
 | `test_headless_run_guards.sh` **(review)** | tunnel start-point validation and shell quoting (nan/inf included), busy/`_end_calc` restoration across a throw, the shared atomselect's lifetime in `run_analysis` |
 | `test_tsv_reader_parity.sh` | the threaded TSV reader skipping `_resolve_conn_radii` |
-| `test_tsv_publish_on_failure.sh` **(review)** | a failed profile parse truncating the good `hole_profile.tsv` beside it — both writers publish by rename only after a parse that produced rows |
+| `test_tsv_publish_on_failure.sh` **(review)** | a failed profile parse truncating the good `hole_profile.tsv` beside it - both writers publish by rename only after a parse that produced rows |
 | `test_gui_smoke.sh` **(review)** | the GUI itself without VMD: `vmdpathfinder.tcl` sourced under plain tclsh+Tk with VMD stubbed, the real widget tree built by the real `show_gui`, and scripted user actions asserting the close path, the busy guards, the deleted-molecule dialog class, tunnel gear-popup route pinning, and nan-tolerant option fields. Skips without Tk or a display; CI runs it under xvfb. |
 
 `run_unit_tests.sh` globs `test_*.sh`, so a new test is picked up by being
-added — nothing to register.
+added - nothing to register.
 
 ## Main suite groups (`vmdpathfinder/tests/run_tests.sh`)
 
@@ -73,12 +73,12 @@ group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 
 | Group | Verifies |
 |---|---|
-| `test_headless_smoke` | the plugin loads, parses and imports under `vmd -dispdev text` — asserts numbers, not "it ran" |
+| `test_headless_smoke` | the plugin loads, parses and imports under `vmd -dispdev text` - asserts numbers, not "it ran" |
 | `test_accel_parity` | the shipped binaries ARE accelerated (OpenMP link + real scaling) and byte-identical to stock |
 | `test_hydro_qco_parity` | the hydration C projection is bit-identical to the Tcl loop |
 | `test_hole_tcl_fallback` | the pure-Tcl HOLE engine: same profile table, byte-identical `.sph`, refusals for cards it cannot honour |
 | `test_hole_tcl_pore_methods` | the fallback under CONNOLLY and CAPSULE, including which table cells stay blank |
-| `test_hole_tcl_fallback_e2e` | the fallback through `run_analysis` itself — per-frame file layout included |
+| `test_hole_tcl_fallback_e2e` | the fallback through `run_analysis` itself - per-frame file layout included |
 | `test_hole_fast_coord` | the packed coordinate record is an accelerator, not a second answer |
 | `test_capsule_incomplete` | HOLE's own early-stop warning reaches the user instead of being swallowed |
 | `test_ellipse_parity` | the ellipse probe's C accelerator agrees with its Tcl reference |
@@ -102,10 +102,10 @@ group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 | Check | What it proves |
 |---|---|
 | `verify.sh` Part A | the local `.sos` fixture corpus (`benchmarks/fixtures/`, gitignored; Part A skips when absent): stock vs fast triangulation byte-identical |
-| `verify.sh` Part B | HOLE's own example structures through the full `hole -> sph_process -> sos_triangle` pipeline (the radius file is staged into the workdir — HOLE truncates long card paths silently) |
+| `verify.sh` Part B | HOLE's own example structures through the full `hole -> sph_process -> sos_triangle` pipeline (the radius file is staged into the workdir - HOLE truncates long card paths silently) |
 | `verify.sh` Part C | compiled `--hydro` colouring vs the Tcl reference (needs local, gitignored frames) |
 | `verify.sh` Part D | `--points` dot surfaces: vertex sets identical |
 | `verify.sh` Part E | parallel CONNOLLY / fast CAPSULE vs stock `hole`: `.sph`, profile and conductance byte-identical |
 | `connolly_patches/test_hcapen_cache.sh` | the two known HCAPEN cache defects against a stock source tree |
 | `hydration/test_hydro_project_unit.py` | `hydro_project.c` vs an independent Python reference, KDE support handling included |
-| `hydration/test_hydro_accel_parity.tcl` | end-to-end hydration parity on real trajectories — its fixtures are not in the repository, so it must be run on a machine that has them |
+| `hydration/test_hydro_accel_parity.tcl` | end-to-end hydration parity on real trajectories - its fixtures are not in the repository, so it must be run on a machine that has them |

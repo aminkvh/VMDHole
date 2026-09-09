@@ -152,8 +152,10 @@ claims with suitable simulation or experimental data.
 
 ## Citation and notices
 
-For every VMDPathFinder analysis, cite VMDPathFinder, VMD, and HOLE. Additional citations
-depend on the features used, for example MOLE 2 for tunnel searches, CAVER 3.0
+For every VMDPathFinder analysis, cite VMDPathFinder and VMD. Add HOLE when you
+use Pore mode - every engine and mesher in it implements HOLE's method - and
+further citations for the features you report, for example MOLE 2 for tunnel
+searches, CAVER 3.0
 for tunnel clustering, and CHAP for CHAP-compatible hydration analysis. Open
 **Help → Guide & Citations… → Citations** in the plugin or consult
 [References](docs/references.md) for the exact method-specific references.

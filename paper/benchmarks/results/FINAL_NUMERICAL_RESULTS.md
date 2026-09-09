@@ -228,4 +228,3 @@ itself, and washed out almost entirely once the 15-worker pool the figure's
 own end-to-end panel measures becomes the bottleneck. Not shown here by
 request - the comparison is real but easy to over-read at this figure's
 scale.
-

@@ -249,6 +249,14 @@ static double O[3];               /* cpoint */
  * derived from it (equivalent-area circle of the swept stadium shape) only
  * when raw > 0 - a negative raw (segment already clipped by an atom) is
  * returned unchanged, exactly mirroring hcapen.f's own branch. */
+/* UNREACHABLE as shipped, and deliberately kept. Nothing assigns this: the
+ * plugin never routes CAPSULE to the Nelder-Mead search (_nm_mode_for_run
+ * returns a capsule mode only for HOLE, and docs/parameters.md states "Capsule
+ * always uses HOLE"), so the objective and segment-clearance code below has
+ * never run in a release. It is retained because it is the working start of
+ * capsule support, NOT because it is exercised - do not cite it as evidence
+ * that NM handles capsule, and do not assume it is correct until something
+ * sets this flag and the parity tests cover it. */
 static int g_capsule = 0;
 static double g_prevx, g_prevy, g_prevz;
 

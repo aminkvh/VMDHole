@@ -180,7 +180,7 @@ namespace eval ::VMDPathFinder:: {
     array set tunnel_clusters {}
     variable current_surface_mol -1
     variable centerline_mol -1
-    # Dedicated track for the Mean Profile tab's "Show in 3D viewer" surface — a
+    # Dedicated track for the Mean Profile tab's "Show in 3D viewer" surface - a
     # revolved-mean-radius tube, independent of the per-frame HOLE surface so it
     # can stay visible (or not) regardless of which frame is being scrubbed.
     variable mean_surface_mol -1
@@ -794,7 +794,7 @@ proc vmdpathfinder_singleframe_tk {} {
     return [::VMDPathFinder::show_gui]
 }
 
-# Load-time line intentionally left minimal — "VMDPathFinder v... loaded" is printed
+# Load-time line intentionally left minimal - "VMDPathFinder v... loaded" is printed
 # inside show_gui on first open so it appears when the user actually uses the plugin.
 variable ::VMDPathFinder::_gui_opened 0
 variable ::VMDPathFinder::_swept 0
@@ -981,7 +981,7 @@ proc ::VMDPathFinder::load_config {} {
     foreach _ck {metrics_kappa_custom trends_kappa_custom} {
         if {[info exists state($_ck)] && $state($_ck) eq "11.2"} { set state($_ck) "1.9" }
     }
-    # The radius-weighting feature (×R/÷R, then a "gate score") was removed entirely —
+    # The radius-weighting feature (×R/÷R, then a "gate score") was removed entirely -
     # drop any of its keys from an older config rather than resurrect them.
     foreach _k {hydro_radius_weight hydro_radius_mode hydro_radius_mode_disp gate_r0 gate_sigma \
                 chap_hydro_scale chap_hydro_scale_disp} {
@@ -1669,7 +1669,7 @@ proc ::VMDPathFinder::show_gui {} {
         set state(abort_requested) 0
     }
     if {!$_gui_opened} {
-        vmdcon -info "VMDPathFinder v$version[expr {$build eq "" ? "" : " (build $build)"}] — GUI opened."
+        vmdcon -info "VMDPathFinder v$version[expr {$build eq "" ? "" : " (build $build)"}] - GUI opened."
         set _gui_opened 1
         catch {_sweep_stale_tmpdirs}   ;# reclaim /tmp scratch dirs leaked by crashed sessions
         # One-shot: added after init_executables/load_config finish populating
@@ -2255,7 +2255,7 @@ proc ::VMDPathFinder::build_gui {w} {
     menu $w.plotframe.nb.heatmap.exportbar.tprop.m -tearoff 0
     set ::VMDPathFinder::_hm_tunnel_prop_tok $::VMDPathFinder::state(hm_tunnel_prop)
     add_tooltip $w.plotframe.nb.heatmap.exportbar.tprop "Which MOLE property to plot over time. Independent of the tunnel's own display property."
-    # Property scheme picker — shown only when Property is the active color mode.
+    # Property scheme picker - shown only when Property is the active color mode.
     menubutton $w.plotframe.nb.heatmap.exportbar.psch \
         -textvariable ::VMDPathFinder::state(hm_prop_scheme_disp) \
         -menu $w.plotframe.nb.heatmap.exportbar.psch.m \
@@ -2266,7 +2266,7 @@ proc ::VMDPathFinder::build_gui {w} {
     # "pfdens" once per-frame hydration data exists.
     _populate_heatmap_scheme_menu
     # Explicit Compute: the property-over-time batch can be a 40K-frame calculation, so
-    # changing the scheme only ARMS it — the user clicks Compute to actually run it.
+    # changing the scheme only ARMS it - the user clicks Compute to actually run it.
     button $w.plotframe.nb.heatmap.exportbar.pcompute -text "Compute" \
         -command ::VMDPathFinder::on_heatmap_compute
     # Pore-facing is a shared analysis setting, controlled from the gear (Scale &
@@ -2866,7 +2866,7 @@ Stricter than Passage, which counts ions that merely entered."
     pack $w.bottom.options -side top -fill x -padx 8 -pady {0 2}
 
     frame $w.bottom.detail
-    # Column header — font matches listbox entries.
+    # Column header - font matches listbox entries.
     label $w.bottom.detail.header \
         -text [format "  %-5s  %8s  %s" "Frame" "Radius(Å)" "Time"] \
         -anchor w -font {Courier 9} -relief groove -bd 1 -padx 4
@@ -6152,7 +6152,7 @@ proc ::VMDPathFinder::_draw_tunnel_metrics_readout {cv ml mt pw ph} {
     set y  [expr {$mt + 8}]
     set lh 13
     set items {}
-    lappend items [$cv create text $x $y -text [format "Volume %.0f Å³" $vol] \
+    lappend items [$cv create text $x $y -text [format "Tube volume %.0f Å³" $vol] \
         -anchor nw -font $fnt -fill "#222222" -tags metricsreadout]
     incr y $lh
     set segs [list [list "pass:" "#555555"]]
@@ -6508,7 +6508,7 @@ proc ::VMDPathFinder::on_mode_tab_changed {args} {
     }
     if {[analysis_mode] eq "tunnel"} {
         catch {$w.actions.run configure -text "Run Tunnel"}
-        set state(status) "Tunnel mode — branching pathway search from a buried starting point."
+        set state(status) "Tunnel mode - branching pathway search from a buried starting point."
         _sync_mode_tabs 1
         # Rebuild only if the landed frame moved while this tab was away -
         # everything else that restructures the rows already rebuilt them
@@ -6523,7 +6523,7 @@ proc ::VMDPathFinder::on_mode_tab_changed {args} {
         catch {_redisplay_results_list}
     } else {
         catch {$w.actions.run configure -text "Run HOLE"}
-        set state(status) "Pore mode — through-pore profile along a defined axis (HOLE)."
+        set state(status) "Pore mode - through-pore profile along a defined axis (HOLE)."
         _sync_mode_tabs 1
         # Symmetric to the tunnel branch: only that branch rebuilt the bottom
         # frame list, so coming BACK left it holding tunnel rows and a tunnel
@@ -8309,7 +8309,7 @@ proc ::VMDPathFinder::_tunnel_profile_prop_pick {tok} {
         # applied - which is precisely what "the picker is inert" looks like.
         # Put the label back and say why.
         catch {_sync_tunnel_profile_prop_picker ""}
-        set state(status) "Select a tunnel first — the property applies to the selected tunnel."
+        set state(status) "Select a tunnel first - the property applies to the selected tunnel."
         return
     }
     _tunnel_gear_set $id prop $tok
@@ -20827,7 +20827,7 @@ proc ::VMDPathFinder::run_tunnel_analysis {} {
         if {[llength $_existing] > 0 \
                 && [info exists state(overwrite_results)] && $state(overwrite_results)} {
             if {![confirm_overwrite_dialog $root [llength $_existing]]} {
-                set state(status) "Tunnel run cancelled — existing results preserved."
+                set state(status) "Tunnel run cancelled - existing results preserved."
                 set busy 0
                 _end_calc
                 return
@@ -24102,9 +24102,9 @@ proc ::VMDPathFinder::suggest_cvect {{force 0} {warn_var {}}} {
     # Tries the Orient package first; falls back to the smallest principal
     # moment of inertia (= long axis of a cylindrical protein) using frame 0.
     # Works for both single structures and trajectories.
-    # Uses state(molid) and state(selection) — same subset as HOLE analysis.
+    # Uses state(molid) and state(selection) - same subset as HOLE analysis.
     # Returns a human-readable note string describing what was done.
-    # NOTE: no `return` inside catch — Tcl raises TCL_RETURN (code 2) which
+    # NOTE: no `return` inside catch - Tcl raises TCL_RETURN (code 2) which
     # catch intercepts, preventing the proc from actually returning.
     variable state
     if {!$force && [string trim $state(cvect)] ne ""} { return "already set" }
@@ -24167,7 +24167,7 @@ proc ::VMDPathFinder::compute_vector {d} {
     variable vec_p2
     if {[catch {
         if {[string trim $vec_p1] eq "" || [string trim $vec_p2] eq ""} {
-            error "Fill in both Point 1 and Point 2.\n(Use x,y,z — e.g. 1,0,0 — or a VMD selection — e.g. protein and resid 50 and name CA)"
+            error "Fill in both Point 1 and Point 2.\n(Use x,y,z - e.g. 1,0,0 - or a VMD selection - e.g. protein and resid 50 and name CA)"
         }
         set molid [resolve_molid]
         set frame [molinfo $molid get frame]
@@ -24738,7 +24738,7 @@ proc ::VMDPathFinder::_scoped_ca_indices {molid frame hsel cx cy cz ri ro} {
                 vmdcon -warn "VMDPathFinder: scoped fit expanded to $ro Å ($ni Cα at $ri Å, $no at $ro Å)"
                 set idx [$so get index]
             } else {
-                vmdcon -warn "VMDPathFinder: scoped fit: only $no Cα within $ro Å — stabilization disabled for this point"
+                vmdcon -warn "VMDPathFinder: scoped fit: only $no Cα within $ro Å - stabilization disabled for this point"
             }
             catch {$so delete}
         }
@@ -25254,7 +25254,7 @@ proc ::VMDPathFinder::frame_axis {molid frame} {
 
     if {$do_exact_cv && [string trim $state(cvect_def_p1)] ne "" && \
                           [string trim $state(cvect_def_p2)] ne ""} {
-        # Exact: re-evaluate p1/p2 selections literally at this frame — no fitting.
+        # Exact: re-evaluate p1/p2 selections literally at this frame - no fitting.
         if {![catch {
             set a [_resolve_point_input $state(cvect_def_p1) $molid $frame]
             set b [_resolve_point_input $state(cvect_def_p2) $molid $frame]
@@ -25262,7 +25262,7 @@ proc ::VMDPathFinder::frame_axis {molid frame} {
         }]} { set cv [format "%.4f %.4f %.4f" {*}$v] }
     } elseif {$do_stab_cv} {
         # Independent scoped fit per point: p1 and p2 each get their own local context.
-        # CVECT can span both sides of the channel — piggybacking CPOINT's matrix is wrong.
+        # CVECT can span both sides of the channel - piggybacking CPOINT's matrix is wrong.
         set p1_new $_stab_p1_ref_xyz
         set p2_new $_stab_p2_ref_xyz
         set _f1 [_stab_fit_point $molid $_stab_txt_p1 $_stab_ref_frame $frame \
@@ -25362,7 +25362,7 @@ proc ::VMDPathFinder::align_trajectory {{molid ""}} {
     if {[$ref num] == 0} { $ref delete; error "Alignment selection '$seltext' matched 0 atoms." }
     set sel [atomselect $molid $seltext]
     set all [atomselect $molid all]
-    vmdcon -info "VMDPathFinder: aligning trajectory — $nf frame(s) onto ref $rf  sel=\"$seltext\""
+    vmdcon -info "VMDPathFinder: aligning trajectory - $nf frame(s) onto ref $rf  sel=\"$seltext\""
     # Progress + abort. The per-frame cost is small (measured 0.05 ms/frame on a
     # 4.6k-atom system), but `$all move` rewrites EVERY atom of every frame, so
     # on a big solvated system x 10k frames it is minutes of frozen UI with no
@@ -25395,11 +25395,11 @@ proc ::VMDPathFinder::align_trajectory {{molid ""}} {
         # Say so plainly: the frames BEFORE the break are moved and the rest are
         # not, so the trajectory is now half-aligned. Silently reporting "$nf
         # frames" would hide a genuinely inconsistent coordinate set.
-        vmdcon -warn "VMDPathFinder: alignment ABORTED at frame $f of $nf — frames 0..[expr {$f-1}] are\
+        vmdcon -warn "VMDPathFinder: alignment ABORTED at frame $f of $nf - frames 0..[expr {$f-1}] are\
             superposed and the rest are NOT. Re-run Align to finish, or reload the trajectory."
         error "Alignment aborted at frame $f of $nf; the trajectory is now partly aligned."
     }
-    vmdcon -info "VMDPathFinder: alignment complete — $nf frame(s) superposed."
+    vmdcon -info "VMDPathFinder: alignment complete - $nf frame(s) superposed."
     _align_mark_done $molid $seltext $rf $nf
     return $nf
 }
@@ -25638,7 +25638,7 @@ proc ::VMDPathFinder::_cvect_guess {d} {
     set note [suggest_cvect 1]
     set state(status) "CVECT guessed: $state(cvect) ($note)"
     if {[winfo exists $d.result]} {
-        $d.result configure -text "CVECT = $state(cvect) — $note"
+        $d.result configure -text "CVECT = $state(cvect) - $note"
     }
     _cvect_sync_stab_controls $d
 }
@@ -26838,7 +26838,7 @@ proc ::VMDPathFinder::frame_from_dir {frame_dir fallback} {
 proc ::VMDPathFinder::_surface_offmol {sph_file molid frame} {
     # A HOLE surface is baked in the ABSOLUTE coordinates the molecule had when HOLE
     # ran. Returns 1 if the sph centerline centroid lies OUTSIDE the loaded molecule's
-    # bounding box (so the surface won't overlay it — the molecule was moved/re-centered
+    # bounding box (so the surface won't overlay it - the molecule was moved/re-centered
     # since, or a different molecule is loaded), 0 if it overlays, "" if undeterminable.
     variable state
     if {![file exists $sph_file]} { return "" }
@@ -26878,7 +26878,7 @@ proc ::VMDPathFinder::find_existing_asset {run_dir sph_file {molid -1} {frame 0}
     #
     # FRESHNESS: a .vmd_plot surface is built FROM the .sph, so a valid one is newer
     # than its sph. If the sph was later overwritten (a re-run), an older surface is
-    # STALE — ignore it (return empty → rebuilt from the current sph) so it never draws
+    # STALE - ignore it (return empty → rebuilt from the current sph) so it never draws
     # a surface that doesn't match the current sph/profile. _surface_fresh checks this.
     variable state
     switch -- $state(display_mode) {
@@ -27022,7 +27022,7 @@ proc ::VMDPathFinder::import_results_from_folder {{dialog {}}} {
         # different molecule's live results.
         activate_molecule $imp_mid
         # Drop any STALE surface left in VMD from a previous run/import on this molecule
-        # (a different selection or older coordinates) — otherwise it keeps floating in
+        # (a different selection or older coordinates) - otherwise it keeps floating in
         # the view detached from the new data. Also clear the in-memory parsed-surface
         # cache so a reused file path can't replay an old mesh. refresh_results_list
         # (below) bumps plot_data_version + clears the binning cache.
@@ -27136,7 +27136,7 @@ proc ::VMDPathFinder::import_results_from_folder {{dialog {}}} {
                     set state(selection) $_sel
                 }
                 if {$_sel ne "" || $_ts ne ""} {
-                    set _manifest_note " — sel: '$_sel' / $_ts"
+                    set _manifest_note " - sel: '$_sel' / $_ts"
                     if {$_pm ne ""} { append _manifest_note " / $state(pore_method_disp)" }
                 }
             }
@@ -27435,7 +27435,7 @@ proc ::VMDPathFinder::import_tunnel_results_from_folder {root} {
     set _skip_note [expr {[llength $skipped] > 0 \
         ? "  ⚠ [llength $skipped] folder(s) had no out.dat and were skipped: [join [lrange $skipped 0 9] {, }][expr {[llength $skipped] > 10 ? {, ...} : {}}]." \
         : ""}]
-    set _man_note [expr {$m_sel ne "" || $m_ts ne "" ? " — sel: '$m_sel' / $m_ts" : ""}]
+    set _man_note [expr {$m_sel ne "" || $m_ts ne "" ? " - sel: '$m_sel' / $m_ts" : ""}]
     set state(status) "Imported [llength $tunnel_result_frames] tunnel frame(s), $ntot tunnel(s) total.$_man_note$_skip_note"
     vmdcon -info "VMDPathFinder tunnel: imported [llength $tunnel_result_frames] frame(s) from $root$_man_note"
 }
@@ -27555,14 +27555,14 @@ proc ::VMDPathFinder::reset_session {} {
     variable trend_cache
     variable ion_flow_cache
     if {[tk_messageBox -icon question -type yesno -title "Reset VMDPathFinder" \
-        -message "Clear all loaded/computed results, surfaces and caches?\n\nThis does NOT change your settings — it only clears data so you can start from a clean state."] ne "yes"} {
+        -message "Clear all loaded/computed results, surfaces and caches?\n\nThis does NOT change your settings - it only clears data so you can start from a clean state."] ne "yes"} {
         return
     }
     clear_results_for_new_settings
     set state(selected_result_frame) {}
     # Hydration data is gone - drop the water schemes from the property pickers.
     catch {refresh_property_scheme_menus}
-    set state(status) "Reset — all results and caches cleared. Run HOLE or Import to start again."
+    set state(status) "Reset - all results and caches cleared. Run HOLE or Import to start again."
     catch {refresh_results_list}
     catch {redraw_visible_analysis_tab}
     catch {redraw_profile_plot}
@@ -27989,7 +27989,7 @@ proc ::VMDPathFinder::parse_profiles_batch {frames frame_dirs {full 1}} {
             vmdcon -warn "VMDPathFinder: threaded profile parse failed; falling back to serial."
             set result [dict create]
         }
-        # Worker creation failed — release any partial workers and fall through.
+        # Worker creation failed - release any partial workers and fall through.
         foreach tid $workers { catch {thread::release $tid} }
     }
 
@@ -28142,12 +28142,12 @@ proc ::VMDPathFinder::_hole_error_hint {errmsg} {
     # the binary hit a format-descriptor bug sends them somewhere there is
     # nothing to find.
     if {[string match "Fortran runtime error:*" $errmsg]} {
-        return "(HOLE itself crashed — this is a fault in the HOLE binary, not in\
+        return "(HOLE itself crashed - this is a fault in the HOLE binary, not in\
                 your structure or settings. If a card in Extra HOLE parameters\
                 triggered it, remove that card.)"
     }
     return "(usually a missing van der Waals radius entry for an atom's element\
-            in your Radius file — see Settings — not a CPOINT/CVECT problem)."
+            in your Radius file - see Settings - not a CPOINT/CVECT problem)."
 }
 
 proc ::VMDPathFinder::parse_profile {output_file tsv_file {full 1}} {
@@ -28661,7 +28661,7 @@ proc ::VMDPathFinder::charge_property {resname} {
     # Formal side-chain charge at pH 7 (standard biochemistry; pKa values from
     # Fersht AR. Structure and Mechanism in Protein Science. Freeman, 1999).
     # ARG/LYS +1; ASP/GLU -1; HIS neutral (protonated HSP/HIP +1).
-    # This is a per-residue value — pore-facing selects which charged residues
+    # This is a per-residue value - pore-facing selects which charged residues
     # face the lumen.
     # ASPP/GLUP (CHARMM) and ASH/GLH (AMBER) are the PROTONATED acid forms and
     # are formally NEUTRAL - they must NOT share ASP/GLU's -1 (only the FORMAL
@@ -30259,7 +30259,7 @@ proc ::VMDPathFinder::write_hydro_sidecar_batch {molid frame out_file scheme {fa
         }
         dict set hydro_topo_cache $_tkey [dict create \
             sel_handle $_sh all_res $res all_resid $resid all_name $names all_charge $charges]
-        # Do NOT delete $_sh — it is now owned by the topology cache
+        # Do NOT delete $_sh - it is now owned by the topology cache
     }
 
     # Per-atom value mirrors compute_sphere_hydro's atom_h: kr is atom-level
@@ -31039,12 +31039,12 @@ proc ::VMDPathFinder::write_hydro_values_sidecar {molid frame sph_file out_file}
     # values file must have ONE entry per ATOM/HETATM line to stay in sync.
     if {$prop in {gz dens pfdens}} {
         if {$hydration_data eq "" || [llength [dict get $hydration_data coords]] < 2} {
-            error "$prop scheme requires hydration data — run Compute in the Hydration tab first"
+            error "$prop scheme requires hydration data - run Compute in the Hydration tab first"
         }
         if {$prop eq "pfdens" && \
                 (![dict exists $hydration_data perframe_frames] || \
                  [lsearch -exact [dict get $hydration_data perframe_frames] $frame] < 0)} {
-            error "per-frame water density requires per-frame hydration data for frame $frame — run Compute with Per-frame data enabled"
+            error "per-frame water density requires per-frame hydration data for frame $frame - run Compute with Per-frame data enabled"
         }
         set hd_coords [dict get $hydration_data coords]
         set hd_vals   [expr {$prop eq "gz" ? [dict get $hydration_data energy] : [dict get $hydration_data occupancy]}]
@@ -32339,12 +32339,12 @@ proc ::VMDPathFinder::compute_sphere_hydro {molid frame spheres {facing_override
     set atom_h {}
     if {$is_kr} {
         # KR PATH 1 (charge-based, PREFERRED): when the loaded structure carries
-        # partial charges (any |q| > 1e-6 — e.g. a CHARMM PSF, AMBER prmtop, or any
+        # partial charges (any |q| > 1e-6 - e.g. a CHARMM PSF, AMBER prmtop, or any
         # force-field topology), classify each atom +1 if |q| < 0.25 e else -1. This
         # is the real Kapcha-Rossky definition and works for ANY atom type (protein,
         # glycan, lipid, ligand, ion) and ANY frame of a trajectory. The fast path matches
         # this Tcl reference to ~1e-9 with charges loaded. To classify
-        # non-protein atoms, load a CHARGED structure — that is how you "add atoms" to
+        # non-protein atoms, load a CHARGED structure - that is how you "add atoms" to
         # KR (do NOT hand-extend kr_static). PATH 2 (kr_static) is the protein-only
         # name-based fallback used when no charges are present.
         set has_q 0
@@ -38262,7 +38262,7 @@ proc ::VMDPathFinder::build_hydro_trinorm {run_dir sph_file molid frame {draft 0
         }
         # Sidecar encodes scheme+avg+facing+shell so methods never share a file.
         set vfile [file join $run_dir "hole_hydro_values_$state(hydro_scheme)${msuffix}.dat"]
-        # Reuse an existing values file when it is fresh (newer than sph) — skips
+        # Reuse an existing values file when it is fresh (newer than sph) - skips
         # the expensive per-atom compute_sphere_hydro on import / scheme-switch when
         # a previous render already computed and saved these scalars. The signed flag
         # is scheme-dependent and doesn't need the molecule.
@@ -38362,7 +38362,7 @@ proc ::VMDPathFinder::frame_color_plot {run_dir sph_file molid frame {draft 0} {
     # the base mesh as-is" (solid color is overridden, hole_def shows its baked
     # radius colors - both handled by render_vmd_plot_to_mol). Hydrophobic
     # recolors the base (cached per scheme); hydro dots extract dots from the
-    # recolored mesh. draft=1 (playback) skips an uncached recompute — see
+    # recolored mesh. draft=1 (playback) skips an uncached recompute - see
     # build_hydro_trinorm.
     variable state
     if {$state(surface_color) ne "property"} { return "" }
@@ -38370,7 +38370,7 @@ proc ::VMDPathFinder::frame_color_plot {run_dir sph_file molid frame {draft 0} {
     if {$hv eq {} || ![dict exists $hv path]} { return "" }
     set hpath [dict get $hv path]
     if {$state(display_mode) eq "dots"} {
-        # Derive dots filename from the hydro mesh path — inherits the full method
+        # Derive dots filename from the hydro mesh path - inherits the full method
         # suffix (scheme+avg+facing+shell) without recomputing it here.
         set dplot [file join $run_dir \
             [string map {"hole_hydro_" "hole_hydro_dots_"} [file tail $hpath]]]
@@ -38392,7 +38392,7 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
     variable results
     variable result_frames
     if {$state(display_mode) in {none centerline}} { return }
-    vmdcon -info "VMDPathFinder: pre-building surfaces — mode=$state(display_mode)  frames=[llength $result_frames]"
+    vmdcon -info "VMDPathFinder: pre-building surfaces - mode=$state(display_mode)  frames=[llength $result_frames]"
     set mode $state(display_mode)
     # Pre-build the COLOR-INDEPENDENT radius-colored base mesh (always -color).
     # Color and hydrophobicity are applied at render time from this one base, so
@@ -38633,7 +38633,7 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
         catch {prebuild_hydro_variants_dispatch}
     }
     set state(status) "Surface pre-build complete for [llength $result_frames] frame(s)."
-    vmdcon -info "VMDPathFinder: surface pre-build done — [llength $result_frames] frame(s)"
+    vmdcon -info "VMDPathFinder: surface pre-build done - [llength $result_frames] frame(s)"
 }
 
 proc ::VMDPathFinder::prebuild_hydro_variants_parallel {} {
@@ -39471,7 +39471,7 @@ proc ::VMDPathFinder::_abort_stop {stage} {
     # runs three pools in a row and its caller runs several such procs.
     if {![_abort_requested]} { return 0 }
     variable state
-    set state(status) "Aborted — stopped before $stage."
+    set state(status) "Aborted - stopped before $stage."
     catch {vmdcon -info "VMDPathFinder: abort honoured before $stage"}
     return 1
 }
@@ -39487,7 +39487,7 @@ proc ::VMDPathFinder::request_abort {} {
         return
     }
     set state(abort_requested) 1
-    set state(status) "Aborting — finishing the current frame(s)…"
+    set state(status) "Aborting - finishing the current frame(s)…"
 }
 proc ::VMDPathFinder::_show_abort_button {show} {
     variable w
@@ -39709,7 +39709,7 @@ proc ::VMDPathFinder::confirm_overwrite_dialog {root_dir existing_count} {
     if {[winfo exists $d]} { destroy $d }
     toplevel $d
     wm withdraw $d
-    wm title $d "VMDPathFinder — Existing Results"
+    wm title $d "VMDPathFinder - Existing Results"
     wm transient $d $w
     wm resizable $d 0 0
     wm attributes $d -topmost 1
@@ -39910,7 +39910,7 @@ proc ::VMDPathFinder::run_analysis {} {
             variable w
             if {[llength $existing_frames] > 0 && $state(overwrite_results) && [_have_tk] && [winfo exists $w]} {
                 if {![confirm_overwrite_dialog $root_dir [llength $existing_frames]]} {
-                    set state(status) "Run cancelled — existing results preserved."
+                    set state(status) "Run cancelled - existing results preserved."
                     set _cancelled 1
                     return
                 }
@@ -40099,7 +40099,7 @@ proc ::VMDPathFinder::run_analysis {} {
         # that no frames were requested at all (not a cache hit).
         set total [llength $to_run]
         if {$total == 0} {
-            vmdcon -info "VMDPathFinder: no frames requested — nothing to run."
+            vmdcon -info "VMDPathFinder: no frames requested - nothing to run."
         }
         if {[llength $to_run] > 0} {
             set njobs [resolve_job_count]
@@ -40155,7 +40155,7 @@ proc ::VMDPathFinder::run_analysis {} {
             set hole_failures 0
             set _empty_sel_frames {}
             set last_ui_ms [clock milliseconds]
-            vmdcon -info "VMDPathFinder: HOLE starting — $total frame(s)  parallel=$njobs  mol=$molid"
+            vmdcon -info "VMDPathFinder: HOLE starting - $total frame(s)  parallel=$njobs  mol=$molid"
             # One-time setup: capture "now" frame + create scoped fit handles, when any
             # per-frame axis mode (CPOINT Stabilize/Track, CVECT Stabilize/Exact) is on.
             if {$state(stabilize_cpoint) || $state(stabilize_cvect) || \
@@ -40165,8 +40165,8 @@ proc ::VMDPathFinder::run_analysis {} {
                 # A requested axis mode that could not be set up is worse than an
                 # error: it looks like it worked. Say so, loudly, once per run.
                 foreach _g [_stab_gap_report] {
-                    vmdcon -warn "VMDPathFinder: $_g — falling back to the static axis."
-                    set state(status) "⚠ $_g — using static axis"
+                    vmdcon -warn "VMDPathFinder: $_g - falling back to the static axis."
+                    set state(status) "⚠ $_g - using static axis"
                 }
             }
 
@@ -40531,7 +40531,7 @@ proc ::VMDPathFinder::run_analysis {} {
         catch {_stab_cleanup}
         if {[_abort_requested]} {
             vmdcon -info "VMDPathFinder: HOLE ABORTED by user after $done / $total frame(s). Parsing the completed profiles..."
-            set state(status) "Aborted — parsing the completed profile(s)…"
+            set state(status) "Aborted - parsing the completed profile(s)…"
         } else {
             vmdcon -info "VMDPathFinder: HOLE complete ($total frame(s), $hole_failures failed). Parsing profiles..."
             if {[llength $_empty_sel_frames] > 0} {
@@ -40718,16 +40718,16 @@ proc ::VMDPathFinder::run_analysis {} {
         if {[llength $_crashed_frames] > 0} {
             set _cf [lrange $_crashed_frames 0 9]
             if {[llength $_crashed_frames] > 10} { lappend _cf "..." }
-            append fail_note " — HOLE exited with an error on frame(s): [join $_cf {, }]"
+            append fail_note " - HOLE exited with an error on frame(s): [join $_cf {, }]"
             vmdcon -warn "VMDPathFinder: HOLE exited nonzero on [llength $_crashed_frames] frame(s):\
-                [join $_crashed_frames {, }] — these were NOT added as results."
+                [join $_crashed_frames {, }] - these were NOT added as results."
         }
         # Say so loudly: the frame count went DOWN, and a mean or trend computed
         # before this run no longer covers the same frames.
         if {[llength $_stale_dropped] > 0} {
             set _sd [lrange $_stale_dropped 0 9]
             if {[llength $_stale_dropped] > 10} { lappend _sd "..." }
-            append fail_note " — dropped the previous result for frame(s): [join $_sd {, }]"
+            append fail_note " - dropped the previous result for frame(s): [join $_sd {, }]"
             vmdcon -warn "VMDPathFinder: [llength $_stale_dropped] frame(s) failed on RE-RUN;\
                 their earlier results were discarded rather than left active:\
                 [join $_stale_dropped {, }]"
@@ -40747,7 +40747,7 @@ proc ::VMDPathFinder::run_analysis {} {
             set _nif [llength $_if]
             set _ifs [lrange $_if 0 9]
             if {$_nif > 10} { lappend _ifs "..." }
-            append fail_note " — HOLE stopped its search early on $_nif frame(s): [join $_ifs {, }]"
+            append fail_note " - HOLE stopped its search early on $_nif frame(s): [join $_ifs {, }]"
             # _note, not a bare vmdcon: the status-bar trace that feeds the
             # Message Log is installed when the GUI is built, so a console-only
             # warning is retained nowhere headlessly and scrolls away under
@@ -40766,7 +40766,7 @@ proc ::VMDPathFinder::run_analysis {} {
             set _nos [llength $_os]
             set _oss [lrange $_os 0 9]
             if {$_nos > 10} { lappend _oss "..." }
-            append fail_note " — one-sided profile on $_nos frame(s): [join $_oss {, }]"
+            append fail_note " - one-sided profile on $_nos frame(s): [join $_oss {, }]"
             _note "The profile covers only one side of CPOINT on $_nos frame(s)\
                 (frame, starved side): [join $_os {, }]. If the pore continues that way,\
                 the search stopped there rather than at the pore mouth - HOLE's search is\
@@ -40780,13 +40780,13 @@ proc ::VMDPathFinder::run_analysis {} {
             set _nrs [llength $_rs]
             set _rss [lrange $_rs 0 9]
             if {$_nrs > 10} { lappend _rss "..." }
-            append fail_note " — capsule search re-seeded on $_nrs frame(s): [join $_rss {, }]"
+            append fail_note " - capsule search re-seeded on $_nrs frame(s): [join $_rss {, }]"
             _note "The capsule search collapsed to one side of CPOINT on $_nrs frame(s) and\
                 was re-run with another random seed (frame, seed): [join $_rs {, }]. The\
                 kept profiles cover both sides; the seed used is recorded beside each\
                 frame (vmdpathfinder_seed.dat)." warn
         }
-        vmdcon -info "VMDPathFinder: run complete — $n_new new frame(s), $n_total total.$fail_note  Output: $root_dir$loc_note"
+        vmdcon -info "VMDPathFinder: run complete - $n_new new frame(s), $n_total total.$fail_note  Output: $root_dir$loc_note"
         set state(status) "Added $n_new frame(s) - $n_total total.$fail_note Pre-building surfaces..."
         update
 
@@ -40810,7 +40810,7 @@ proc ::VMDPathFinder::run_analysis {} {
             catch {prebuild_surfaces_parallel}
         }
 
-        set _abrt [expr {[_abort_requested] ? "Aborted — " : ""}]
+        set _abrt [expr {[_abort_requested] ? "Aborted - " : ""}]
         set state(status) "${_abrt}Added $n_new frame(s) - $n_total total.$fail_note Saved to: $root_dir$loc_note"
     } message]} {
         # A clean user-cancel (the overwrite-confirm decline above) surfaces here
@@ -41241,6 +41241,21 @@ proc ::VMDPathFinder::trends_kappa {} {
 proc ::VMDPathFinder::pore_volume {clvals yvals {r_probe 0.0}} {
     # Trapezoidal integral of pi*R^2 along the centerline (clvals = cen_line_d arc
     # length). r_probe>0 => probe-accessible volume (radius floored at 0). Angstrom^3.
+    #
+    # WHAT THIS IS, because "Volume" alone has meant three different things
+    # here: it is the volume of a CIRCULAR TUBE of the profile's own radius,
+    # swept along the centreline. It is NOT the volume enclosed by the surface
+    # drawn on screen, NOT a molecular cavity volume (the cavity table reports
+    # MOLE's tetrahedra-minus-caps figure, a different quantity), and NOT the
+    # physical volume of a non-circular pore - under CAPSULE, CONNOLLY or the
+    # ellipse fit the cross-section is deliberately not a circle, so this
+    # integral is an approximation of the object those methods measured. The
+    # readouts say "Tube volume" for that reason.
+    #
+    # r_probe subtracts the probe radius from the SCALAR radius before
+    # integrating. That is a first-order correction, not morphological erosion:
+    # it is exact only for a straight circular tube, and it is not the accessible
+    # volume of a capsule, Connolly or ellipse cross-section.
     set n [llength $yvals]
     if {$n < 2 || [llength $clvals] != $n} { return 0.0 }
     set PI 3.141592653589793
@@ -41274,6 +41289,16 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
     # which one failed slice poisons to Infinity for the rest of the profile.
     # crows = {coord spherical_radius requiv_estim} for sampled rows only. Returns
     # "" if sample spacing is non-uniform.
+    #
+    # HYBRID, AND SAID SO. A slice whose Requiv_estim is unusable falls back to
+    # that slice's SPHERICAL radius, so a factor labelled Connolly can contain
+    # spherical slices. That is a real substitution with no independent evidence
+    # that it is equivalent, and the higher-level conductance path refuses
+    # exactly this trade ("a wrong number quoted in a paper is not
+    # recoverable"). It is kept here because dropping the slices entirely
+    # changes the integral's support rather than one term - but it is COUNTED
+    # and reported, so a hybrid figure is never silently presented as pure
+    # Connolly.
     set n [llength $crows]
     if {$n < 3} { return "" }
     set c0 [lindex [lindex $crows 0] 0]
@@ -41286,6 +41311,7 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
     }
     set pi 3.14159265358979
     set F 0.0
+    set _sub 0
     foreach row $crows {
         lassign $row coord rad re
         set r ""
@@ -41293,11 +41319,17 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
             set r $re
         } elseif {[string is double -strict $rad] && $rad > 0} {
             set r $rad
+            incr _sub
         }
         if {$r eq ""} { continue }
         set F [expr {$F + $samp / ($pi * $r * $r)}]
     }
     if {$F <= 0} { return "" }
+    variable _conn_F_substituted
+    set _conn_F_substituted [list $_sub $n]
+    if {$_sub > 0} {
+        catch {vmdcon -warn "VMDPathFinder: Connolly conductance factor used the SPHERICAL radius on $_sub of $n slices (no usable Requiv there) - the figure is a hybrid, not pure Connolly."}
+    }
     return $F
 }
 
@@ -41386,8 +41418,21 @@ proc ::VMDPathFinder::pore_conductance {F kappa a1 a2} {
     if {$F eq "" || ![string is double -strict $F] || $F <= 0} { return {} }
     set r_pore [expr {1e10*$F/double($kappa)}]           ;# ohm  (1e10 = Angstrom->m)
     set g_ohmic [expr {1e12/$r_pore}]                    ;# pS   (= 100*kappa/F)
-    set aa1 [expr {$a1 < 0.5 ? 0.5 : $a1}]
-    set aa2 [expr {$a2 < 0.5 ? 0.5 : $a2}]
+    # 0.5 A floor on each mouth radius. This is OURS, not Hall's: his expression
+    # (R_access = 1/(4*kappa*a) per mouth) is for a circular pore in a thin
+    # membrane and has a pole at a -> 0, so a profile end that HOLE reports at
+    # or near zero would send the access resistance to infinity and the
+    # conductance to zero. The floor keeps that finite; it has no physical
+    # derivation and it is not in the paper. A mouth actually near 0.5 A is not
+    # a mouth, so the number it produces there should be treated as a bound,
+    # not a measurement - which is why the floor is reported rather than
+    # applied silently.
+    set _floor 0.5
+    set aa1 [expr {$a1 < $_floor ? $_floor : $a1}]
+    set aa2 [expr {$a2 < $_floor ? $_floor : $a2}]
+    if {$a1 < $_floor || $a2 < $_floor} {
+        catch {vmdcon -warn "VMDPathFinder: a pore mouth radius ([format %.2f $a1] / [format %.2f $a2] A) was below the ${_floor} A floor the access term applies; Hall (1975) has a pole at zero radius. The access conductance here is a bound, not a measurement."}
+    }
     set r_acc [expr {1e10/(4.0*$kappa*$aa1) + 1e10/(4.0*$kappa*$aa2)}]
     set g_acc [expr {1e12/($r_pore+$r_acc)}]             ;# pS
     return [dict create g_ohmic_pS $g_ohmic g_access_pS $g_acc r_pore $r_pore r_access $r_acc]
@@ -41713,7 +41758,7 @@ proc ::VMDPathFinder::_asym_gather {molid frame} {
     # centerline again; this guard stays as a backstop for any pathologically long
     # pore that still exceeds it.
     if {[llength $centers] > [_conn_shell_threshold]} {
-        catch {set state(status) "Ellipse fit isn't available for a CONNOLLY pore (dense point cloud) — use Spherical or Capsule."}
+        catch {set state(status) "Ellipse fit isn't available for a CONNOLLY pore (dense point cloud) - use Spherical or Capsule."}
         return ""
     }
     # HOLE grows the pore path in TWO directions from CPOINT, so the .sph list is
@@ -45042,8 +45087,8 @@ proc ::VMDPathFinder::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} 
     # Volume-normalise the raw (R,z) tallies into a true ion NUMBER DENSITY (Å⁻³). In
     # cylindrical coordinates a cell at larger R spans a larger annulus, dV = π(R_out²−R_in²)·Δz,
     # so raw counts are volume-biased toward big R. Dividing each cell by its own annulus volume
-    # AND by the number of frames gives the TIME-AVERAGED number density (ions per Å³) — what the
-    # map should show — instead of a tally that just grows with cell size and trajectory length.
+    # AND by the number of frames gives the TIME-AVERAGED number density (ions per Å³) - what the
+    # map should show - instead of a tally that just grows with cell size and trajectory length.
     # `dens` = raw count (kept for the CSV); `dens_vol` = ⟨count⟩/(frames·volume) = ρ(R,z) in Å⁻³,
     # the true time-averaged number density that drives the heatmap. Δz is the cell height; the
     # full 2π azimuth is folded into the annulus area (the map is the cylindrically-averaged density).
@@ -45281,7 +45326,7 @@ proc ::VMDPathFinder::_run_ion_flow {} {
     }
     set d $ion_flow_cache
     set _w [expr {[dict get $raw protein_wrapped] ? \
-        "  ⚠ the protein looks wrapped across the box — image it first (Help ▸ About) or Z may jump." : ""}]
+        "  ⚠ the protein looks wrapped across the box - image it first (Help ▸ About) or Z may jump." : ""}]
     set state(status) "Ion flow ([dict get $d species]): [dict get $d nions] [_ion_flow_noun $d], [dict get $d nframes] frames.$_w"
 }
 
@@ -45957,7 +46002,7 @@ proc ::VMDPathFinder::_draw_ion_passage_view {} {
         default { expr {""} }
     }]
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
-        [list "Passage — $_sp_sel (${_shown}$n_cross crossed: $_nu ↑ $_nd ↓;\
+        [list "Passage - $_sp_sel (${_shown}$n_cross crossed: $_nu ↑ $_nd ↓;\
               $n_entered/[dict get $d nions] entered)[_ion_flow_rpass_note $d]" {Helvetica 10 bold} black]]]
     # The legend row is drawn later, by update_ion_passage_indicator, because
     # its per-species counts follow the current frame - so its line is reserved
@@ -46127,7 +46172,7 @@ proc ::VMDPathFinder::_draw_ion_count_view {} {
         set _sub [join $_bits "   ·   "]
     }
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
-        [list "[string totitle $_noun] in the pore per frame — $_sp_sel ($cmin–$cmax; inside = within\
+        [list "[string totitle $_noun] in the pore per frame - $_sp_sel ($cmin–$cmax; inside = within\
               [format %.1f $_shell] Å of the wall)" {Helvetica 10 bold} black] \
         [list $_sub {Helvetica 8} "#333333"]]]
     set mt [expr {$_hy+6}]
@@ -46294,7 +46339,7 @@ proc ::VMDPathFinder::_ion_passage_click {x y} {
         }
         $a delete
     }
-    set state(status) "Ion: $sp — $who  @ frame $best_f, Z=[format %.1f $best_z] Å"
+    set state(status) "Ion: $sp - $who  @ frame $best_f, Z=[format %.1f $best_z] Å"
 }
 
 proc ::VMDPathFinder::export_ion_flow_csv {} {
@@ -46608,7 +46653,7 @@ proc ::VMDPathFinder::_run_permeation {} {
         if {[dict exists $r protein_wrapped] && [dict get $r protein_wrapped]} { set any_pwrap 1 }
         set up [dict get $r up]; set down [dict get $r down]; set net [dict get $r net]
         set nfr [dict get $r nframes]
-        set rate "—"
+        set rate "-"
         if {$dt ne ""} {
             set total_time [expr {($nfr-1)*$dt}]
             if {$total_time > 0} { set rate [format %.3g [expr {($up+$down)/$total_time}]] }
@@ -46858,7 +46903,7 @@ proc ::VMDPathFinder::show_passability_dialog {} {
     if {![info exists _passability_ellipse_shown]} { set _passability_ellipse_shown 0 }
     toplevel $d
     wm withdraw $d
-    wm title $d "Channel metrics — passability & conductance"
+    wm title $d "Channel metrics - passability & conductance"
     wm resizable $d 0 0
     frame $d.ctl
     label $d.ctl.kl -text "Salt (κ):"
@@ -46890,7 +46935,7 @@ proc ::VMDPathFinder::show_passability_dialog {} {
     pack $d.ctl -fill x -padx 8 -pady {8 0}
     # subtle "estimated" tag (cf. the MEASURED Permeation dialog)
     pack [label $d.est -anchor w -font {Helvetica 7} -foreground "#999999" \
-        -text "estimated from single-frame pore geometry — not measured from the trajectory"] \
+        -text "estimated from single-frame pore geometry - not measured from the trajectory"] \
         -fill x -padx 8
     frame $d.body
     pack $d.body -fill both -expand 1 -padx 8 -pady 6
@@ -46949,7 +46994,7 @@ proc ::VMDPathFinder::_fill_passability_dialog {} {
     if {[analysis_mode] eq "tunnel"} {
         set tuple [_tunnel_selected_tuple]
         if {$tuple eq ""} {
-            pack [label $d.body.none -text "No tunnel selected — run the tunnel search, then pick a tunnel in the panel on the left."]
+            pack [label $d.body.none -text "No tunnel selected - run the tunnel search, then pick a tunnel in the panel on the left."]
             return
         }
         set m [metrics_for_tunnel]
@@ -46962,7 +47007,7 @@ proc ::VMDPathFinder::_fill_passability_dialog {} {
     } else {
         set frame $state(selected_result_frame)
         if {$frame eq ""} {
-            pack [label $d.body.none -text "No frame selected — run HOLE first."]; return
+            pack [label $d.body.none -text "No frame selected - run HOLE first."]; return
         }
         set m [metrics_for_frame $frame]
         if {$m eq ""} {
@@ -47017,7 +47062,7 @@ proc ::VMDPathFinder::_fill_passability_dialog {} {
         add_tooltip $d.body.cond.c0l "HOLE's geometry-only ohmic conductance estimate (Smart et al. 1997). It ignores ion selectivity and surface charge, and overestimates for very narrow pores."
     } else {
         grid [label $d.body.cond.na -anchor w -font {Helvetica 8} -foreground "#888888" \
-            -text "Not available for MOLE tunnels — needs HOLE's own accumulated conductance factor, which MOLE doesn't compute."] \
+            -text "Not available for MOLE tunnels - needs HOLE's own accumulated conductance factor, which MOLE doesn't compute."] \
             -row 1 -column 0 -columnspan 3 -sticky w -padx {0 6}
     }
     # Right-hand notes column: fills the horizontal space beside the table.
@@ -47060,7 +47105,7 @@ proc ::VMDPathFinder::_fill_passability_dialog {} {
         if {[dict get $e pass_hyd]} { set verdict "PASS"; set vcol "#1a7f1a" } \
         elseif {[dict get $e pass_bare]} { set verdict "dehydration-dep."; set vcol "#c06000" } \
         else { set verdict "BLOCKED"; set vcol "#c00000" }
-        set narrow "—"
+        set narrow "-"
         set blk [dict get $e blocks]
         if {[llength $blk] > 0} {
             set worst 1e30; set wz 0
@@ -48253,13 +48298,13 @@ proc ::VMDPathFinder::_draw_unrolled_map {cv cw ch frame} {
         $cv create text [expr {$bx+13}] [expr {$_ly+5}] -text "open" \
             -anchor w -font $_keyfont
     }
-    $cv create text $ml [expr {$mt-6}] -text "$_lbl — frame $frame" -anchor sw \
+    $cv create text $ml [expr {$mt-6}] -text "$_lbl - frame $frame" -anchor sw \
         -font {Helvetica 9 bold}
 }
 
 proc ::VMDPathFinder::draw_profile_plot {frame} {
     # Raw-canvas pore profile renderer (MOLEonline-style).
-    # Computes expensive hydro data FIRST, then clears and draws — avoids the
+    # Computes expensive hydro data FIRST, then clears and draws - avoids the
     # blank-frame flash. The gradient fill is guarded by want_color so deselecting
     # Fill does not trigger compute_hydro_profile.
     # Tunnel mode branches off entirely here rather than reusing any of the HOLE-
@@ -48376,7 +48421,7 @@ proc ::VMDPathFinder::draw_profile_plot {frame} {
         # The property profile is computed on the .sph PCA axis, whose origin/sign
         # differ from HOLE's own channel coordinate (used by the radius profile). Align
         # the property onto the radius profile's HOLE coordinate so Fill on/off show the
-        # SAME curve (no flip/shift) — CHAP uses ONE consistent channel coordinate for
+        # SAME curve (no flip/shift) - CHAP uses ONE consistent channel coordinate for
         # radius/hydrophobicity/density/free energy.
         set _hx [dict get $profile xvalues]
         set _hr [dict get $profile yvalues]
@@ -48469,14 +48514,14 @@ proc ::VMDPathFinder::draw_profile_plot {frame} {
     # ---- Layout ------------------------------------------------------------
     # Bottom margin: 44 normal, 72 with legend strip
     #   (axis label at +22; bar at +36..+46; end-labels at +47..+57; caveat at +60).
-    # Gate on state(profile_color) only — NOT on $have_h — so that frames with no
+    # Gate on state(profile_color) only - NOT on $have_h - so that frames with no
     # sph data use the same margin as frames that do, preventing aspect-ratio drift.
     set ml 58; set mt 28; set mr 20
     set mb [expr {[info exists state(profile_color)] && $state(profile_color) ? 72 : 44}]
     set pw [expr {$cw - $ml - $mr}]; if {$pw < 60} { set pw 60 }
     set ph [expr {$ch - $mt - $mb}]; if {$ph < 60} { set ph 60 }
 
-    # ---- ALL DATA READY — clear and render ---------------------------------
+    # ---- ALL DATA READY - clear and render ---------------------------------
     $cv delete all
 
     # Title
@@ -48807,7 +48852,7 @@ proc ::VMDPathFinder::_draw_metrics_readout {cv frame ml mt pw ph {asym_vol ""} 
     set y  [expr {$mt + 8}]
     set lh 13
     set items {}
-    lappend items [$cv create text $x $y -text [format "Volume %.0f Å³" $vol] \
+    lappend items [$cv create text $x $y -text [format "Tube volume %.0f Å³" $vol] \
         -anchor nw -font $fnt -fill "#222222" -tags metricsreadout]
     incr y $lh
     # With Ellipse fit on, the Ellipse Volume is the natural companion to the pore
@@ -49079,7 +49124,7 @@ proc ::VMDPathFinder::_redraw_profile_fill_trace {args} {
 proc ::VMDPathFinder::redraw_profile_plot {} {
     # Re-render the profile for the currently selected frame (e.g. after the
     # Swap X/Y axes toggle changes). draw_profile_plot handles an empty/invalid
-    # frame itself (clears the canvas and shows "No plot data.") — this must NOT
+    # frame itself (clears the canvas and shows "No plot data.") - this must NOT
     # early-return on empty, otherwise a Reset (which blanks selected_result_frame)
     # leaves the last-rendered profile plot stuck on screen.
     variable state
@@ -49809,7 +49854,7 @@ proc ::VMDPathFinder::plot_cache_entries {plot_file} {
             graphics { set rest [lrange $t 2 end] }
             default  { continue }
         }
-        # "draw delete all" is redundant — the caller already calls
+        # "draw delete all" is redundant - the caller already calls
         # graphics $mol delete all before invoking render_vmd_plot_to_mol.
         # Keeping it would reset the material state set just before drawing.
         if {[lindex $rest 0] eq "delete"} { continue }
@@ -50186,7 +50231,7 @@ proc ::VMDPathFinder::load_surface_for_frame {frame {draft 0}} {
             catch {mol rename $current_surface_mol "HOLE surface (CAPSULE: no 3D surface)"}
         }
         catch {remove_hydro_scalebar}
-        set state(status) "CAPSULE has no 3D surface (stadium geometry) — the result is in the Pore Profile; use the Spherical method for a 3D surface."
+        set state(status) "CAPSULE has no 3D surface (stadium geometry) - the result is in the Pore Profile; use the Spherical method for a 3D surface."
         return
     }
     # The protein/reference mol this surface belongs to (per-result so imported
@@ -50199,15 +50244,15 @@ proc ::VMDPathFinder::load_surface_for_frame {frame {draft 0}} {
     set mol [ensure_surface_mol $draw_mol]
     # One-shot mismatch check: an imported surface is baked in the molecule's absolute
     # coordinates at compute time. If the loaded molecule is now positioned elsewhere,
-    # the surface floats off the structure — warn once so it isn't mysterious.
+    # the surface floats off the structure - warn once so it isn't mysterious.
     variable _surface_mismatch_warned
     if {![info exists _surface_mismatch_warned] || !$_surface_mismatch_warned} {
         catch {
             set _off [_surface_offmol [dict get [dict get $results $frame] sph_file] $draw_mol $frame]
             if {$_off eq 1} {
                 set _surface_mismatch_warned 1
-                set state(status) "Surface sits outside the loaded molecule — its coordinates were baked when HOLE ran on a differently-positioned molecule. Re-run HOLE on the current molecule for an overlaying surface."
-                vmdcon -warn "VMDPathFinder: HOLE surface is outside the loaded molecule's bounding box — the imported surface's baked coordinates don't match this molecule (moved/re-centered since the run, or a different molecule). Re-run HOLE on the current molecule to get an overlaying surface."
+                set state(status) "Surface sits outside the loaded molecule - its coordinates were baked when HOLE ran on a differently-positioned molecule. Re-run HOLE on the current molecule for an overlaying surface."
+                vmdcon -warn "VMDPathFinder: HOLE surface is outside the loaded molecule's bounding box - the imported surface's baked coordinates don't match this molecule (moved/re-centered since the run, or a different molecule). Re-run HOLE on the current molecule to get an overlaying surface."
             }
         }
     }
@@ -53239,11 +53284,11 @@ proc ::VMDPathFinder::_draw_axis_straightness_note {cv ml pw} {
     if {$worst_length > 0} {
         set _pct [format " (%.1f%% of pore length)" [expr {100.0*$mean_rmsd/$worst_length}]]
     }
-    set txt "Pore centreline is [format %.2f $mean_rmsd] Å off the straight axis on average$_pct — max [format %.2f $worst_rmsd] Å, at frame $worst_frame"
+    set txt "Pore centreline is [format %.2f $mean_rmsd] Å off the straight axis on average$_pct - max [format %.2f $worst_rmsd] Å, at frame $worst_frame"
     # Says WHICH frames the figure came from when it is a sample, so "max at
     # frame N" is read as the worst of the measured set, not of the run.
     if {$n_measured < $n_total} {
-        append txt " — sampled $n_measured of $n_total frames"
+        append txt " - sampled $n_measured of $n_total frames"
     }
     $cv create text [expr {$ml + $pw/2}] 27 -text $txt \
         -anchor n -font {Helvetica 8} -fill "#777777" -tags axis_straightness_note
@@ -53742,7 +53787,7 @@ proc ::VMDPathFinder::draw_histogram_tab {args} {
     if {[winfo exists $tab.placeholder]} { grid remove $tab.placeholder }
     grid $tab.cv -row 0 -column 0 -sticky nsew
     # Avoid the "first-load flash": the canvas is now gridded but on the very first
-    # show it may not be realized yet (width 1) — drawing then uses the fallback size
+    # show it may not be realized yet (width 1) - drawing then uses the fallback size
     # and the <Configure> event redraws at the real size (a flash). Defer the DRAW
     # until the canvas has real geometry. The canvas is already gridded above, so the
     # deferred call WILL find a real width.
@@ -57566,7 +57611,7 @@ proc ::VMDPathFinder::compute_hydration {} {
     # Per-frame density storage: list of dicts, one per processed frame.
     # Each dict: {frame <f> bins <dict bin->count>}
     set perframe_raw {}
-    vmdcon -info "VMDPathFinder: hydration starting — $nframes frame(s)  water=\"$wsel\"  bulk=$bulk /A^3  T=$state(water_temp) K"
+    vmdcon -info "VMDPathFinder: hydration starting - $nframes frame(s)  water=\"$wsel\"  bulk=$bulk /A^3  T=$state(water_temp) K"
     # PHASE A (sequential - the only part that needs VMD/atomselect): per
     # frame, find the qualifying waters' axial coordinates (qco). This is the
     # CHEAP ~15% of the total cost (measured); the expensive part is the
@@ -57609,7 +57654,7 @@ proc ::VMDPathFinder::compute_hydration {} {
             catch {$_wt delete}
             if {$_wn == 0} {
                 set hydration_data {}
-                set state(status) "Hydration: no water matched \"$wsel\" in this system — it has no explicit water (a bare PDB or a dry/implicit run). The water-density / free-energy profile needs a solvated trajectory; use the geometric conductance/passability estimates (Passability on the Pore Profile tab) instead."
+                set state(status) "Hydration: no water matched \"$wsel\" in this system - it has no explicit water (a bare PDB or a dry/implicit run). The water-density / free-energy profile needs a solvated trajectory; use the geometric conductance/passability estimates (Passability on the Pore Profile tab) instead."
                 return 0
             }
             set _wsel_validated 1
@@ -58371,7 +58416,7 @@ proc ::VMDPathFinder::compute_hydration {} {
     # property pickers, which otherwise hide them until hydration exists.
     catch {refresh_property_scheme_menus}
     set state(status) "Hydration: $total_w water-in-pore counts over $nfdata frame(s); selection \"$wsel\".$_anchor_note[expr {$_gzero_note ne "" ? " G=0 reference: $_gzero_note." : ""}]"
-    vmdcon -info "VMDPathFinder: hydration complete — $total_w water-in-pore counts over $nfdata frame(s) ($nfwater with water)."
+    vmdcon -info "VMDPathFinder: hydration complete - $total_w water-in-pore counts over $nfdata frame(s) ($nfwater with water)."
     return 1
 }
 
@@ -58388,7 +58433,7 @@ proc ::VMDPathFinder::_draw_hydration_hydrophob {tab cv} {
     if {![winfo exists $cv]} { return }
     if {![info exists result_frames] || [llength $result_frames] == 0} {
         if {[winfo exists $cv]} { grid remove $cv }
-        catch {$tab.placeholder configure -text "Run HOLE first — the pore-hydrophobicity profile is built from a HOLE .sph file (no water trajectory needed)."}
+        catch {$tab.placeholder configure -text "Run HOLE first - the pore-hydrophobicity profile is built from a HOLE .sph file (no water trajectory needed)."}
         catch {grid $tab.placeholder -row 0 -column 0 -sticky nsew}
         return
     }
@@ -58730,7 +58775,7 @@ proc ::VMDPathFinder::draw_hydration_tab {} {
     _hp_ticks $cv $ml $mt $pw $ph $xmin $xmax 6 x "%.0f"
     # CHAP over-density flag (Klesse 2019, Fig 7): where the pore radius drops below a
     # water molecule's own radius (~1.4 Å), the density ÷(π·R²·Δz) normalization is
-    # 1/R²-unreliable — a spurious "wet" spike there is a KNOWN artifact, "not evidence
+    # 1/R²-unreliable - a spurious "wet" spike there is a KNOWN artifact, "not evidence
     # the site is wet." Faint red hatched bands (behind the curve) mark those bins so the
     # reader doesn't trust the wetness there. CHAP itself has no fix beyond the KDE
     # bandwidth; this is an honest annotation, not a change to the CHAP math.
@@ -58756,7 +58801,7 @@ proc ::VMDPathFinder::draw_hydration_tab {} {
         }
         if {$_flagged} {
             $cv create text [expr {$ml + $pw/2}] 25 -anchor n -font {Helvetica 7} -fill "#a51d2d" \
-                -text "▨ R < 1.4 Å: density unreliable (1/R²) — not evidence of wetting"
+                -text "▨ R < 1.4 Å: density unreliable (1/R²) - not evidence of wetting"
         }
     }
     # ±1 std confidence band, drawn on top of the axis box but BELOW everything else
@@ -58937,7 +58982,7 @@ proc ::VMDPathFinder::_apply_chap_mode {} {
             if {[tk_messageBox -icon question -type yesno -title "CHAP mode: per-frame axis" -message $_msg] ne "yes"} {
                 # Declined: do NOT activate CHAP mode at all (it needs the per-frame axis).
                 set state(chap_mode) 0
-                set state(status) "CHAP mode needs a per-frame axis (Track CPOINT) — not enabled."
+                set state(status) "CHAP mode needs a per-frame axis (Track CPOINT) - not enabled."
                 _sync_hydration_chap_lock
                 return
             }
@@ -58991,13 +59036,13 @@ proc ::VMDPathFinder::_apply_chap_mode {} {
         # No immediate compute here - a deferred HOLE re-run (if pending) + the hydration
         # profile both happen on the Hydration Compute click (_hydration_compute_clicked).
         set state(status) [expr {$_need_rerun \
-            ? "CHAP mode on — Track CPOINT enabled. Click Compute in the Hydration tab to re-run HOLE with the per-frame axis, then build the profile." \
-            : "CHAP mode on — settings locked to published defaults, per-frame axis. Click Compute in the Hydration tab."}]
+            ? "CHAP mode on - Track CPOINT enabled. Click Compute in the Hydration tab to re-run HOLE with the per-frame axis, then build the profile." \
+            : "CHAP mode on - settings locked to published defaults, per-frame axis. Click Compute in the Hydration tab."}]
     } else {
         # Restore the user's own saved hydration + hydrophobicity-bandwidth values.
         _chap_snapshot_restore
         catch {on_hydro_method_changed x hydrophob_kde_bandwidth write}
-        set state(status) "CHAP mode off — your own settings restored. Edit freely."
+        set state(status) "CHAP mode off - your own settings restored. Edit freely."
     }
     _sync_hydration_chap_lock
 }
@@ -59400,7 +59445,7 @@ proc ::VMDPathFinder::show_trends_settings_dialog {} {
     if {[winfo exists $d]} { wm deiconify $d; raise $d; return }
     toplevel $d
     wm withdraw $d
-    wm title $d "Trends — settings"
+    wm title $d "Trends - settings"
     wm resizable $d 0 0
     label $d.kl -text "Salt (κ):"
     menubutton $d.km -textvariable ::VMDPathFinder::state(trends_kappa_preset) \
@@ -61080,7 +61125,7 @@ proc ::VMDPathFinder::draw_minr_tab {} {
             set _bh [winfo height $cv]; if {$_bh < 100} { set _bh 300 }
             $cv create text [expr {$_bw/2}] [expr {$_bh/2}] -anchor center -fill "#b00000" \
                 -font {Helvetica 11 bold} -justify center \
-                -text "Compute disrupted — partial results discarded.\nPick the metric again to recompute."
+                -text "Compute disrupted - partial results discarded.\nPick the metric again to recompute."
             return
         }
         if {[winfo exists $cv]}          { grid remove $cv }
@@ -61461,7 +61506,7 @@ proc ::VMDPathFinder::update_minr_indicator {frame} {
     if {[lsearch -exact $flist $frame] < 0} { return }
 
     set cx [expr {$ml + ($frame - $xmin) / $xspan * $pw}]
-    # Dashed vertical line — dark on white background to match heatmap scrubber style
+    # Dashed vertical line - dark on white background to match heatmap scrubber style
     $cv create line $cx $mt $cx [expr {$mt + $ph}] \
         -fill "#333333" -width 2 -dash {4 2} -tags minr_indicator
     # Triangle marker at top (same shape as heatmap indicator)
@@ -61724,7 +61769,7 @@ proc ::VMDPathFinder::on_heatmap_radius_source_changed {args} {
 }
 
 proc ::VMDPathFinder::on_hm_prop_scheme_changed {args} {
-    # The Over Time property scheme changed — clear render cache and redraw. This does
+    # The Over Time property scheme changed - clear render cache and redraw. This does
     # NOT recompute the (possibly 40K-frame) property batch: draw_heatmap shows a
     # "click Compute" placeholder until the user approves the new scheme.
     variable state
@@ -62110,12 +62155,12 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
     set _fp_avg "residue"
 
     # Cross-platform null device: /dev/null (Linux/Mac) or NUL (Windows).
-    # Used as the dummy .sos stdin for batch jobs — write-props skips read_cord()
+    # Used as the dummy .sos stdin for batch jobs - write-props skips read_cord()
     # so stdin is never actually read, but freopen still needs a path that opens.
     set devnull [expr {$::tcl_platform(platform) eq "windows" ? "NUL" : "/dev/null"}]
 
     set n_candidate [llength $result_frames]
-    vmdcon -info "VMDPathFinder: heatmap fast path — scheme=$scheme  frames=$n_candidate"
+    vmdcon -info "VMDPathFinder: heatmap fast path - scheme=$scheme  frames=$n_candidate"
     set state(status) "Heatmap ($scheme): preparing $n_candidate frames..."
     update idletasks
 
@@ -62125,7 +62170,7 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
     # defense) share and corrupt each other's sidecar files.
     set tmpdir [file join [_scratch_base] "vmdhm_[pid]_[clock clicks]"]
     if {[catch {file mkdir $tmpdir} _mkdir_err]} {
-        vmdcon -warn "VMDPathFinder: heatmap fast path — cannot create tmpdir: $_mkdir_err"
+        vmdcon -warn "VMDPathFinder: heatmap fast path - cannot create tmpdir: $_mkdir_err"
         return [dict create nframes 0]
     }
     # Round-robin the batch across njobs worker files, so Phase 2 (the actual
@@ -62202,12 +62247,12 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
     foreach ch $batch_chans { close $ch }
 
     if {[llength $frame_data] == 0} {
-        vmdcon -warn "VMDPathFinder: heatmap fast path — no usable frames (skipped=$n_skip)"
+        vmdcon -warn "VMDPathFinder: heatmap fast path - no usable frames (skipped=$n_skip)"
         catch {file delete -force $tmpdir}
         return [dict create nframes 0]
     }
     set n_batch [llength $frame_data]
-    vmdcon -info "VMDPathFinder: heatmap fast path — running C batch ($n_batch frames, $n_workers parallel)..."
+    vmdcon -info "VMDPathFinder: heatmap fast path - running C batch ($n_batch frames, $n_workers parallel)..."
     set state(status) "Heatmap ($scheme): C batch ($n_batch frames, $n_workers parallel)..."
     update idletasks
 
@@ -62234,7 +62279,7 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
     foreach bp $batch_paths { catch {file delete $bp} }
 
     # Phase 3: read per-frame props files + build heatmap matrix
-    vmdcon -info "VMDPathFinder: heatmap fast path — reading results..."
+    vmdcon -info "VMDPathFinder: heatmap fast path - reading results..."
     set state(status) "Heatmap ($scheme): reading $n_batch results..."
     update idletasks
     set valid_frames {}; set all_z {}; set all_h {}
@@ -62259,7 +62304,7 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
             [lrange $hvals 0 [expr {$_ncent - 1}]]
         if {[dict size $fastpath_sphere_cache] > 4000} { set fastpath_sphere_cache [dict create] }
         lassign [channel_axis_pca $centers] ux uy uz mx my mz
-        # Build (z, h) pairs and sort by z — _heatmap_resample_row requires
+        # Build (z, h) pairs and sort by z - _heatmap_resample_row requires
         # monotonic input (same as compute_hydro_profile's lsort -real -index 0).
         set pairs {}
         set i 0
@@ -62284,11 +62329,11 @@ proc ::VMDPathFinder::heatmap_prop_bundle_fast {ncols nbins scheme} {
 
     set nframes [llength $valid_frames]
     if {$nframes < 1} {
-        vmdcon -warn "VMDPathFinder: heatmap fast path — no valid results (skipped=$n_skip)"
+        vmdcon -warn "VMDPathFinder: heatmap fast path - no valid results (skipped=$n_skip)"
         set state(status) ""
         return [dict create nframes 0]
     }
-    vmdcon -info "VMDPathFinder: heatmap fast path — $nframes/$n_batch frames read (skipped=$n_skip)"
+    vmdcon -info "VMDPathFinder: heatmap fast path - $nframes/$n_batch frames read (skipped=$n_skip)"
 
     # Build display matrix (identical logic to heatmap_property_bundle)
     set z_step [expr {($gmax_z - $gmin_z) / double($nbins)}]
@@ -62341,7 +62386,7 @@ proc ::VMDPathFinder::heatmap_prop_bundle_hydro3d {ncols nbins scheme} {
     variable hydro3d_props_cache
 
     set n_candidate [llength $result_frames]
-    vmdcon -info "VMDPathFinder: heatmap true-3D path — scheme=$scheme  frames=$n_candidate"
+    vmdcon -info "VMDPathFinder: heatmap true-3D path - scheme=$scheme  frames=$n_candidate"
     set state(status) "Heatmap ($scheme): true-3D pass, priming $n_candidate frames..."
     update idletasks
 
@@ -62396,11 +62441,11 @@ proc ::VMDPathFinder::heatmap_prop_bundle_hydro3d {ncols nbins scheme} {
 
     set nframes [llength $valid_frames]
     if {$nframes < 1} {
-        vmdcon -warn "VMDPathFinder: heatmap true-3D path — no valid results (skipped=$n_skip)"
+        vmdcon -warn "VMDPathFinder: heatmap true-3D path - no valid results (skipped=$n_skip)"
         set state(status) ""
         return [dict create nframes 0]
     }
-    vmdcon -info "VMDPathFinder: heatmap true-3D path — $nframes/$n_candidate frames read (skipped=$n_skip)"
+    vmdcon -info "VMDPathFinder: heatmap true-3D path - $nframes/$n_candidate frames read (skipped=$n_skip)"
 
     set z_step [expr {($gmax_z - $gmin_z) / double($nbins)}]
     set col_sums {}; set col_counts {}
@@ -62543,7 +62588,7 @@ proc ::VMDPathFinder::heatmap_esp_bundle {ncols nbins} {
     # Same rule as heatmap_property_bundle: an aborted run is a truncation, so
     # it must not be returned as a result its caller would cache or draw.
     if {$_aborted} {
-        vmdcon -warn "VMDPathFinder: ESP over-time computation ABORTED — partial results discarded."
+        vmdcon -warn "VMDPathFinder: ESP over-time computation ABORTED - partial results discarded."
         return [dict create nframes 0 aborted 1]
     }
     set nframes [llength $valid_frames]
@@ -62663,12 +62708,12 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
             dict set hm_prop_cache $key $_3d_data
             return $_3d_data
         }
-        vmdcon -warn "VMDPathFinder: heatmap true-3D path returned 0 frames — falling back"
+        vmdcon -warn "VMDPathFinder: heatmap true-3D path returned 0 frames - falling back"
     }
     # Fast path: one C process handles all frames in a single spatial pass.  Tcl
     # bakes the selected scheme's per-atom value into the sidecar (kr atom-mean,
     # every other scheme residue-mean) and, for pore-facing, writes only the
-    # facing residues' atoms (CHAP-style per-residue flag) — so ALL schemes AND
+    # facing residues' atoms (CHAP-style per-residue flag) - so ALL schemes AND
     # the facing filter use the fast path.  Falls back to the Tcl path only when
     # the binary lacks the "props"/"residue" features.
     if {[fast_available props residue]} {
@@ -62683,7 +62728,7 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
         #     computation take LONGER and could not be stopped again.
         # Return the empty shape the caller already understands instead.
         if {[_abort_requested]} {
-            vmdcon -warn "VMDPathFinder: Over Time property computation ABORTED — partial\
+            vmdcon -warn "VMDPathFinder: Over Time property computation ABORTED - partial\
                 results discarded (nothing cached)."
             return [dict create nframes 0 aborted 1]
         }
@@ -62695,10 +62740,10 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
             dict set hm_prop_cache $key $_fast_data
             return $_fast_data
         }
-        vmdcon -warn "VMDPathFinder: heatmap fast path returned 0 frames — falling back to Tcl"
+        vmdcon -warn "VMDPathFinder: heatmap fast path returned 0 frames - falling back to Tcl"
     } elseif {!$_props_fast_warned} {
         set _props_fast_warned 1
-        vmdcon -info "VMDPathFinder: heatmap fast path not available (binary lacks props/residue feature — update sos_triangle for large-trajectory speed)."
+        vmdcon -info "VMDPathFinder: heatmap fast path not available (binary lacks props/residue feature - update sos_triangle for large-trajectory speed)."
     }
 
     # Tcl fallback path: atomselect + spatial search per frame.
@@ -62713,7 +62758,7 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
         }
     }
     set scheme_label [scheme_display_label $_hmsch]
-    vmdcon -info "VMDPathFinder: heatmap Tcl path — scheme=$_hmsch  frames=$n_candidate"
+    vmdcon -info "VMDPathFinder: heatmap Tcl path - scheme=$_hmsch  frames=$n_candidate"
     set n_done 0
     set milestone [expr {max(5, int($n_candidate / 4.0))}]  ;# ~25% steps
     set _aborted 0
@@ -62740,7 +62785,7 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
         if {$n_done % $milestone == 0} {
             set pct [expr {int($n_done * 100.0 / $n_candidate)}]
             set state(status) "Property ($scheme_label): $n_done / $n_candidate frames ($pct%)..."
-            vmdcon -info "VMDPathFinder: heatmap Tcl — $n_done/$n_candidate frames ($pct%)"
+            vmdcon -info "VMDPathFinder: heatmap Tcl - $n_done/$n_candidate frames ($pct%)"
             # `update`, not `update idletasks`: a button press is a real event
             # and idletasks does not process it, so Abort could not be SEEN
             # during this loop however long it ran.
@@ -62751,10 +62796,10 @@ proc ::VMDPathFinder::heatmap_property_bundle {ncols nbins} {
     if {$_aborted} {
         set state(status) "Over Time property computation aborted."
         vmdcon -warn "VMDPathFinder: Over Time property computation ABORTED after\
-            $n_done/$n_candidate frame(s) — partial results discarded (nothing cached)."
+            $n_done/$n_candidate frame(s) - partial results discarded (nothing cached)."
         return [dict create nframes 0 aborted 1]
     }
-    vmdcon -info "VMDPathFinder: heatmap Tcl path done — $n_done frames processed"
+    vmdcon -info "VMDPathFinder: heatmap Tcl path done - $n_done frames processed"
     set state(status) ""
     set nframes [llength $valid_frames]
     if {$nframes < 1} {
@@ -62908,7 +62953,7 @@ proc ::VMDPathFinder::draw_heatmap {} {
         variable _hm_stale_reason
         # Stale shortcut: facing or the lining shell changed since last Compute.
         # Show the existing photo (still valid for the old setting) with a
-        # banner so the user knows they need to click Compute — never
+        # banner so the user knows they need to click Compute - never
         # auto-recompute a potentially long batch.
         if {$_hm_stale_reason eq "facing"} {
             variable heatmap_photo
@@ -62922,7 +62967,7 @@ proc ::VMDPathFinder::draw_heatmap {} {
                 [expr {$cw/2 + 168}] [expr {$ch/2 + 22}] \
                 -fill "#fffbe6" -outline "#cc8800" -width 1
             $cv create text [expr {$cw/2}] [expr {$ch/2}] \
-                -text "Pore facing settings changed — click Compute to update." \
+                -text "Pore facing settings changed - click Compute to update." \
                 -anchor center -justify center -font {Helvetica 10 bold} -fill "#cc6600"
             return
         }
@@ -62949,7 +62994,7 @@ proc ::VMDPathFinder::draw_heatmap {} {
             || [_hydro3d_props_all_cached $::VMDPathFinder::result_frames $_hmsch2] \
             || [_fastpath_props_all_cached $::VMDPathFinder::result_frames $_hmsch2]}]
         # Gate: don't auto-run the per-frame property batch (costly on long trajectories)
-        # on a scheme change or first view — wait for an explicit Compute click.
+        # on a scheme change or first view - wait for an explicit Compute click.
         if {!$_cached && !$_approved} {
             $cv delete all
             $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -justify center \
@@ -62973,14 +63018,14 @@ proc ::VMDPathFinder::draw_heatmap {} {
                 $cv delete all
                 $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -justify center \
                     -font {Helvetica 11} -fill "#555555" \
-                    -text "Still computing [scheme_display_label $_hmsch2] property\nover time — please wait..."
+                    -text "Still computing [scheme_display_label $_hmsch2] property\nover time - please wait..."
                 _draw_method_mismatch_note $cv $cw
                 return
             }
             $cv delete all
             $cv create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -justify center \
                 -font {Helvetica 11} -fill "#555555" \
-                -text "Computing [scheme_display_label $_hmsch2] property\nover time — please wait..."
+                -text "Computing [scheme_display_label $_hmsch2] property\nover time - please wait..."
             update idletasks
             set _hm_prop_computing 1
             set _hm_bundle_err [catch {heatmap_property_bundle $ncols $nbins} bundle]
@@ -63063,13 +63108,13 @@ proc ::VMDPathFinder::draw_heatmap {} {
     set cell_h [expr {double($plot_h) / $nbins}]
 
     # Draw cells as a Tk photo image: one image blit instead of ncols*nbins
-    # canvas rectangle items — 10-50× faster on large trajectories.
+    # canvas rectangle items - 10-50× faster on large trajectories.
     set flipy $state(heatmap_flip_y)
 
     # Render cache: the per-cell color mapping (ncols*nbins conversions) plus the
     # row-by-row photo fill is the heavy part of a heatmap draw. It depends only
     # on the data (version), the pixel geometry, the color scheme and the Y flip
-    # — none of which change on a plain tab switch. So memoize the finished photo
+    # - none of which change on a plain tab switch. So memoize the finished photo
     # and just re-blit it when nothing relevant changed, which makes returning to
     # this tab instant instead of a multi-second recompute.
     variable heatmap_photo
@@ -63329,7 +63374,7 @@ proc ::VMDPathFinder::update_heatmap_indicator {frame} {
     # Vertical line
     $cv create line $x $y_top $x $y_bot \
         -fill white -width 2 -dash {4 2} -tags heatmap_indicator
-    # Triangle marker at top — anchored AT y_top (not above it) to prevent the
+    # Triangle marker at top - anchored AT y_top (not above it) to prevent the
     # canvas bbox from expanding into the margin, which would trigger <Configure>.
     set ts 6
     $cv create polygon \
@@ -63377,12 +63422,12 @@ proc ::VMDPathFinder::update_hydration_heatmap_indicator {frame} {
 ::VMDPathFinder::install
 
 # Apply the saved ~/.vmdpathfinder_config immediately at plugin load, not only when
-# show_gui first runs (init_executables calls load_config again there —
+# show_gui first runs (init_executables calls load_config again there -
 # idempotent, just a re-read of the same file, so nothing changes for GUI users).
 # Without this, a user driving VMDPathFinder purely from the Tk console, without ever
 # opening the GUI window, never got their saved exec paths / analysis settings
 # applied. Placed at the very end of the file (not right after load_config's own
 # definition) because load_config calls scheme_display_label, which is defined
-# much later in this file — calling it too early would raise before that proc
+# much later in this file - calling it too early would raise before that proc
 # exists and silently no-op the sync under catch.
 catch {::VMDPathFinder::load_config}

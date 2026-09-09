@@ -35,14 +35,14 @@ on the frame's own value spread. Hydration-derived properties are pore-only.
 
 The residue-level scales (Kyte–Doolittle, Wimley–White, Fauchère–Pliska,
 Grantham polarity, and the MOLE tables) are amino-acid tables. A selected
-residue that is not in them — a glycan, lipid, ligand, or cap — takes a
+residue that is not in them - a glycan, lipid, ligand, or cap - takes a
 neutral placeholder value and is announced once per residue name in the
 console; no published value exists for such residues on these scales, so
 their colour is a placeholder, not a measurement.
 
 Two schemes remain fully meaningful for heteroatoms: **Kapcha–Rossky** is
-atom-level — with partial charges loaded (PSF/topology) it applies the
-original |q| < 0.25 e rule to every atom directly, glycans included — and the
+atom-level - with partial charges loaded (PSF/topology) it applies the
+original |q| < 0.25 e rule to every atom directly, glycans included - and the
 **water schemes** (G(z), density) are computed from the water itself. Prefer
 those, or plain radius, when a glycan or lipid lines the region of interest.
 **Formal charge** is also correct for neutral sugars (zero).

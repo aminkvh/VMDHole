@@ -52,7 +52,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Parameter | Default | Definition |
 |---|---:|---|
 | Method | Spherical | Spherical probe, Connolly accessible cross-section, or Capsule anisotropic probe |
-| Search | Monte Carlo (HOLE) | HOLE's seeded simulated annealing, or the deterministic Nelder-Mead search in `nm_search`. The Monte Carlo rows apply only to Monte Carlo; Capsule always uses HOLE. Both stop the profile at ENDRAD, so their Volume readouts agree |
+| Search | Monte Carlo (HOLE) | HOLE's seeded simulated annealing, or the deterministic Nelder-Mead search in `nm_search`. The Monte Carlo rows apply only to Monte Carlo; Capsule always uses HOLE. Both stop the profile at ENDRAD. That is a shared TERMINATION threshold, not a guarantee of equal results: the two searches can settle on different local passages, and the repository's own validation records a 1.200 A HOLE bottleneck against 0.767 A from Nelder-Mead on the same input (native/nm/VALIDATION.md). Equal stopping radii do not imply equal centrelines, radii or integrated volumes - compare the two before treating them as interchangeable |
 | Dot density (Settings, shown for `sos_triangle`) | 15 | sph_process dots per sphere; not used by the marching-cubes mesher |
 | Monte Carlo steps | blank (HOLE default 1000) | Optimization steps per search plane |
 | Monte Carlo step size | blank (HOLE default 0.1 Å) | Trial displacement scale |

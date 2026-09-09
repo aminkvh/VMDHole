@@ -29,7 +29,7 @@ routes or routes from the wrong cavity. The **⌖** button opens the on-screen
 stick described under pore mode, step 3, to nudge the start point relative to
 the current view.
 
-The start point also accepts a **VMD selection** instead of coordinates — its
+The start point also accepts a **VMD selection** instead of coordinates - its
 centre is re-evaluated in every frame, so a residue-defined origin (for example
 `resname HEM`) follows the trajectory rather than staying where it was in frame
 0. Several origins are given as a `;` list mixing both forms
@@ -38,7 +38,7 @@ routes found from all of them are merged and de-duplicated, which is MOLE's
 pinned multi-origin mode.
 
 Custom exits restrict the search toward known surface regions, and take the same
-three forms — coordinates, a selection, or a `;` list of them. A custom path is
+three forms - coordinates, a selection, or a `;` list of them. A custom path is
 defined by start and end points. **Use custom exits only** excludes other exit
 candidates; use it only when the biological exit is independently known.
 
@@ -86,9 +86,10 @@ choices to routes without a per-route override.
 Route surfaces are meshed by `mesh_csg` (Settings → Engines → Spherical
 mesher), the same marching-cubes mesher the spherical pore uses, since a
 route is a union of spheres along its centre line. A route coloured by a
-property is meshed by `sos_triangle` instead, because the per-triangle
-recolouring reads that program's own mesh records. On a four-route frame of
-KcsA, meshing and drawing took 59 ms against 217 ms for `sos_triangle`.
+property keeps that same marching-cubes mesh and is RECOLOURED in place
+(`mesh_csg --recolor`); `sos_triangle` is only the fallback when the mesher
+cannot do it. On a four-route frame of KcsA, meshing and drawing took 59 ms
+against 217 ms for `sos_triangle`.
 
 Tunnel properties are Kyte–Doolittle, Wimley–White, Kapcha–Rossky,
 Fauchère–Pliska, and the MOLE hydropathy, hydrophobicity, polarity, charge,
@@ -194,9 +195,26 @@ them. **Show all** / **Hide all** apply to every cavity in the frame.
 
 ### What the numbers mean, and what they are not
 
-*Id* is a **tracked** id: the same pocket keeps the same number, the same
-colour and the same tick in every frame, matched across frames by centroid
-proximity. This matters because MOLE recomputes cavities independently in each
+*Id* is a **tracked** id: a pocket is intended to keep the same number, the same
+colour and the same tick across frames, matched by centroid proximity.
+
+Know how strong that guarantee is before you rely on it. The matching is
+**greedy and order-dependent**, and each new cavity is compared against the
+track's *running mean* centroid rather than its position in the previous frame -
+it is not a global one-to-one assignment between adjacent frames. Three
+consequences, all reachable with the default 6 A cutoff:
+
+* a pocket drifting steadily (say 0 A, 4 A, 8 A over three frames) can
+  fragment, because by the third frame the running centroid sits at 2 A and the
+  test needs a distance strictly under the cutoff;
+* a track can reconnect after an arbitrary gap, so *Seen %* may pool episodes
+  separated by many frames;
+* two pockets that cross, merge or split can swap tracks.
+
+The current test covers only two stationary pockets 30 A apart whose volume
+ranks swap, so drift, crossing and gaps are **not** covered. Treat *Id* as a
+reliable label for well-separated, slowly-moving pockets and check it by eye
+before quoting *Seen %*, mean volume or a trend from a crowded or mobile set. This matters because MOLE recomputes cavities independently in each
 frame and ranks them by volume, so two pockets that swap volume order swap
 ranks - keying anything on the rank would mean a ticked cavity silently became
 a different pocket on the next frame. That per-frame rank is still shown, in

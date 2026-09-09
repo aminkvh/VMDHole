@@ -1,8 +1,12 @@
 # Citations and acknowledgements
 
 Use this page when preparing a manuscript, figure caption, data release, or
-software acknowledgement. Cite the three core entries for every VMDPathFinder
-analysis. Then add only the entries for methods or quantities you report.
+software acknowledgement. Cite VMDPathFinder and VMD for every analysis. Add
+HOLE for Pore mode - every engine and mesher in it implements HOLE's method -
+and then only the entries for the other methods or quantities you report. A
+Tunnel-mode run that never touches Pore mode does not use HOLE and should not
+cite it; the in-plugin citation guide (Help > About > Citations) states the same
+rule and is the one to follow.
 
 ## Cite for every VMDPathFinder analysis
 
@@ -134,8 +138,12 @@ cited: MOLE for Tunnel mode, CAVER additionally when route clustering is used.
 | Cavity tracked across a trajectory | **neither program does this** | this plugin (centroid proximity) |
 | Cavity coloured by a property | **neither program does this** | this plugin (per-residue sidecar + the shared recolour kernel) |
 
-Two numerical caveats follow from the third row: our cavity volume is the volume
-of the meshed sphere union, MOLE's is its tetrahedra minus van der Waals caps,
+Two numerical caveats follow from the third row: our cavity VOLUME is MOLE's own
+quantity - the sum of the cavity's tetrahedra minus their van der Waals corner
+caps, computed in mole_complex.c and written by the engine - and NOT the volume
+of the mesh drawn on screen. The mesh is a marching-cubes sphere union built for
+display; its enclosed volume is a different number and is not what any column or
+export reports. CAVER Analyst's is a Monte-Carlo estimate over filling balls,
 and CAVER Analyst's is a Monte-Carlo estimate over filling balls. They are three
 different quantities and should not be compared directly.
 
