@@ -18155,7 +18155,18 @@ proc ::VMDPathFinder::surface_mesh {sph plot form {dotden ""} {color 1} {union 0
         catch {file delete $plot}
         catch {vmdcon -warn "VMDPathFinder: the mesher failed on [file tail $sph]; using sph_process + sos_triangle."}
     }
-    if {[_run_uses_card capsule]} { set sph [_capsule_sph_kept $sph] }
+    if {[_run_uses_card capsule]} {
+        set sph [_capsule_sph_kept $sph]
+    # NO -colour under capsule. sph_process's colour mode also emits "endrad
+    # points" at colour -1, which sos_triangle uses to cut sharp ends on a
+    # spherical pore - but on capsule records it clips nearly the whole surface
+    # away. Measured on one frame from the SAME kept .sph: with -colour 1596
+    # triangles spanning 22.8 A, without it 10035 spanning 148.7 A, the latter
+    # matching what the marching-cubes mesher draws (148.66 A). The plugin
+    # recolours the mesh itself, so what is lost is HOLE's own radius banding on
+    # the dots, not the plugin's colouring.
+        set color 0
+    }
     set sos [file rootname $plot].sos
     set dd $dotden
     if {![_legacy_sos $sph $sos $color $dd $with]} { catch {file delete $sos}; return 0 }
@@ -18197,7 +18208,13 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
         return "[shell_quote [tool_path mesh_csg]] [tool_args mesh_csg] [shell_quote $sph]\
             [shell_quote $plot] [_csg_voxel_spec] $flag [_csg_mesh_opts $sph] $wflag > /dev/null 2>&1"
     }
-    if {[_run_uses_card capsule]} { set sph [_capsule_sph_kept $sph] }
+    if {[_run_uses_card capsule]} {
+        set sph [_capsule_sph_kept $sph]
+        # See surface_mesh: -colour's endrad markers clip a capsule surface to a
+        # fraction of the pore. Both builders must agree or the pooled and
+        # in-process paths draw different surfaces.
+        set color 0
+    }
     set sos [file rootname $plot].sos
     set dd [expr {$dotden ne "" ? $dotden : $state(dot_density)}]
     set cflag [expr {$color ? "-colour " : ""}]
