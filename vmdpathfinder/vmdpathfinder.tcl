@@ -23160,7 +23160,9 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
         $d.hp.ce_mb.m add command -label $_ced -command [list ::VMDPathFinder::_set_conn_engine $_cev $_ced]
     }
     grid $d.hp.ce_mb -row 3 -column 1 -sticky w -padx {2 6}
-    add_tooltip $d.hp.ce_mb "HOLE\'s conn, or the nm_search port of it: same dots, faster. Nelder-Mead always uses the port."
+    add_tooltip $d.hp.ce_mb "HOLE\'s own conn, or the nm_search port of it - same dots, faster. Monte Carlo can use\
+        either. Nelder-Mead ignores this and uses the port, because HOLE\'s conn cannot run on centres it did not\
+        find itself; if the port is missing, or a card sends the frame back to HOLE, HOLE\'s conn runs instead."
     set ::VMDPathFinder::_hp_frame $d.hp
     after idle ::VMDPathFinder::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
@@ -24293,10 +24295,12 @@ proc ::VMDPathFinder::suggest_cvect {{force 0} {warn_var {}}} {
         elseif {abs($_y) >= abs($_z)} { set _d $_y } else { set _d $_z }
         if {$_d < 0} { set _x [expr {-$_x}]; set _y [expr {-$_y}]; set _z [expr {-$_z}] }
         set state(cvect) [format "%.4f %.4f %.4f" $_x $_y $_z]
-        return "mol $molid ($molname), sel \"$seltext\", $_method: $state(cvect)"
+        # The method only. The molecule, the selection and the vector itself are
+        # all on screen already; repeating them made the readout unreadable.
+        return $_method
     }
     set state(cvect) "0 0 1"
-    return "mol $molid ($molname): could not detect a pore axis -- defaulting to Z."
+    return "no pore axis found, using Z"
 }
 
 # -- CVECT vector helper -------------------------------------------------------
@@ -25710,20 +25714,20 @@ proc ::VMDPathFinder::show_vector_dialog {} {
 proc ::VMDPathFinder::_build_vector_controls {d} {
     # CVECT from two points (coordinates, VMD selections or labelled atoms),
     # with Guess, Use Z and the per-frame endpoint modes, built into frame $d.
-    label $d.orl -text "Or define CVECT from two points:" -foreground gray40
-    grid $d.orl -row 0 -column 0 -columnspan 3 -sticky w -padx 6 -pady {6 2}
+    label $d.orl -text "Or from two points" -foreground gray40
+    grid $d.orl -row 0 -column 0 -columnspan 4 -sticky w -padx 6 -pady {6 2}
     # Two ways to fill a point without typing: "Pick" arms one click in the VMD
     # window (the next atom clicked lands here - no labelling step), "Label"
     # lists atoms already labelled with VMD's own '1' key. Pick is what people
     # reach for; Label stays for a point chosen earlier.
     label $d.l1 -text "Point 1"
-    entry $d.e1 -textvariable ::VMDPathFinder::vec_p1 -width 22
+    entry $d.e1 -textvariable ::VMDPathFinder::vec_p1 -width 16
     button $d.p1 -text "Pick" \
         -command [list ::VMDPathFinder::_cvect_pick_3d ::VMDPathFinder::vec_p1 1 $d]
     button $d.b1 -text "Label \u25be" \
         -command [list ::VMDPathFinder::_cvect_pick_label $d.e1 ::VMDPathFinder::vec_p1 $d]
     label $d.l2 -text "Point 2"
-    entry $d.e2 -textvariable ::VMDPathFinder::vec_p2 -width 22
+    entry $d.e2 -textvariable ::VMDPathFinder::vec_p2 -width 16
     button $d.p2 -text "Pick" \
         -command [list ::VMDPathFinder::_cvect_pick_3d ::VMDPathFinder::vec_p2 2 $d]
     button $d.b2 -text "Label \u25be" \
@@ -25736,14 +25740,17 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
     grid $d.e2 -row 2 -column 1 -sticky ew -padx 2     -pady 2
     grid $d.p2 -row 2 -column 2 -sticky w  -padx {4 0} -pady 2
     grid $d.b2 -row 2 -column 3 -sticky w  -padx {2 6} -pady 2
-    grid columnconfigure $d 1 -weight 1
+    grid columnconfigure $d 1 -weight 0
+    grid columnconfigure $d 4 -weight 1
     add_tooltip $d.p1 "Click an atom in the VMD window; it becomes Point 1. When both points are set the vector is computed at once."
     add_tooltip $d.p2 "Click an atom in the VMD window; it becomes Point 2. When both points are set the vector is computed at once."
     add_tooltip $d.b1 "Choose an atom you already labelled in VMD (press '1' and click atoms)."
     add_tooltip $d.b2 "Choose an atom you already labelled in VMD (press '1' and click atoms)."
-    label $d.hint -text "x,y,z, a VMD selection, or Pick an atom in the 3D view; the vector points from Point 1 to Point 2." \
+    label $d.hint -text "The vector points from Point 1 to Point 2." \
         -foreground gray -wraplength 340 -justify left
-    grid $d.hint -row 3 -column 0 -columnspan 3 -sticky w -padx 6 -pady {0 4}
+    grid $d.hint -row 3 -column 0 -columnspan 4 -sticky w -padx 6 -pady {0 4}
+    add_tooltip $d.hint "Each point takes x y z, a VMD selection, or an atom picked in the 3D view.\
+        A selection of several atoms uses its centre of geometry."
     frame $d.sb
     label       $d.sb.l   -text "Per-frame:"
     checkbutton $d.sb.cv  -text "Stabilize endpoints" \
@@ -25754,19 +25761,20 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
         -command [list ::VMDPathFinder::_cvect_stab_excl $d exact]
     label       $d.sb.note -text "" -foreground gray40 -font {Helvetica 8}
     pack $d.sb.l $d.sb.cv $d.sb.ex $d.sb.note -side left -padx {0 6}
-    grid $d.sb -row 4 -column 0 -columnspan 3 -sticky w -padx 6 -pady {0 4}
+    grid $d.sb -row 4 -column 0 -columnspan 4 -sticky w -padx 6 -pady {0 4}
     label $d.result -text "" -anchor w -foreground blue -wraplength 340 -justify left
-    grid $d.result -row 5 -column 0 -columnspan 3 -sticky ew -padx 6
+    grid $d.result -row 5 -column 0 -columnspan 4 -sticky ew -padx 6
+    # One row: the three actions on the left, Close on the right. They were two
+    # rows, which put Close on a line of its own and stretched the dialog.
     frame $d.btns
-    button $d.btns.guess -text "Guess" -command [list ::VMDPathFinder::_cvect_guess $d]
-    button $d.btns.z     -text "Use Z" -command [list ::VMDPathFinder::_cvect_set_z $d]
-    button $d.btns.calc  -text "Compute" -command [list ::VMDPathFinder::compute_vector $d]
-    pack $d.btns.guess $d.btns.z $d.btns.calc -side left -padx 4
-    grid $d.btns -row 6 -column 0 -columnspan 3 -pady {4 6}
-    frame $d.close_row
-    button $d.close_row.close -text "Close" -command [list ::VMDPathFinder::_axis_stick_close [winfo toplevel $d]]
-    pack $d.close_row.close -side right
-    grid $d.close_row -row 7 -column 0 -columnspan 3 -sticky ew -padx 6 -pady {0 6}
+    button $d.btns.guess -text "Guess"   -width 8 -command [list ::VMDPathFinder::_cvect_guess $d]
+    button $d.btns.z     -text "Use Z"   -width 8 -command [list ::VMDPathFinder::_cvect_set_z $d]
+    button $d.btns.calc  -text "Compute" -width 8 -command [list ::VMDPathFinder::compute_vector $d]
+    button $d.btns.close -text "Close"   -width 8 \
+        -command [list ::VMDPathFinder::_axis_stick_close [winfo toplevel $d]]
+    pack $d.btns.guess $d.btns.z $d.btns.calc -side left -padx {0 4}
+    pack $d.btns.close -side right
+    grid $d.btns -row 6 -column 0 -columnspan 4 -sticky ew -padx 6 -pady {4 6}
     add_tooltip $d.sb.cv "Re-fits each endpoint\'s local context per frame, then recomputes the direction."
     add_tooltip $d.sb.ex "Re-evaluates the two endpoint selections literally each frame, with no fit."
     _cvect_sync_stab_controls $d
@@ -25796,10 +25804,10 @@ proc ::VMDPathFinder::_cvect_sync_stab_controls {d} {
     if {!$has_def} {
         set state(stabilize_cvect) 0
         set state(cvect_exact) 0
-        catch {$d.sb.note configure -text "(define two points to enable)"}
+        catch {$d.sb.note configure -text ""}
     } elseif {!$has_sel} {
         set state(cvect_exact) 0
-        catch {$d.sb.note configure -text "(Exact needs a selection endpoint)"}
+        catch {$d.sb.note configure -text "Exact needs a selection endpoint"}
     } else {
         catch {$d.sb.note configure -text ""}
     }
@@ -25826,9 +25834,9 @@ proc ::VMDPathFinder::_cvect_stab_excl {d which} {
 proc ::VMDPathFinder::_cvect_guess {d} {
     variable state
     set note [suggest_cvect 1]
-    set state(status) "CVECT guessed: $state(cvect) ($note)"
+    set state(status) "CVECT $state(cvect) from $note."
     if {[winfo exists $d.result]} {
-        $d.result configure -text "CVECT = $state(cvect) - $note"
+        $d.result configure -text "CVECT $state(cvect) - from $note"
     }
     _cvect_sync_stab_controls $d
 }
@@ -25836,9 +25844,9 @@ proc ::VMDPathFinder::_cvect_guess {d} {
 proc ::VMDPathFinder::_cvect_set_z {d} {
     variable state
     set state(cvect) "0 0 1"
-    set state(status) "CVECT set to Z-axis (0 0 1)."
+    set state(status) "CVECT 0 0 1, the Z axis."
     if {[winfo exists $d.result]} {
-        $d.result configure -text "CVECT = 0 0 1 (Z-axis)"
+        $d.result configure -text "CVECT 0 0 1 - the Z axis"
     }
     _cvect_sync_stab_controls $d
 }
@@ -26022,7 +26030,7 @@ proc ::VMDPathFinder::sync_top_defaults {} {
     _autofill_start_points $topmol
     set nf [molinfo $topmol get numframes]
     set _gnote [suggest_cvect]
-    set state(status) "Mol $topmol ($nf frame(s)). CVECT: $_gnote"
+    set state(status) "Mol $topmol, $nf frame(s). CVECT $state(cvect) from $_gnote."
     activate_molecule $topmol
 }
 
@@ -26353,7 +26361,7 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     # Per-frame handling for whatever is being moved - the same variables and
     # handlers the panel rows use, so the two stay in step either way.
     frame $d.pf
-    grid $d.pf -row 7 -column 0 -columnspan 3 -sticky w -padx 10
+    grid $d.pf -row 3 -column 0 -columnspan 3 -sticky w -padx 10
     frame $d.pf.cp
     label       $d.pf.cp.l  -text "Per-frame:"
     checkbutton $d.pf.cp.st -text "Stabilize" -variable ::VMDPathFinder::state(stabilize_cpoint) -command [list ::VMDPathFinder::_on_stabilize_toggled cpoint]
@@ -26382,14 +26390,14 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     _update_cpoint_scope_row $d.pf
     frame $d.vec -relief groove -borderwidth 1
     _build_vector_controls $d.vec
-    grid $d.vec -row 6 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
+    grid $d.vec -row 7 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
     frame $d.pc
     button $d.pc.cog -text "COG" -command [list ::VMDPathFinder::_axis_stick_center sel]
     button $d.pc.cor -text "COR" -command [list ::VMDPathFinder::_axis_stick_center view]
     button $d.pc.close -text "Close" -command [list ::VMDPathFinder::_axis_stick_close $d]
     pack $d.pc.cog $d.pc.cor -side left -padx {0 6}
     pack $d.pc.close -side right
-    grid $d.pc -row 6 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
+    grid $d.pc -row 8 -column 0 -columnspan 3 -sticky ew -padx 10 -pady {0 6}
     add_tooltip $d.pc.cog "The centre of geometry of the atom selection."
     add_tooltip $d.pc.cor "VMD's current centre of rotation."
     label $d.pf.none -text "Per-frame: the tunnel search re-runs from this point each frame." -foreground gray40 -font {Helvetica 8}
@@ -26408,10 +26416,10 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     radiobutton $d.pt2.p2 -text "Point 2" -variable ::VMDPathFinder::state(axis_stick_vec_pt) -value p2 \
         -command [list ::VMDPathFinder::_axis_stick_sync_mode $d]
     pack $d.pt2.l $d.pt2.p1 $d.pt2.p2 -side left -padx {0 6}
-    grid $d.pt2 -row 2 -column 0 -columnspan 3 -pady {2 0}
+    grid $d.pt2 -row 2 -column 0 -columnspan 3 -sticky w -padx 10 -pady {2 0}
 
     frame $d.pad
-    grid $d.pad -row 3 -column 0 -columnspan 3 -pady {10 4}
+    grid $d.pad -row 4 -column 0 -columnspan 3 -pady {6 4}
     button $d.pad.up    -text "↑" -width 3 -command [list ::VMDPathFinder::_axis_stick_nudge_cur $d up]
     button $d.pad.down  -text "↓" -width 3 -command [list ::VMDPathFinder::_axis_stick_nudge_cur $d down]
     button $d.pad.left  -text "←" -width 3 -command [list ::VMDPathFinder::_axis_stick_nudge_cur $d left]
@@ -26436,11 +26444,11 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     spinbox $d.sv.step_e -width 5 -from 0.05 -to 180 -increment 0.5 -justify right \
         -textvariable ::VMDPathFinder::state(axis_stick_step_cpoint)
     label   $d.sv.val_l -text "Value"
-    label   $d.sv.val_v -width 34 -anchor w -relief sunken
+    label   $d.sv.val_v -width 24 -anchor w -relief sunken
     pack $d.sv.step_l $d.sv.step_e -side left -padx {0 4}
     pack $d.sv.val_l -side left -padx {10 4}
     pack $d.sv.val_v -side left
-    grid $d.sv -row 4 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 10}
+    grid $d.sv -row 5 -column 0 -columnspan 3 -sticky w -padx 10 -pady {4 8}
     add_tooltip $d.sv.step_e "Distance moved per arrow click, in \u00c5. Also the drag sensitivity."
 
     wm protocol $d WM_DELETE_WINDOW [list ::VMDPathFinder::_axis_stick_close $d]
