@@ -6078,9 +6078,9 @@ if {$ntun > 0} {
                "(height [winfo reqheight $w.tuncav] px)"
         # One master checkbox replaced the Show all / Hide all button pair, and
         # colour/material/spheres moved to a per-row gear.
-        report "the cavities window offers the master checkbox, both start-point rules and a per-row gear" \
+        report "the cavities window offers the master checkbox, the start-point menu and a per-row gear" \
                [expr {[winfo exists $w.tuncav.ctl.allc]
-                      && [winfo exists $w.tuncav.ctl.rm] && [winfo exists $w.tuncav.ctl.rc]
+                      && [winfo exists $w.tuncav.ctl.rm]
                       && [winfo exists $w.tuncav.ctl.pm]
                       && [winfo exists $w.tuncav.sc.c.inner.gear1]
                       && [winfo exists $w.tuncav.sc.c.inner.use1]}] \

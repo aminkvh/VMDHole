@@ -19150,9 +19150,18 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         ? "Opaque" : "Transparent"}]
     set prop [expr {[info exists state(cavity_prop)] ? $state(cavity_prop) : "none"}]
     if {$prop ne "none" && $prop ne "" && $prop ni [_cavity_prop_tokens]} { set prop "none" }
+    # A CAP on how many pockets are meshed at once. Each one is a full
+    # sph_process/mesher build, and nothing else bounded this: ticking every
+    # pocket with the filter lifted asked for 315 meshes in one pass and took
+    # the plugin down. The cap lives HERE rather than on the checkbox because
+    # any path that sets many ticks - a restored config, a frame change - lands
+    # in this loop.
+    set _cap [_cavity_draw_cap]
+    set _drawn 0; set _skipped 0
     foreach t [_cavity_tracks] {
         set tid [dict get $t tid]
         if {![_tunnel_cavity_shown $tid]} continue
+        if {$_drawn >= $_cap} { incr _skipped; continue }
         # the ticked TRACK's cavity in THIS frame - absent from some frames is
         # normal, and simply means nothing to draw here
         set id [_cavity_rank_in_frame $tid $frame]
@@ -19220,6 +19229,10 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         if {!$done} {
             catch {render_vmd_plot_to_mol $plot $cm 1 [_tunnel_color [expr {$tid+11}]] "" $mat 0 0}
         }
+        incr _drawn
+    }
+    if {$_skipped > 0} {
+        set state(status) "Drew $_drawn pockets; $_skipped more are ticked but not drawn (cap $_cap). Untick some, or raise the cap in Settings."
     }
     return $cm
 }
@@ -19391,6 +19404,58 @@ proc ::VMDPathFinder::_cavity_plot_export_csv {tid} {
     set state(status) "Pocket $tid series written to [file tail $f]."
 }
 
+proc ::VMDPathFinder::_cavity_draw_cap {} {
+    # How many pockets may be meshed at once. One definition, read by the
+    # renderer and quoted in the tooltip.
+    variable state
+    if {[info exists state(cavity_draw_cap)] \
+            && [string is integer -strict $state(cavity_draw_cap)] \
+            && $state(cavity_draw_cap) > 0} {
+        return $state(cavity_draw_cap)
+    }
+    return 24
+}
+
+proc ::VMDPathFinder::_cavity_set_rule {rule disp} {
+    # Picking a start-point rule changes ONE column, so it refreshes in place
+    # rather than rebuilding the window.
+    variable state
+    set state(cavity_origin_rule) $rule
+    set state(cavity_rule_disp) $disp
+    _cavity_refresh
+}
+
+proc ::VMDPathFinder::_cavity_refresh {} {
+    # Update the OPEN cavity window in place. Rebuilding the whole toplevel for
+    # a lining click or a start-rule change destroyed and recreated the window -
+    # it visibly closed and reopened, lost the scroll position, and paid for a
+    # full row build every time. Only sort and the persistence filter change
+    # which rows exist; everything else changes cell text or a button's relief,
+    # which is all this touches.
+    variable w
+    variable state
+    variable _cavity_row_map
+    if {![_have_tk]} { return }
+    set t $w.tuncav
+    if {![winfo exists $t] || ![info exists _cavity_row_map]} { return }
+    set g $t.sc.c.inner
+    set frame [_tunnel_display_frame]
+    set cavs [_tunnel_cavities $frame]
+    # Which column holds the start point, by KEY - its index moves with the
+    # conditional Type column.
+    set _sc -1
+    for {set c 0} {$c < 20} {incr c} {
+        if {[winfo exists $t.hdr.h$c] && [$t.hdr.h$c cget -text] eq "Start pt"} { set _sc $c; break }
+    }
+    dict for {r pair} $_cavity_row_map {
+        lassign $pair tid id
+        if {[winfo exists $g.lin$r]} { _cavity_lining_btn_sync $g.lin$r $tid }
+        if {$_sc >= 0 && [winfo exists $g.v${r}_$_sc] && $id ne "" && [dict exists $cavs $id]} {
+            catch {$g.v${r}_$_sc configure -text [_cavity_origin_short [dict get $cavs $id]]}
+        }
+    }
+}
+
 proc ::VMDPathFinder::_cavity_show_all_toggle {} {
     # The master checkbox over the per-row ones. It drives only the pockets the
     # filter is actually showing - ticking it must not silently switch on 300
@@ -19402,7 +19467,7 @@ proc ::VMDPathFinder::_cavity_show_all_toggle {} {
         set tunnel_cavity_shown([dict get $tr tid]) $on
     }
     _tunnel_cavity_toggle
-    catch {show_tunnel_cavities}
+    catch {_cavity_refresh}
 }
 
 proc ::VMDPathFinder::_cavity_visible_tracks {} {
@@ -19639,7 +19704,7 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
         }
         dict set _cavity_lining_on $_key_tid 0
         set state(status) "Pocket $_key_tid lining: hidden."
-        catch {show_tunnel_cavities}
+        catch {_cavity_refresh}
         return
     }
     dict set _cavity_lining_on $_key_tid 1
@@ -19678,6 +19743,9 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
     # per-frame rank and is a different number on most frames.
     set _lbl $_key_tid
     set state(status) "Pocket $_lbl lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red), $n residues on molecule $molid."
+    # The SHOW path has to sync the button too, or it stays raised while the
+    # lining is on and the only way to tell is that the structure changed.
+    catch {_cavity_refresh}
 }
 
 proc ::VMDPathFinder::_cavity_export_csv {} {
@@ -19766,7 +19834,7 @@ proc ::VMDPathFinder::_cavity_show_all {on} {
     variable tunnel_cavity_shown
     foreach t [_cavity_tracks] { set tunnel_cavity_shown([dict get $t tid]) $on }
     _tunnel_cavity_toggle
-    show_tunnel_cavities
+    _cavity_refresh
 }
 
 proc ::VMDPathFinder::_cavity_use_as_start {frame id} {
@@ -19823,7 +19891,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     frame $t.ctl
     # One checkbox over the per-row ones, as the tunnel list has - two buttons
     # for the same pair of states was a control the checkbox already is.
-    checkbutton $t.ctl.allc -text "Show all" \
+    checkbutton $t.ctl.allc -text "" \
         -variable ::VMDPathFinder::state(cavity_shown_all) \
         -command ::VMDPathFinder::_cavity_show_all_toggle
     label $t.ctl.pl -text "  Colour by:"
@@ -19836,19 +19904,22 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     }
     _menu_two_columns $t.ctl.pm.m
     label $t.ctl.rl -text "  Start point:"
-    radiobutton $t.ctl.rm -text "deepest (MOLE)" -value mole \
-        -variable ::VMDPathFinder::state(cavity_origin_rule) \
-        -command ::VMDPathFinder::show_tunnel_cavities
-    radiobutton $t.ctl.rc -text "largest sphere (CAVER)" -value caver \
-        -variable ::VMDPathFinder::state(cavity_origin_rule) \
-        -command ::VMDPathFinder::show_tunnel_cavities
+    set state(cavity_rule_disp) [expr {$state(cavity_origin_rule) eq "caver" \
+        ? "largest sphere (CAVER)" : "deepest point (MOLE)"}]
+    menubutton $t.ctl.rm -textvariable ::VMDPathFinder::state(cavity_rule_disp) \
+        -relief raised -indicatoron 1 -menu $t.ctl.rm.m -width 20
+    menu $t.ctl.rm.m -tearoff 0
+    $t.ctl.rm.m add command -label "deepest point (MOLE)" \
+        -command [list ::VMDPathFinder::_cavity_set_rule mole "deepest point (MOLE)"]
+    $t.ctl.rm.m add command -label "largest sphere (CAVER)" \
+        -command [list ::VMDPathFinder::_cavity_set_rule caver "largest sphere (CAVER)"]
     pack $t.ctl.allc $t.ctl.pl $t.ctl.pm \
-        $t.ctl.rl $t.ctl.rm $t.ctl.rc -side left -padx {0 6}
+        $t.ctl.rl $t.ctl.rm -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
-    add_tooltip $t.ctl.allc "Show or hide every pocket listed below."
-    add_tooltip $t.ctl.pm "Colour the cavity surface by a property of its lining residues, through the same recolour used for routes and the pore wall. The scale bar shows the range."
-    add_tooltip $t.ctl.rm "MOLE's own automatic origin: the cavity's deepest point, read from the engine rather than recomputed. This is the point MOLE would search from."
-    add_tooltip $t.ctl.rc "CAVER Analyst's rule: the centre of the largest sphere that fits in the cavity."
+    add_tooltip $t.ctl.allc "Tick to draw every pocket in the list; untick to hide them all. Only the pockets currently listed are affected, and at most [_cavity_draw_cap] are drawn at once."
+    add_tooltip $t.ctl.pm "Colour EVERY pocket by a chemical property of the residues lining it - how water-repelling they are, their charge, and so on. This is the default for all pockets; a single pocket can override it from its own gear button."
+    add_tooltip $t.ctl.rl "A pocket is where a tunnel search BEGINS. \"Use as start\" copies this point into the Start point box, so the next search looks for routes leading out of that pocket. The two rules pick that point differently."
+    add_tooltip $t.ctl.rm "Where inside the pocket a search would start.\n\ndeepest point (MOLE) - the point furthest from the surface, which MOLE itself would pick.\nlargest sphere (CAVER) - the centre of the biggest sphere that fits, which is what CAVER Analyst uses.\n\nThey usually differ by a few Angstroms; the Start pt column shows the point you would get."
 
     # ---- table ----------------------------------------------------------
     # ONE grid for the header and the rows, inside a scrolling frame. Two
@@ -19890,20 +19961,19 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # clutter, so it appears only when the data actually holds a Void.
     set _has_void 0
     foreach _tr $_every { if {[dict get $_tr type] eq "Void"} { set _has_void 1; break } }
-    set _cols {draw "Draw" "Draw this pocket, in every frame it appears in."
-               id "Id" "Tracked id, constant for the whole trajectory (1 = largest by mean volume). Its colour is constant too."}
+    set _cols {draw "" "Tick to draw this pocket in the 3D view. The box above the column ticks or unticks them all."
+               id "Id" "This pocket's number. It stays the same in every frame, so pocket 3 is the same piece of empty space all the way through the trajectory - and it keeps the same colour. Pocket 1 is the largest on average."}
     if {$_has_void} {
         lappend _cols type "Type" "Cavity: opens to the surface. Void: fully enclosed, no boundary residues."
     }
     lappend _cols \
-        vol "Volume" "Volume in THIS frame, A^3. Click to sort." \
-        plot "Trend" "Plots this pocket's volume across the trajectory against its own mean +/- SD, following the tracked pocket rather than MOLE's per-frame rank." \
-        seen "Seen %" "Percentage of analysed frames this pocket was found in. Click to sort." \
-        probe "Max probe" "Radius of the largest sphere that fits inside - whether your ligand fits at all. Click to sort." \
-        depth "Depth" "How many tetrahedron layers deep the pocket sits below the surface." \
+        vol "Volume" "How big this pocket is in the frame you are looking at, in cubic Angstroms. CLICK A VOLUME to plot how it changes over the whole trajectory. Click this heading to sort." \
+        seen "Seen %" "How often this pocket exists. 100% means it is there in every frame analysed; a low number means it opens and closes as the protein moves. Green = present in the frame you are viewing, red = absent from it. Click to sort." \
+        probe "Max probe" "The radius of the biggest ball that fits inside this pocket, in Angstroms. Compare it with the size of your ligand or ion to see whether it could sit here. Click to sort." \
+        depth "Depth" "How far inside the protein the pocket sits, counted in layers of the geometric mesh MOLE builds. A bigger number means more buried." \
         res "Boundary / Inner" "Its lining, split in two. BOUNDARY residues sit on a face where the pocket opens outward - they line the mouth. INNER residues touch the pocket only on faces fully inside it - they line the wall. Both are computed from the Delaunay tetrahedra, not from a distance cutoff. The Residues button lists them." \
-        rank "Rank here" "What MOLE ranked this pocket in the displayed frame - per frame, unlike Id." \
-        start "Start pt" "Where a search started from this pocket would begin, by the rule chosen above. Switching MOLE/CAVER changes this column."
+        rank "Rank here" "MOLE numbers pockets separately in each frame, biggest first, so this number changes as the protein moves. It is shown only so you can match a row against MOLE's own output - use Id to follow a pocket over time. \"absent\" means this pocket does not exist in the frame you are viewing." \
+        start "Start pt" "The x y z point a tunnel search would start from if you used this pocket, chosen by the rule in the Start point menu above. \"Use as start\" copies it into the Start point box."
     set c 0
     foreach {key label tip} $_cols {
         set _sortable [expr {$key in {id vol mean seen probe depth}}]
@@ -19935,6 +20005,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     set rows [lsort -command [list ::VMDPathFinder::_cavity_row_cmp $state(cavity_sort_col)] $rows]
     if {$state(cavity_sort_dir) eq "desc"} { set rows [lreverse $rows] }
 
+    variable _cavity_row_map
+    set _cavity_row_map [dict create]
     set r 0
     foreach row $rows {
         incr r
@@ -19942,6 +20014,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         # the body on row 1, and row 0 stays empty so the two grids can be
         # compared the way the tunnel list does it.
         lassign $row tid cv tr id
+        dict set _cavity_row_map $r [list $tid $id]
         if {![info exists tunnel_cavity_shown($tid)]} { set tunnel_cavity_shown($tid) 0 }
         checkbutton $g.d$r -variable ::VMDPathFinder::tunnel_cavity_shown($tid) \
             -command ::VMDPathFinder::_tunnel_cavity_toggle -padx 0 -pady 0
@@ -19962,17 +20035,6 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         set _right {id vol seen probe depth rank}
         set c 1
         foreach {key _lbl _tip} [lrange $_cols 3 end] {
-            if {$key eq "plot"} {
-                # The trend button IS the Trend column, so it lines up under its
-                # own heading next to Volume instead of floating past the data.
-                button $g.tr$r -text "\U0001F4C8" -font {Helvetica 9} -padx 2 -pady 0 \
-                    -command [list ::VMDPathFinder::_cavity_volume_plot $tid]
-                grid $g.tr$r -row $r -column $c -sticky w -padx 4
-                add_tooltip $g.tr$r [format "Pocket %s volume over time: mean %.0f +/- %.0f A^3 over the %d frame(s) it appears in. Opens a plot you can export." \
-                    $tid [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
-                incr c
-                continue
-            }
             set _num [expr {[lsearch -exact $_right $key] >= 0}]
             # Absence is carried by the Seen colour, as the tunnel list does it -
             # greying the whole row made every value look unreliable when only
@@ -19984,6 +20046,15 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             label $g.v${r}_$c -text [dict get $_v $key] -anchor [expr {$_num ? "e" : "w"}] \
                 -font {Helvetica 9} -foreground $_fg
             grid $g.v${r}_$c -row $r -column $c -sticky [expr {$_num ? "e" : "w"}] -padx 4
+            if {$key eq "vol" && $_here} {
+                # The volume itself opens its trend. A separate column with a
+                # chart emoji was both an extra column and an unrenderable
+                # glyph: \U0001F4C8 is outside Tk 8.5's BMP.
+                $g.v${r}_$c configure -cursor hand2 -foreground "#1a5fb4"
+                bind $g.v${r}_$c <Button-1> [list ::VMDPathFinder::_cavity_volume_plot $tid]
+                add_tooltip $g.v${r}_$c [format "Click to plot pocket %s's volume across the trajectory. It averages %.0f +/- %.0f A^3 over the %d frame(s) it appears in." \
+                    $tid [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
+            }
             incr c
         }
         button $g.gear$r -text "\u2699" -font {Helvetica 10} -padx 2 -pady 0 -relief flat \
@@ -20014,7 +20085,9 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # The detail lives in the column tooltips, read when needed.
     label $t.note -justify left -wraplength 840 -foreground gray40 -font {Helvetica 8} -text \
         "A pocket is where a search STARTS: re-running from one cannot change which pockets exist. Id is tracked across all $_nfr frames; \"Rank here\" is MOLE's own per-frame rank. Hover any heading for what it means."
-    grid $t.note -row 2 -column 0 -sticky ew -padx 8 -pady {4 8}
+    # Row 3. At row 2 it sat ON TOP of the table, drawing a grey band across the
+    # middle of the results.
+    grid $t.note -row 3 -column 0 -sticky ew -padx 8 -pady {4 8}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
     _center_toplevel $t 900 [expr {$_th + 180}]
