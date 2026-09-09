@@ -264,8 +264,35 @@ static void do_classify(double ux, double uy, double uz, double margin,
         char *seen = xmalloc((size_t)nz * nth); memset(seen, 0, (size_t)nz * nth);
         int *queue = xmalloc((size_t)nz * nth * sizeof(int));
         int *members = xmalloc((size_t)nz * nth * sizeof(int));   /* cell ids in this component */
+        /* A near-empty cell does NOT conduct. Measured on a real frame: the
+           widest lobe held 1500 dots over 45 cells at a median of 19 per cell,
+           but 10 of them held 1-3 - and dropping just those split it in two.
+           Those are stray dots, not a passage, and under plain 8-connectivity
+           they welded two openings 160 degrees apart into one coloured region.
+           Threshold scales with the cloud's own density (dot density is a user
+           setting): a fifth of the median occupancy, never below 2.
+           Mirrors _conn_frame_lobes in the Tcl port - both must agree. */
+        int cond = 2;
+        {
+            int nocc = 0;
+            for (int c = 0; c < nz * nth; c++) if (celln[c] > 0) nocc++;
+            if (nocc > 0) {
+                int *occs = xmalloc((size_t)nocc * sizeof(int));
+                int k = 0;
+                for (int c = 0; c < nz * nth; c++) if (celln[c] > 0) occs[k++] = celln[c];
+                for (int a = 1; a < nocc; a++) {      /* insertion sort: nocc is small */
+                    int v = occs[a], b = a - 1;
+                    while (b >= 0 && occs[b] > v) { occs[b+1] = occs[b]; b--; }
+                    occs[b+1] = v;
+                }
+                int med = occs[nocc/2];
+                int t = (int)ceil(med * 0.2);
+                if (t > cond) cond = t;
+                free(occs);
+            }
+        }
         for (int c0 = 0; c0 < nz * nth; c0++) {
-            if (celln[c0] == 0 || seen[c0]) continue;
+            if (celln[c0] < cond || seen[c0]) continue;
             seen[c0] = 1;
             int qh = 0, qt = 0, mh = 0;
             queue[qt++] = c0;
@@ -277,7 +304,21 @@ static void do_classify(double ux, double uy, double uz, double margin,
                     int nzi = czi + dz; if (nzi < 0 || nzi >= nz) continue;
                     int nti = ((cti + dt) % nth + nth) % nth;
                     int nb = nzi * nth + nti;
-                    if (celln[nb] && !seen[nb]) { seen[nb] = 1; queue[qt++] = nb; }
+                    if (celln[nb] >= cond && !seen[nb]) { seen[nb] = 1; queue[qt++] = nb; }
+                }
+            }
+            /* Sparse neighbours join this component rather than being dropped,
+               so no dot leaves the picture - they simply cannot BRIDGE two. */
+            int mh0 = mh;
+            for (int m = 0; m < mh0; m++) {
+                int czi = members[m] / nth, cti = members[m] % nth;
+                for (int dz = -1; dz <= 1; dz++) for (int dt = -1; dt <= 1; dt++) {
+                    int nzi = czi + dz; if (nzi < 0 || nzi >= nz) continue;
+                    int nti = ((cti + dt) % nth + nth) % nth;
+                    int nb = nzi * nth + nti;
+                    if (celln[nb] > 0 && celln[nb] < cond && !seen[nb]) {
+                        seen[nb] = 1; members[mh++] = nb;
+                    }
                 }
             }
             int total = 0;

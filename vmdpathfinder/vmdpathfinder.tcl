@@ -36786,32 +36786,85 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
         incr i
     }
     # Connected components over the occupied cells, wrapping in azimuth.
+    #
+    # A near-empty cell does NOT conduct. Measured on a real frame: the widest
+    # lobe held 1500 dots over 45 cells at a median of 19 dots per cell, but 10
+    # of those cells held 1-3 - and dropping just those split it into two
+    # components. Those sparse cells are stray dots, not a passage, and under
+    # plain 8-connectivity they welded two openings 160 degrees apart into one
+    # region with one colour ("it colours lateral openings that are on different
+    # degrees or z").
+    #
+    # The threshold scales with the cloud's own density (dot density is a user
+    # setting) rather than being a fixed count: a fifth of the median occupancy,
+    # never below 2.
+    set _counts {}
+    foreach _c [array names occ] { lappend _counts [llength $occ($_c)] }
+    set _counts [lsort -integer $_counts]
+    set _med [lindex $_counts [expr {[llength $_counts]/2}]]
+    set _cond [expr {int(ceil($_med * 0.2))}]
+    if {$_cond < 2} { set _cond 2 }
     array set seen {}
     set out {}
+    set _comp_of [dict create]
+    set _ci -1
     foreach cell [array names occ] {
         if {[info exists seen($cell)]} continue
+        if {[llength $occ($cell)] < $_cond} continue
         set seen($cell) 1
+        incr _ci
         set queue [list $cell]
         set members {}
         while {[llength $queue]} {
             set c [lindex $queue 0]
             set queue [lrange $queue 1 end]
             lappend members $c
+            dict set _comp_of $c $_ci
             lassign [split $c ,] zi ti
             for {set dz -1} {$dz <= 1} {incr dz} {
                 for {set dt -1} {$dt <= 1} {incr dt} {
                     set nb "[expr {$zi+$dz}],[expr {($ti+$dt+$nth) % $nth}]"
-                    if {[info exists occ($nb)] && ![info exists seen($nb)]} {
+                    if {[info exists occ($nb)] && ![info exists seen($nb)] \
+                            && [llength $occ($nb)] >= $_cond} {
                         set seen($nb) 1
                         lappend queue $nb
                     }
                 }
             }
         }
+        lappend out $members
+    }
+    # Sparse cells still belong somewhere - they are attached to a neighbouring
+    # component rather than discarded, so no dot is lost from the picture; they
+    # simply cannot BRIDGE two components.
+    foreach cell [array names occ] {
+        if {[dict exists $_comp_of $cell]} continue
+        lassign [split $cell ,] zi ti
+        set _best ""
+        for {set dz -1} {$dz <= 1 && $_best eq ""} {incr dz} {
+            for {set dt -1} {$dt <= 1} {incr dt} {
+                set nb "[expr {$zi+$dz}],[expr {($ti+$dt+$nth) % $nth}]"
+                if {[dict exists $_comp_of $nb]} { set _best [dict get $_comp_of $nb]; break }
+            }
+        }
+        if {$_best ne ""} {
+            set _m [lindex $out $_best]
+            lappend _m $cell
+            lset out $_best $_m
+            dict set _comp_of $cell $_best
+        } else {
+            lappend out [list $cell]
+            dict set _comp_of $cell [expr {[llength $out]-1}]
+        }
+    }
+    # members -> dot indices
+    set _out2 {}
+    foreach members $out {
         set idx {}
         foreach c $members { lappend idx {*}$occ($c) }
-        lappend out $idx
+        if {[llength $idx]} { lappend _out2 $idx }
     }
+    set out $_out2
     # Drop specks: a lobe worth coloring holds at least 2% of the lateral cloud.
     set lobes {}
     foreach idx $out {
