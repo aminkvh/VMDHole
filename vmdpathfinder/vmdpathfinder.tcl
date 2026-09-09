@@ -19529,18 +19529,57 @@ proc ::VMDPathFinder::_cavity_refresh {} {
     set g $t.sc.c.inner
     set frame [_tunnel_display_frame]
     set cavs [_tunnel_cavities $frame]
-    # Which column holds the start point, by KEY - its index moves with the
-    # conditional Type column.
-    set _sc -1
-    for {set c 0} {$c < 20} {incr c} {
-        if {[winfo exists $t.hdr.h$c] && [$t.hdr.h$c cget -text] eq "Start pt"} { set _sc $c; break }
+    # Column index for each per-frame KEY, read off the header. By key, not by a
+    # fixed index: the Type column is conditional, so every index after it moves.
+    set _ci [dict create]
+    foreach {_k _hdr} {vol Volume seen "Seen %" depth Depth res "Boundary / Inner" \
+                       rank "Rank here" start "Start pt"} {
+        for {set c 0} {$c < 20} {incr c} {
+            if {[winfo exists $t.hdr.h$c] && [string match "$_hdr*" [$t.hdr.h$c cget -text]]} {
+                dict set _ci $_k $c; break
+            }
+        }
     }
     dict for {r pair} $_cavity_row_map {
         lassign $pair tid id
-        if {[winfo exists $g.lin$r]} { _cavity_lining_btn_sync $g.lin$r $tid }
-        if {$_sc >= 0 && [winfo exists $g.v${r}_$_sc] && $id ne "" && [dict exists $cavs $id]} {
-            catch {$g.v${r}_$_sc configure -text [_cavity_origin_short [dict get $cavs $id]]}
+        set here [expr {$id ne "" && [dict exists $cavs $id]}]
+        set cv [expr {$here ? [dict get $cavs $id] : {}}]
+        # Every value that depends on the frame, refreshed together. Only
+        # Start pt used to update, so scrubbing left the Seen colour, the
+        # volume and the rank describing whichever frame the window opened on.
+        foreach {k txt} [list \
+                vol   [expr {$here ? [format %.1f [dict get $cv volume]] : "-"}] \
+                depth [expr {$here ? [dict get $cv depth] : "-"}] \
+                res   [expr {$here ? "[dict get $cv nboundary]/[dict get $cv ninner]" : "-"}] \
+                rank  [expr {$here ? $id : "absent"}] \
+                start [expr {$here ? [_cavity_origin_short $cv] : "-"}]] {
+            if {![dict exists $_ci $k]} { continue }
+            set _cell $g.v${r}_[dict get $_ci $k]
+            if {[winfo exists $_cell]} { catch {$_cell configure -text $txt} }
         }
+        # The traffic light: green when this pocket exists in the frame being
+        # viewed, red when it does not. This is the whole point of the column.
+        if {[dict exists $_ci seen]} {
+            set _cell $g.v${r}_[dict get $_ci seen]
+            if {[winfo exists $_cell]} {
+                catch {$_cell configure -foreground [expr {$here ? "#2a9d3f" : "#c0392b"}]}
+            }
+        }
+        # The volume cell is a link only while the pocket is here to plot.
+        if {[dict exists $_ci vol]} {
+            set _cell $g.v${r}_[dict get $_ci vol]
+            if {[winfo exists $_cell]} {
+                catch {$_cell configure -foreground [expr {$here ? "#1a5fb4" : "black"}] \
+                                        -cursor [expr {$here ? "hand2" : ""}]}
+            }
+        }
+        # Per-frame buttons follow the same presence test the row build used.
+        foreach _b {lin use res} {
+            if {[winfo exists $g.$_b$r]} {
+                catch {$g.$_b$r configure -state [expr {$here ? "normal" : "disabled"}]}
+            }
+        }
+        if {[winfo exists $g.lin$r]} { _cavity_lining_btn_sync $g.lin$r $tid }
     }
 }
 
@@ -20145,11 +20184,6 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             }
             incr c
         }
-        button $g.gear$r -text "\u2699" -font {Helvetica 10} -padx 2 -pady 0 -relief flat \
-            -command [list ::VMDPathFinder::show_cavity_gear_settings $tid]
-        grid $g.gear$r -row $r -column $c -sticky w -padx {6 2}
-        add_tooltip $g.gear$r "Per-pocket display: colour, material, and surface vs clearance spheres."
-        incr c
         button $g.lin$r -text "Lining" -font {Helvetica 8} -padx 3 -pady 0 \
             -command [list ::VMDPathFinder::_cavity_show_lining $frame $id]
         if {!$_here} { $g.lin$r configure -state disabled }
@@ -20167,6 +20201,14 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
             -command [list ::VMDPathFinder::_tunnel_cavity_residues $frame $id]
         if {!$_here} { $g.res$r configure -state disabled }
         grid $g.res$r -row $r -column $c -sticky w -padx {2 4}
+        incr c
+        # Gear LAST, past the buttons: it is per-pocket appearance, not data, so
+        # it belongs at the end of the row rather than between the values and
+        # the actions.
+        button $g.gear$r -text "\u2699" -font {Helvetica 10} -padx 2 -pady 0 -relief flat \
+            -command [list ::VMDPathFinder::show_cavity_gear_settings $tid]
+        grid $g.gear$r -row $r -column $c -sticky w -padx {6 4}
+        add_tooltip $g.gear$r "Per-pocket display: colour, material, and surface vs clearance spheres."
     }
 
     set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
@@ -51840,6 +51882,7 @@ proc ::VMDPathFinder::frame_changed_settle {} {
             # and _tunnel_update_traffic_lights is the cheap way to keep those
             # current instead of a full refresh_tunnel_tab_if_stale rebuild.
             catch {_tunnel_update_traffic_lights}
+            catch {_cavity_refresh}
             return
         }
         set _tf [_tunnel_display_frame]
@@ -51852,6 +51895,10 @@ proc ::VMDPathFinder::frame_changed_settle {} {
             # it finished, which reads as "the list takes 2-3 seconds": the
             # list itself is tens of ms, it was just queued behind the redraw.
             catch {_tunnel_update_traffic_lights}
+            # The cavity window is per-frame too: its Seen light, volume, rank
+            # and start point all describe the frame being viewed, and nothing
+            # was refreshing them on a scrub.
+            catch {_cavity_refresh}
             # The row order no longer depends on the landed frame either (see
             # _tunnel_list_signature) - this is normally a no-op on a plain
             # frame step now. Still called, not removed: a sort click, a new

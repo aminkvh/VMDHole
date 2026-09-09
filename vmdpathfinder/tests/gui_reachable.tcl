@@ -6085,6 +6085,48 @@ if {$ntun > 0} {
                       && [winfo exists $w.tuncav.sc.c.inner.gear1]
                       && [winfo exists $w.tuncav.sc.c.inner.use1]}] \
                "(allc=[winfo exists $w.tuncav.ctl.allc] gear1=[winfo exists $w.tuncav.sc.c.inner.gear1])"
+        # The gear is the LAST widget in its row: per-pocket appearance, not
+        # data, so it sits past the action buttons.
+        set _g $w.tuncav.sc.c.inner
+        set _gearcol -1; set _maxcol -1
+        foreach _kid [winfo children $_g] {
+            set _gi [grid info $_kid]
+            set _ri [lsearch $_gi -row]; set _cix [lsearch $_gi -column]
+            if {$_ri < 0 || $_cix < 0} { continue }
+            if {[lindex $_gi [expr {$_ri+1}]] != 1} { continue }
+            set _cc [lindex $_gi [expr {$_cix+1}]]
+            if {$_cc > $_maxcol} { set _maxcol $_cc }
+            if {[string match "*gear1" $_kid]} { set _gearcol $_cc }
+        }
+        report "the cavity gear is the last column in its row" \
+               [expr {$_gearcol >= 0 && $_gearcol == $_maxcol}] \
+               "(gear at column $_gearcol, last is $_maxcol)"
+
+        # The Seen light must describe the frame BEING VIEWED, not the frame the
+        # window was opened on. Nothing called _cavity_refresh on a frame change,
+        # so it never moved once the window was up.
+        set _seencol -1
+        for {set c 0} {$c < 20} {incr c} {
+            if {[winfo exists $w.tuncav.hdr.h$c]
+                && [string match "Seen*" [$w.tuncav.hdr.h$c cget -text]]} { set _seencol $c; break }
+        }
+        set _before ""; set _after ""
+        if {$_seencol >= 0 && [winfo exists $_g.v1_$_seencol]} {
+            set _before [$_g.v1_$_seencol cget -foreground]
+            # drive a frame change through the same proc the scrubber reaches
+            set _saveframe $::VMDPathFinder::state(selected_result_frame)
+            catch {::VMDPathFinder::_cavity_refresh}
+            set _after [$_g.v1_$_seencol cget -foreground]
+            set ::VMDPathFinder::state(selected_result_frame) $_saveframe
+        }
+        report "the cavity Seen light is refreshable in place (green/red, not a rebuild)" \
+               [expr {$_seencol >= 0 && $_after in {#2a9d3f #c0392b}}] \
+               "(col $_seencol, before '$_before' after '$_after')"
+        report "_cavity_refresh is wired into the frame-change path" \
+               [expr {[string first "_cavity_refresh" \
+                   [info body ::VMDPathFinder::frame_changed_settle]] >= 0}] \
+               "(frame_changed_settle must call it, or scrubbing never updates the table)"
+
         # sorting actually reorders
         set ::VMDPathFinder::state(cavity_sort_col) vol
         set ::VMDPathFinder::state(cavity_sort_dir) desc
