@@ -1758,6 +1758,9 @@ proc ::VMDPathFinder::show_gui {} {
     wm withdraw $w
     wm title $w "◎ VMDPathFinder v$version[expr {$build eq "" ? "" : "  (build $build)"}]"
     wm protocol $w WM_DELETE_WINDOW ::VMDPathFinder::close_gui
+    # The window manager's X reaches close_gui above; the Extensions-menu entry
+    # does not - it withdraws $w directly. This catches that.
+    bind $w <Unmap> {if {"%W" eq [set ::VMDPathFinder::w]} {after idle ::VMDPathFinder::_on_main_unmapped}}
     # Quitting VMD without closing this window first never runs close_gui, so
     # the watchdog, the pending afters and any live shell pool are never told
     # to stop. Tk destroys "." however the user quits.
@@ -24227,6 +24230,17 @@ proc ::VMDPathFinder::_withdraw_child_dialogs {} {
     _destroy_tooltips $w
 }
 
+proc ::VMDPathFinder::_on_main_unmapped {} {
+    # VMD's Extensions menu withdraws the main window ITSELF, without going
+    # through close_gui - so every gear, settings and results window the plugin
+    # had open stayed on screen with nothing behind them. Only "withdrawn"
+    # counts: minimising gives "iconic", and a minimised window is coming back.
+    variable w
+    if {![_have_tk] || ![winfo exists $w]} { return }
+    if {[catch {wm state $w} _st] || $_st ne "withdrawn"} { return }
+    _withdraw_child_dialogs
+}
+
 proc ::VMDPathFinder::_destroy_tooltips {root} {
     # Depth-first: a tooltip is named __vmdpathfinder_tip and parented to its own
     # widget, so it can be arbitrarily deep rather than a direct child of $w.
@@ -24408,6 +24422,22 @@ proc ::VMDPathFinder::_axg_meanvar {coords axis} {
     return [list $m [expr {$s2/double($n) - $m*$m}]]
 }
 proc ::VMDPathFinder::_detect_pore_axis {molid seltext} {
+    # Memoised. The work below is a whole-system atomselect over the lipid
+    # phosphates, a `measure inertia`, and four Tcl passes over every one of
+    # their coordinates - seconds on a bilayer. It is the same answer for the
+    # same structure and selection, and it is asked for again every time a
+    # memory slot is created, which is what made adding one feel slow.
+    variable _pore_axis_memo
+    if {![info exists _pore_axis_memo]} { set _pore_axis_memo [dict create] }
+    set _key "$molid|$seltext"
+    catch {append _key "|[molinfo $molid get numatoms]|[molinfo $molid get numframes]"}
+    if {[dict exists $_pore_axis_memo $_key]} { return [dict get $_pore_axis_memo $_key] }
+    set _res [_detect_pore_axis_uncached $molid $seltext]
+    dict set _pore_axis_memo $_key $_res
+    return $_res
+}
+
+proc ::VMDPathFinder::_detect_pore_axis_uncached {molid seltext} {
     # Tiered pore-axis guess. Returns {axis method} (axis a unit 3-vector) or {{} {}}.
     # measure inertia is used ONLY for the three principal DIRECTIONS (its eigenvectors are
     # reliable); each is then ranked by a variance WE compute, since measure inertia's
@@ -27057,6 +27087,8 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     variable current_surface_mol
     variable state
     if {![_mem_enabled] || [dict size $pore_memories] < 2} { return }
+    variable _mem_render_busy
+    set _mem_render_busy 1
     set save_results $results
     set save_frames  $result_frames
     set save_mol     $current_surface_mol
@@ -27066,6 +27098,10 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
         if {[info exists state($k)]} { dict set save_disp $k $state($k) }
     }
     foreach id [lsort -integer [dict keys $pore_memories]] {
+        # Stop means stop. This is the one hot per-frame loop with no abort
+        # check, so pressing Stop during a multi-memory redraw kept cycling
+        # through the remaining memories, each one rewriting the status bar.
+        if {[_abort_requested]} { break }
         if {$id eq $save_active} { continue }
         set rec [dict get $pore_memories $id]
         if {![dict exists [dict get $rec results] $frame]} { continue }
@@ -27086,6 +27122,13 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     set pore_memory_active $save_active
     set current_surface_mol $save_mol
     dict for {k v} $save_disp { set state($k) $v }
+    set _mem_render_busy 0
+    # The flag this loop raised is the one it consumes. Leaving it up would
+    # abort the next real calculation before it started.
+    if {[_abort_requested] && ![_op_in_progress]} {
+        set state(abort_requested) 0
+        set state(status) "Stopped."
+    }
 }
 
 proc ::VMDPathFinder::_mem_keep_frame {} {
@@ -27979,7 +28022,10 @@ proc ::VMDPathFinder::_mem_root_suffix {root kind} {
     # not a path to append to.
     if {$kind eq "tunnel"} { return $root }
     variable pore_memory_active
-    if {![_mem_enabled]} { return $root }
+    # NOT gated on _mem_enabled. The memory row is hidden outside spherical, but
+    # the active slot is not reset by leaving it - so a Connolly or Capsule run
+    # started while memory 3 was active resolved to memory 1's root and wrote
+    # over memory 1's frames.
     if {$pore_memory_active eq "" || $pore_memory_active == 1} { return $root }
     return [file join $root [format "mem_%d" $pore_memory_active]]
 }
@@ -30662,8 +30708,12 @@ proc ::VMDPathFinder::remove_hydro_scalebar {} {
     variable scalebar_watch_id
     catch {after cancel $scalebar_watch_id}
     set scalebar_watch_id ""
+    # Same existence check as every other track delete - see
+    # remove_ellipse_surface.
     if {$hydro_scalebar_mol >= 0} {
-        catch {mol delete $hydro_scalebar_mol}
+        if {![catch {molinfo $hydro_scalebar_mol get name}]} {
+            catch {mol delete $hydro_scalebar_mol}
+        }
         set hydro_scalebar_mol -1
     }
     set hydro_scalebar_scheme ""
@@ -40795,7 +40845,12 @@ proc ::VMDPathFinder::request_abort {} {
     # The Abort button's ONLY action - deliberately dumb (flag-set + status) so it
     # is safe to fire from inside a compute loop's own `update`. No cleanup here.
     variable state
-    if {![_op_in_progress]} {
+    variable _mem_render_busy
+    # A multi-memory redraw is not bracketed by _begin_calc, so _op_in_progress
+    # is false throughout it and Stop used to answer "Nothing is running" while
+    # the status bar cycled through surfaces. It consumes the flag itself.
+    set _mem_busy [expr {[info exists _mem_render_busy] && $_mem_render_busy}]
+    if {![_op_in_progress] && !$_mem_busy} {
         # A click that lands after the pass already finished: raising the flag
         # here would strand it (nothing is running to consume and lower it)
         # and leave "Aborting..." as the standing status.
@@ -43922,7 +43977,12 @@ proc ::VMDPathFinder::_ellipse_geometry {molid frame N} {
 
 proc ::VMDPathFinder::remove_ellipse_surface {} {
     variable ellipse_surface_mol
-    if {$ellipse_surface_mol >= 0} { catch {mol delete $ellipse_surface_mol} }
+    # Check the id still exists first. `mol delete` on one VMD has already freed
+    # crashes VMD outright, and catch cannot catch that - the id goes stale
+    # whenever the user deletes the track by hand in VMD Main.
+    if {$ellipse_surface_mol >= 0 && ![catch {molinfo $ellipse_surface_mol get name}]} {
+        catch {mol delete $ellipse_surface_mol}
+    }
     set ellipse_surface_mol -1
 }
 
@@ -50552,10 +50612,19 @@ proc ::VMDPathFinder::show_selected_surface {{draft 0}} {
     # Status only, no modal dialog: this runs on every frame during scrub/
     # playback, so a pop-up here would spam (and block playback) on any frame
     # whose surface can't be built.
+    # Guarded like the playback path. load_surface_for_frame runs a FULL `update`
+    # on the non-draft path, which dispatches queued frame and redraw events -
+    # so without this an event handled mid-build re-entered here, and with
+    # several memories each doing that once per memory the status bar cycled
+    # "Loading surface / Building surface" indefinitely.
+    variable _frame_render_busy
+    if {[info exists _frame_render_busy] && $_frame_render_busy} { return }
+    set _frame_render_busy 1
     if {[catch {load_surface_for_frame $state(selected_result_frame) $draft} msg]} {
         set state(status) $msg
     }
     catch {_mem_render_other_memories $state(selected_result_frame) $draft}
+    set _frame_render_busy 0
 }
 
 proc ::VMDPathFinder::toggle_frame_list {} {
