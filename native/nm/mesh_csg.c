@@ -415,6 +415,31 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     fill_field(fclip, 1);
     /* smoothing: the mean of every frame's field, marched in place of the
        centre's; the centre's own fields still decide caps and colour */
+    /* WHY A FRAME SMOOTHED AGAINST COPIES OF ITSELF DOES NOT REPRODUCE THE
+       UNSMOOTHED MESH, measured rather than guessed:
+
+       The averaged FIELD is bit-identical - CSG_DEBUG_IDENT reports
+       differing=0 maxdiff=0 over 105245 corners with three identical frames.
+       The mesh differs because smoothing takes two other branches:
+
+         1. vert_interp is passed -1 instead of corner_sphere(), dropping the
+            analytic sphere-based vertex refinement. Restoring it alone put the
+            count back to 3308 from 3309.
+         2. normals are taken from the marched field instead of fpos.
+            Restoring that as well made the mesh BYTE-IDENTICAL.
+
+       Both are deliberate and correct for real smoothing: an averaged field is
+       no longer a union of spheres, so no single sphere governs a corner, and
+       the normal should be the gradient of the field actually marched. So
+       "smoothed against itself == not smoothed" is NOT an achievable
+       invariant, and asserting it would force a special case that only helps a
+       test. The invariant that IS true and now tested is field identity.
+
+       Worth flagging separately: OFF the smoothing path normals come from
+       fpos, while the surface is fval = max(fpos, -fclip). Where the clip term
+       dominates, the normal is the gradient of a different function than the
+       one that defined the surface. That is a latent inconsistency in the
+       ordinary path, not in smoothing. */
     float *favg = NULL;
     if (nwith > 0) {
         /* fill_field only evaluates a sphere within radius+2h, so every corner
@@ -461,6 +486,23 @@ static long mesh_run(const char *outpath, const char *plotpath) {
         sph_restore(centre);
         for (size_t i = 0; i < ncorner; i++) {
             favg[i] = accn[i] > 0 ? (float)(acc[i] / (double)accn[i]) : 1e9f;
+        }
+        /* CSG_DEBUG_IDENT=1: report how far the averaged field is from the
+           centre's own. Zero cost unless the variable is set; the smoothing
+           identity test reads this line. */
+        if (getenv("CSG_DEBUG_IDENT")) {
+            double mx = 0; size_t nd = 0, nsent = 0, ncnt[8] = {0};
+            for (size_t i = 0; i < ncorner; i++) {
+                float v = fval(i);
+                if (accn[i] < 8) ncnt[accn[i]]++;
+                if (v >= 1e8f || favg[i] >= 1e8f) { nsent++; continue; }
+                double d = fabs((double)favg[i] - (double)v);
+                if (d > 0) nd++;
+                if (d > mx) mx = d;
+            }
+            fprintf(stderr, "IDENT corners=%zu differing=%zu maxdiff=%.9g sentinel=%zu"
+                            " accn0=%zu accn1=%zu accn2=%zu accn3=%zu\n",
+                    ncorner, nd, mx, nsent, ncnt[0], ncnt[1], ncnt[2], ncnt[3]);
         }
         free(acc); free(accn);
         #undef CSG_SENTINEL
