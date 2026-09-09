@@ -4925,6 +4925,30 @@ chk "no private capsule tube remains" \
         && [llength [info procs ::VMDPathFinder::_capsule_slice_property]] == 0}] 1
 chk "the mesher serves capsule runs" \
     [expr {[string first {capsule} [info body ::VMDPathFinder::_csg_can_mesh]] >= 0}] 1
+
+# THREE builders feed the sos path, and under capsule all three must pick the
+# kept .sph and drop -colour. Stating that policy three times is how it got
+# fixed in two of them and left in the third: prebuild kept writing a clipped
+# stub to the SAME plot path the display path then read from cache, so the
+# fixed builder never ran. One helper, and every builder must call it.
+foreach _p {surface_mesh surface_mesh_cmd prebuild_surfaces_parallel} {
+    chk "$_p takes its capsule sos input from the one helper" \
+        [expr {[string first {_capsule_sos_input} [info body ::VMDPathFinder::$_p]] >= 0}] 1
+}
+set _sv_pm2 $::VMDPathFinder::state(pore_method)
+set ::VMDPathFinder::state(pore_method) capsule
+# -colour is the half that clipped the surface away, so that is what is
+# asserted. The .sph half cannot be checked on a made-up path: _capsule_sph_kept
+# hands the original file back when it has no slices to keep.
+chk "...which under capsule drops -colour" \
+    [lindex [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] 1] 0
+chk "...and routes the .sph through the kept-slices filter" \
+    [expr {[string first {_capsule_sph_kept} \
+        [info body ::VMDPathFinder::_capsule_sos_input]] >= 0}] 1
+set ::VMDPathFinder::state(pore_method) circular
+chk "...and off capsule it changes nothing" \
+    [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] {/tmp/x.sph 1}
+set ::VMDPathFinder::state(pore_method) $_sv_pm2
 foreach _p {surface_mesh surface_mesh_cmd _csg_recolor _csg_sph_extent} {
     chk "$_p hands the mesher the run's axis" \
         [expr {[string first {_csg_mesh_opts} [info body ::VMDPathFinder::$_p]] >= 0}] 1
