@@ -33948,7 +33948,7 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     label $d.hdr.io -text "Ions \u2003" -font {Helvetica 8 bold} -anchor w
     label $d.hdr.gg -text "\u2699" -font {Helvetica 9} -cursor hand2
     bind $d.hdr.gg <Button-1> {::VMDPathFinder::show_conn_lobes_global_gear}
-    add_tooltip $d.hdr.io "How many ion-frames the Ion Flow scan found INSIDE each opening, in the displayed frame. Hover a number for the species breakdown, the mean length of a visit, and how many visits actually crossed the opening rather than sitting in it. Reads \"-\" until you run an Ion Flow scan."
+    add_tooltip $d.hdr.io "Ion-frames the Ion Flow scan found inside each opening, summed over ALL analysed frames - every frame is classified separately and each ion is attributed using its own frame's geometry. Hover a number for the species breakdown, the mean length of a visit in consecutive frames, and how many visits moved 3 A or more radially (radial travel, not a verified passage). Reads \"-\" until you run an Ion Flow scan."
     add_tooltip $d.hdr.gg "Color, property, material, matching, reset and export for ALL regions."
     grid $d.hdr.all -row 0 -column 0 -sticky w -padx 1
     grid $d.hdr.t   -row 0 -column 1 -sticky w -padx 2
@@ -34200,9 +34200,8 @@ proc ::VMDPathFinder::_refresh_conn_lobes_panel {} {
     # Ion traffic per opening, computed ONCE for the displayed frame. Empty
     # whenever there is no Ion Flow scan yet, in which case every row reads "-".
     variable state
-    set _occ_frame [expr {[info exists state(selected_result_frame)] ? $state(selected_result_frame) : ""}]
     set _occ {}
-    if {$_occ_frame ne ""} { catch {set _occ [_conn_opening_occupancy $_occ_frame]} }
+    catch {set _occ [_conn_opening_occupancy]}
     set r 0
     _conn_lobe_row_panel $d.rows.c.inner $r 0 "Pore" "" "" 1 ""
     foreach row $rows {
@@ -34228,7 +34227,7 @@ proc ::VMDPathFinder::_refresh_conn_lobes_panel {} {
         _conn_lobe_row_panel $d.rows.c.inner $r $sid "OP$sid" $seentxt \
             $necktxt [dict get $row present] $_et \
             [dict get $row axial] [dict get $row azim] \
-            [_conn_lobe_ion_text $row $_occ_frame $_occ]
+            [_conn_lobe_ion_text $row "" $_occ]
     }
     _conn_lobe_trim_rows $r
     # Tk delivers a wheel event only to the widget under the pointer, never to
@@ -35075,36 +35074,35 @@ proc ::VMDPathFinder::_elide_to_width {text fnt px} {
 }
 
 proc ::VMDPathFinder::_conn_lobe_ion_text {row frame occ} {
-    # The row is a POOLED opening with its own sid; the occupancy is keyed by
-    # the lobe index IN THIS FRAME. Each row's `inst` carries {frame lobeindex
-    # ...} per frame, which is the map between them - the same rank-vs-identity
-    # step the routes and pockets need.
-    if {![dict size $occ] || $frame eq ""} { return [list "-" ""] }
-    set li ""
-    foreach ins [dict get $row inst] {
-        lassign $ins ifr ili
-        if {$ifr eq $frame} { set li $ili; break }
+    # The occupancy is keyed by the POOLED site id, the same number this row
+    # shows, because every frame's lobes are mapped through
+    # _conn_lobe_site_map before anything is counted.
+    if {![dict size $occ]} { return [list "-" ""] }
+    set sid [dict get $row sid]
+    if {![dict exists $occ $sid]} {
+        return [list "0" "No ion was found inside this opening in any analysed frame."]
     }
-    if {$li eq "" || ![dict exists $occ $li]} { return [list "0" "No ion visited this opening in this frame."] }
-    set e [dict get $occ $li]
+    set e [dict get $occ $sid]
     set spl {}
     dict for {k v} [dict get $e species] { lappend spl "$k $v" }
-    set tip "[dict get $e ions] ion-frames in this opening"
+    set tip "[dict get $e ions] ion-frames inside this opening, over [dict get $e nframes] of the analysed frames"
     if {[llength $spl]} { append tip " ([join $spl {, }])" }
-    append tip [format ". Mean visit %.1f frame(s)" [dict get $e dwell]]
-    if {[dict get $e cross] > 0} {
-        append tip "; [dict get $e cross] of those visits crossed it (the ion's distance from the axis changed by 3 A or more, so it went THROUGH rather than sitting in it)."
-    } else {
-        append tip "; no visit crossed it - ions sat in the opening rather than passing through."
-    }
+    append tip [format ". Mean visit %.1f consecutive frame(s)" [dict get $e dwell]]
+    append tip ". [dict get $e cross] visit(s) moved 3 A or more radially while inside it"
+    append tip " - that is radial travel, NOT a verified lumen-to-bulk passage: it does not test where the ion came from or went."
     return [list [dict get $e ions] $tip]
 }
 
 proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last} {
     # One visit to one opening, finished. Records its length (for the mean
-    # dwell) and whether the visitor crossed the opening rather than sitting in
-    # it - 3 A of radial travel, which is more than the jitter of a resident and
-    # about the width of the band an opening occupies.
+    # dwell) and its RADIAL TRAVEL: whether the ion's distance from the axis
+    # changed by >= 3 A between the first and last frame of the visit.
+    #
+    # That is NOT a verified passage. It does not establish that the ion went
+    # from the lumen to the bulk (or back) THROUGH this opening - it only says
+    # the ion moved radially while it was in one. Calling it a passage would
+    # claim a transition this measurement does not test, so the column and the
+    # tooltip both say "moved >=3 A radially" instead.
     upvar 1 $outvar out
     set e [dict get $out $lb]
     dict set e dwellsum [expr {[dict get $e dwellsum] + $run}]
@@ -35115,131 +35113,141 @@ proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last} {
     dict set out $lb $e
 }
 
-proc ::VMDPathFinder::_conn_opening_occupancy {frame} {
-    # Ion / water occupancy of each lateral OPENING, from the Ion Flow scan.
+proc ::VMDPathFinder::_conn_opening_occupancy {args} {
+    # Ion traffic through each lateral OPENING, keyed by the pooled SITE id the
+    # openings list shows.
     #
-    # Attribution uses the same (axial, azimuth) grid the lobes are built on: a
-    # sample belongs to an opening when it lands in one of that opening's own
-    # cells AND sits outside the pore wall - "outside the wall" is what makes it
-    # lateral rather than lumen, which is the same test the classifier applies
-    # to a dot.
+    # EVERY analysed frame is classified and gets its own opening map, and each
+    # ion sample is attributed using the map for ITS OWN frame. The first
+    # version built one map from the displayed frame and applied it to samples
+    # from every frame, which is neither what the header claimed nor a
+    # meaningful measurement - a fenestration that opens and closes moves
+    # between frames, so last frame's geometry cannot say where this frame's ion
+    # was.
     #
-    # Returns dict: <lobe index> -> {ions <n> waters <n> species <dict>
-    #                                dwell <mean consecutive frames>
-    #                                cross <n ions that changed side through it>}
-    # {} when there is no scan, no Connolly classification, or no lobes.
+    # Returns dict: <site id> -> {ions n species dict waters n
+    #                             dwell <mean CONSECUTIVE frames> cross n
+    #                             frames <n frames with traffic>}
     variable ion_flow_raw
     variable results
-    if {![info exists ion_flow_raw] || ![dict exists $ion_flow_raw traces]} { return {} }
-    if {![dict exists $results $frame sph_file]} { return {} }
-    set sph [dict get $results $frame sph_file]
-    if {![file exists $sph]} { return {} }
-    # Same axis and the same memoised classification the openings panel uses, so
-    # the attribution cannot land on a different split from the one on screen.
+    variable result_frames
     variable state
+    if {![info exists ion_flow_raw] || ![dict exists $ion_flow_raw traces]} { return {} }
+    set table [_conn_site_table]
+    if {![dict size $table] || [dict get $table status] ne "ok"} { return {} }
     set _cv [normalize_triplet_value $state(cvect)]
     set _cp [normalize_triplet_value $state(cpoint)]
     if {[llength $_cp] != 3} {
         set _cp ""
-        catch {set _cp [_resolve_point_input $state(cpoint) [resolve_molid_or -1] $frame]}
+        catch {set _cp [_resolve_point_input $state(cpoint) [resolve_molid_or -1] \
+            [lindex $result_frames 0]]}
     }
     if {[llength $_cp] != 3 || [llength $_cv] != 3} { return {} }
-    set cls [_conn_classify_cached $sph $_cv $_cp [_conn_pore_margin]]
-    if {![dict size $cls]} { return {} }
-    set lobes [_conn_frame_lobes $cls]
-    if {![llength $lobes]} { return {} }
     lassign [_conn_lobe_grid] zcell nth
-    set twopi [expr {2*acos(-1.0)}]
-    # cell -> lobe index, from each lobe's own dots
-    set cell2lobe [dict create]
-    set li -1
-    set lat_zt [expr {[dict exists $cls lat_zt] ? [dict get $cls lat_zt] : {}}]
-    set lat    [dict get $cls lateral]
+    set PI [expr {acos(-1.0)}]
+    set twopi [expr {2*$PI}]
     lassign $_cp ox oy oz
     lassign $_cv ux uy uz
     set un [expr {sqrt($ux*$ux+$uy*$uy+$uz*$uz)}]
     if {$un < 1e-9} { return {} }
     set ux [expr {$ux/$un}]; set uy [expr {$uy/$un}]; set uz [expr {$uz/$un}]
     lassign [_conn_axis_basis $ux $uy $uz] e1x e1y e1z e2x e2y e2z
-    foreach L $lobes {
-        incr li
-        foreach k [lindex $L 3] {
-            if {[llength $lat_zt]} {
-                lassign [lindex $lat_zt $k] t th
-            } else {
-                # native classification: recover t/azimuth from the dot itself
-                set ln [lindex $lat $k]
-                set x [string trim [string range $ln 30 37]]
-                set y [string trim [string range $ln 38 45]]
-                set z [string trim [string range $ln 46 53]]
-                if {![string is double -strict $x]} continue
-                set dx [expr {$x-$ox}]; set dy [expr {$y-$oy}]; set dz [expr {$z-$oz}]
-                set t [expr {$dx*$ux + $dy*$uy + $dz*$uz}]
-                set qx [expr {$dx-$t*$ux}]; set qy [expr {$dy-$t*$uy}]; set qz [expr {$dz-$t*$uz}]
-                set th [expr {atan2($qx*$e2x+$qy*$e2y+$qz*$e2z, $qx*$e1x+$qy*$e1y+$qz*$e1z)}]
+
+    # one cell -> site map PER FRAME
+    set permap [dict create]
+    foreach fr $result_frames {
+        if {![dict exists $results $fr sph_file]} continue
+        set sph [dict get $results $fr sph_file]
+        if {![file exists $sph]} continue
+        set cls [_conn_classify_cached $sph $_cv $_cp [_conn_pore_margin]]
+        if {![dict size $cls]} continue
+        set lobes [_conn_frame_lobes $cls]
+        if {![llength $lobes]} continue
+        set smap [_conn_lobe_site_map $table $fr $lobes]
+        set lat [dict get $cls lateral]
+        set lat_zt [expr {[dict exists $cls lat_zt] ? [dict get $cls lat_zt] : {}}]
+        set c2s [dict create]
+        set li -1
+        foreach L $lobes {
+            incr li
+            if {![dict exists $smap $li]} continue
+            set sid [dict get $smap $li]
+            foreach k [lindex $L 3] {
+                if {[llength $lat_zt]} {
+                    lassign [lindex $lat_zt $k] t th
+                } else {
+                    set ln [lindex $lat $k]
+                    set x [string trim [string range $ln 30 37]]
+                    set y [string trim [string range $ln 38 45]]
+                    set z [string trim [string range $ln 46 53]]
+                    if {![string is double -strict $x]} continue
+                    set dx [expr {$x-$ox}]; set dy [expr {$y-$oy}]; set dz [expr {$z-$oz}]
+                    set t [expr {$dx*$ux + $dy*$uy + $dz*$uz}]
+                    set qx [expr {$dx-$t*$ux}]; set qy [expr {$dy-$t*$uy}]; set qz [expr {$dz-$t*$uz}]
+                    set th [expr {atan2($qx*$e2x+$qy*$e2y+$qz*$e2z, $qx*$e1x+$qy*$e1y+$qz*$e1z)}]
+                }
+                set zi [expr {int(floor($t/$zcell))}]
+                set ti [expr {int(floor(($th + $PI)/$twopi*$nth)) % $nth}]
+                if {$ti < 0} { incr ti $nth }
+                dict set c2s "$zi,$ti" $sid
             }
-            set zi [expr {int(floor($t/$zcell))}]
-            set ti [expr {int(floor(($th + acos(-1.0))/$twopi*$nth)) % $nth}]
-            if {$ti < 0} { incr ti $nth }
-            dict set cell2lobe "$zi,$ti" $li
         }
+        if {[dict size $c2s]} { dict set permap $fr $c2s }
     }
-    if {![dict size $cell2lobe]} { return {} }
-    # the pore wall as a function of axial coordinate, for the lumen test
+    if {![dict size $permap]} { return {} }
+
     set out [dict create]
     foreach tr [dict get $ion_flow_raw traces] {
+        # IONS ONLY. Water dwell and crossing are a different quantity and the
+        # column says "ion-frames"; mixing them in was a presentation lie.
+        if {[dict get $tr species] eq "Water"} { continue }
         set sp [dict get $tr species]
-        set zs [dict get $tr z]
         set azs [expr {[dict exists $tr az] ? [dict get $tr az] : {}}]
-        set fs [dict get $tr frame]
-        set rs [dict get $tr r]
         if {![llength $azs]} continue
-        # PASSAGE, per episode: an ion that merely sits in an opening keeps
-        # roughly the same distance from the axis, while one that goes THROUGH
-        # moves outward (or inward) across it. The episode's first and last
-        # radial positions are what say which happened.
-        set prev_lobe ""; set run 0; set r_first ""; set r_last ""
+        set zs [dict get $tr z]; set fs [dict get $tr frame]; set rs [dict get $tr r]
+        set prev_site ""; set prev_f ""; set run 0; set r_first ""; set r_last ""
         foreach t $zs th $azs f $fs rr $rs {
-            if {$th eq "" || $t eq ""} continue
-            set zi [expr {int(floor($t/$zcell))}]
-            set ti [expr {int(floor(($th + acos(-1.0))/$twopi*$nth)) % $nth}]
-            if {$ti < 0} { incr ti $nth }
-            set key "$zi,$ti"
-            if {![dict exists $cell2lobe $key]} {
-                if {$prev_lobe ne "" && $run > 0} { _conn_open_close_episode out $prev_lobe $run $r_first $r_last }
-                set prev_lobe ""; set run 0; set r_first ""; set r_last ""
-                continue
+            set site ""
+            if {$th ne "" && $t ne "" && [dict exists $permap $f]} {
+                set zi [expr {int(floor($t/$zcell))}]
+                set ti [expr {int(floor(($th + $PI)/$twopi*$nth)) % $nth}]
+                if {$ti < 0} { incr ti $nth }
+                set c2s [dict get $permap $f]
+                if {[dict exists $c2s "$zi,$ti"]} { set site [dict get $c2s "$zi,$ti"] }
             }
-            set lb [dict get $cell2lobe $key]
-            if {![dict exists $out $lb]} {
-                dict set out $lb [dict create ions 0 waters 0 species [dict create] \
-                                              dwellsum 0 dwelln 0 cross 0]
+            if {$site eq ""} {
+                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
+                set prev_site ""; set prev_f ""; set run 0; continue
             }
-            set e [dict get $out $lb]
-            if {$sp eq "Water"} {
-                dict set e waters [expr {[dict get $e waters] + 1}]
+            if {![dict exists $out $site]} {
+                dict set out $site [dict create ions 0 species [dict create] waters 0 \
+                                                dwellsum 0 dwelln 0 cross 0 frames [dict create]]
+            }
+            set e [dict get $out $site]
+            dict set e ions [expr {[dict get $e ions] + 1}]
+            set spd [dict get $e species]
+            dict set spd $sp [expr {([dict exists $spd $sp] ? [dict get $spd $sp] : 0) + 1}]
+            dict set e species $spd
+            set fd [dict get $e frames]; dict set fd $f 1; dict set e frames $fd
+            dict set out $site $e
+            # An episode is CONSECUTIVE analysed frames in the same opening. A
+            # gap is a new visit, not a longer one.
+            set adjacent [expr {$prev_site eq $site && $prev_f ne "" && $f == $prev_f + 1}]
+            if {$adjacent} {
+                incr run; set r_last $rr
             } else {
-                dict set e ions [expr {[dict get $e ions] + 1}]
-                set spd [dict get $e species]
-                dict set spd $sp [expr {([dict exists $spd $sp] ? [dict get $spd $sp] : 0) + 1}]
-                dict set e species $spd
+                if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
+                set run 1; set r_first $rr; set r_last $rr
             }
-            dict set out $lb $e
-            if {$lb eq $prev_lobe} {
-                incr run
-                set r_last $rr
-            } else {
-                if {$prev_lobe ne "" && $run > 0} { _conn_open_close_episode out $prev_lobe $run $r_first $r_last }
-                set prev_lobe $lb; set run 1; set r_first $rr; set r_last $rr
-            }
+            set prev_site $site; set prev_f $f
         }
-        if {$prev_lobe ne "" && $run > 0} { _conn_open_close_episode out $prev_lobe $run $r_first $r_last }
+        if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last }
     }
-    # finish the means
-    dict for {lb e} $out {
+    dict for {sid e} $out {
         set n [dict get $e dwelln]
         dict set e dwell [expr {$n > 0 ? [dict get $e dwellsum]/double($n) : 0.0}]
-        dict set out $lb $e
+        dict set e nframes [dict size [dict get $e frames]]
+        dict set out $sid $e
     }
     return $out
 }
@@ -44139,17 +44147,22 @@ proc ::VMDPathFinder::_ion_flow_scan {molid frame_ref {with_water 0}} {
             if {$Lz>0} { set rz [expr {$rz-$Lz*round($rz/double($Lz))}] }
             if {$_flow_tunnel} {
                 lassign [_ion_flow_path_coord [expr {$comx+$rx}] [expr {$comy+$ry}] [expr {$comz+$rz}] $_cur_spheres] z R
+                # A branching tunnel has no single axis to take an azimuth
+                # about, and the opening attribution that consumes it is
+                # Connolly-only. Empty, not 0.0: a fabricated angle would be
+                # attributed to whichever opening happens to sit at zero.
+                set _azv ""
             } else {
                 set z [expr {$rx*$_iux+$ry*$_iuy+$rz*$_iuz}]
                 set qx [expr {$rx-$z*$_iux}]; set qy [expr {$ry-$z*$_iuy}]; set qz [expr {$rz-$z*$_iuz}]
                 set R [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+                set _azv [expr {atan2($qx*$_e2x + $qy*$_e2y + $qz*$_e2z, \
+                                      $qx*$_e1x + $qy*$_e1y + $qz*$_e1z)}]
             }
             if {$R < $scan_r} {
                 lset tr_z $idx [linsert [lindex $tr_z $idx] end $z]
                 lset tr_r $idx [linsert [lindex $tr_r $idx] end $R]
-                lset tr_az $idx [linsert [lindex $tr_az $idx] end \
-                    [expr {atan2($qx*$_e2x + $qy*$_e2y + $qz*$_e2z, \
-                                 $qx*$_e1x + $qy*$_e1y + $qz*$_e1z)}]]
+                lset tr_az $idx [linsert [lindex $tr_az $idx] end $_azv]
                 lset tr_f $idx [linsert [lindex $tr_f $idx] end $f]
                 set wx [expr {$comx+$rx}]; set wy [expr {$comy+$ry}]; set wz [expr {$comz+$rz}]
                 lset tr_d3 $idx [linsert [lindex $tr_d3 $idx] end \
@@ -44228,7 +44241,7 @@ proc ::VMDPathFinder::_ion_flow_scan {molid frame_ref {with_water 0}} {
                     lappend _w_z($_wi) $z
                     lappend _w_r($_wi) $R
                     if {$_flow_tunnel} {
-                        lappend _w_az($_wi) 0.0
+                        lappend _w_az($_wi) ""
                     } else {
                         lappend _w_az($_wi) [expr {atan2($qx*$_e2x + $qy*$_e2y + $qz*$_e2z, \
                                                          $qx*$_e1x + $qy*$_e1y + $qz*$_e1z)}]
