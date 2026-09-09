@@ -556,7 +556,72 @@ set want {stab_radius_inner stab_radius_outer stab_rmsd_warn track_radius}
 set missing {}
 foreach k $want { if {[lsearch -exact $keys $k] < 0} { lappend missing $k } }
 puts "MEMSTAB missing={$missing} [expr {$missing eq {} ? {OK} : {BAD}}]"
-# 20. deleting the current memory leaves the other one active
+# 20. deleting a memory must drop its tracks from the DRAW CACHE. VMD reuses
+#     freed molecule ids, so a later track handed that id was told it was
+#     already drawn and never rendered - the deleted memory's frame lingered
+#     and playback jumped at it.
+lappend ::STUB_MOLS {51 memdel1 1} {52 memdel2 1}
+set mem_surface_mols(0|1) 51
+set mem_surface_mols(0|2) 52
+set _drawn_key [dict create]
+dict set _drawn_key 51 keep
+dict set _drawn_key 52 stale
+_mem_forget_tracks 2
+puts "MEMDELCACHE has51=[dict exists $_drawn_key 51] has52=[dict exists $_drawn_key 52]\
+    [expr {[dict exists $_drawn_key 51] && ![dict exists $_drawn_key 52] ? {OK} : {BAD}}]"
+array unset mem_surface_mols
+# 21. after deleting the ACTIVE memory, current_surface_mol must point at the
+#     survivor, not at the track that was just deleted
+set pore_memories [dict create]
+set pore_memory_next 1
+set pore_memory_active ""
+set results [dict create]; set result_frames {}
+_mem_ensure_first
+_mem_add_clicked
+set mem_surface_mols(0|1) 51
+set mem_surface_mols(0|2) 52
+set pore_memory_active 2
+set current_surface_mol 52
+_mem_delete 2
+puts "MEMDELPTR active=$pore_memory_active surf=$current_surface_mol\
+    [expr {$pore_memory_active == 1 && $current_surface_mol == 51 ? {OK} : {BAD}}]"
+array unset mem_surface_mols
+# 22. SYNC must not rebuild geometry. Forcing last_geom_key made
+#     apply_display_change rebuild every frame of every memory - sph_process and
+#     sos_triangle per frame - and never finish. Sync renders the shown frame
+#     only, and leaves the geometry key alone.
+set pore_memories [dict create]
+set pore_memory_next 1
+set pore_memory_active ""
+_mem_ensure_first
+set state(surface_color) blue
+_mem_stash_active
+_mem_add_clicked
+set state(surface_color) red
+_mem_stash_active
+_mem_slot_clicked 1
+set last_geom_key "SENTINEL"
+set ::SYNCRENDER {}
+rename load_surface_for_frame _real_lsff
+proc load_surface_for_frame {frame {draft 0}} { lappend ::SYNCRENDER "$frame" }
+set state(selected_result_frame) 3
+dict set pore_memories 1 results [dict create 3 {a b}]
+dict set pore_memories 1 frames {3}
+dict set pore_memories 2 results [dict create 3 {c d}]
+dict set pore_memories 2 frames {3}
+_mem_sync_clicked
+rename load_surface_for_frame {}; rename _real_lsff load_surface_for_frame
+puts "MEMSYNCCHEAP geomkey=$last_geom_key rendered={$::SYNCRENDER} busy=[_op_in_progress]\
+    [expr {$last_geom_key eq {SENTINEL} && [llength $::SYNCRENDER] <= 1 \
+           && ![_op_in_progress] ? {OK} : {BAD}}]"
+# 23. the Follow-mode smoothing watcher schedules itself and can be stopped -
+#     a leaked `after` keeps firing at a closed window
+_smooth_watch_start
+set armed [expr {$_smooth_watch_after ne ""}]
+_smooth_watch_stop
+puts "MEMSMOOTHWATCH armed=$armed stopped=[expr {$_smooth_watch_after eq {}}]\
+    [expr {$armed && $_smooth_watch_after eq {} ? {OK} : {BAD}}]"
+# 24. deleting the current memory leaves the other one active
 _mem_delete_clicked
 update
 puts "MEMDEL left=[dict keys $pore_memories] active=$pore_memory_active\

@@ -2078,6 +2078,7 @@ proc ::VMDPathFinder::build_gui {w} {
     # First paint of the memory row, so the panel opens showing slot 1 rather
     # than an empty strip until something else happens to refresh it.
     catch {_mem_refresh_row}
+    catch {_smooth_watch_start}
 
     # ---- Plot area: notebook with "Pore Profile" and "Hole over Time" tabs ----
     frame $w.plotframe
@@ -17961,6 +17962,49 @@ proc ::VMDPathFinder::_surface_smooth_window {} {
     return $n
 }
 
+proc ::VMDPathFinder::_smooth_watch_tick {} {
+    # Under "Follow", the smoothing window is VMD'S OWN per-rep slider, changed
+    # in Graphics > Representations with no call into this plugin - so a change
+    # only reached the surface on the next scrub, which is what re-checks the
+    # cached _s<N> tag. Poll it instead: one `mol smoothrep` read per visible
+    # rep, twice a second, and repaint when the number actually moves.
+    variable _smooth_watch_after
+    variable _smooth_watch_last
+    variable state
+    set _smooth_watch_after ""
+    variable w
+    if {![_have_tk] || ![winfo exists $w]} { return }
+    if {[catch {_surface_smooth_window} n]} { set n 0 }
+    if {![info exists _smooth_watch_last]} { set _smooth_watch_last $n }
+    if {$n ne $_smooth_watch_last} {
+        set _smooth_watch_last $n
+        # Only when Follow is what is actually driving it: an explicit window
+        # already repaints through _set_surface_smooth.
+        if {[info exists state(surface_smooth)] && $state(surface_smooth) eq "follow"} {
+            variable last_geom_key
+            set last_geom_key ""
+            catch {apply_display_change}
+        }
+    }
+    _smooth_watch_start
+}
+
+proc ::VMDPathFinder::_smooth_watch_start {} {
+    variable _smooth_watch_after
+    if {[info exists _smooth_watch_after] && $_smooth_watch_after ne ""} {
+        catch {after cancel $_smooth_watch_after}
+    }
+    set _smooth_watch_after [after 500 ::VMDPathFinder::_smooth_watch_tick]
+}
+
+proc ::VMDPathFinder::_smooth_watch_stop {} {
+    variable _smooth_watch_after
+    if {[info exists _smooth_watch_after] && $_smooth_watch_after ne ""} {
+        catch {after cancel $_smooth_watch_after}
+    }
+    set _smooth_watch_after ""
+}
+
 proc ::VMDPathFinder::_surface_smooth_tag {} {
     set n [_surface_smooth_window]
     return [expr {$n > 0 ? "_s$n" : ""}]
@@ -24008,6 +24052,7 @@ proc ::VMDPathFinder::close_gui {} {
             catch {after cancel $frame_changed_after}
             set frame_changed_after ""
         }
+        catch {_smooth_watch_stop}
         catch {remove_ellipse_surface}
         clear_surface
         # Remove every other molecule's surface track too (clear_surface only
@@ -26841,6 +26886,11 @@ proc ::VMDPathFinder::_mem_delete {id} {
     if {$pore_memory_active eq $id} {
         set pore_memory_active [lindex [lsort -integer [dict keys $pore_memories]] 0]
         _mem_apply [dict get $pore_memories $pore_memory_active]
+        # The same tail _mem_activate runs. Without it current_surface_mol still
+        # pointed at the DELETED memory's track.
+        _mem_keep_frame
+        _mem_point_surface_mol
+        _mem_sync_cues
     }
     return 1
 }
@@ -26856,6 +26906,7 @@ proc ::VMDPathFinder::_mem_track_ids {id} {
 
 proc ::VMDPathFinder::_mem_forget_tracks {id} {
     variable mem_surface_mols
+    variable _drawn_key
     foreach k [array names mem_surface_mols "*|$id"] {
         # Check the mol still exists before deleting it: `mol delete` on an id
         # VMD has already dropped is the crash this file guards against
@@ -26863,6 +26914,10 @@ proc ::VMDPathFinder::_mem_forget_tracks {id} {
         if {![catch {molinfo $mem_surface_mols($k) get name}]} {
             catch {mol delete $mem_surface_mols($k)}
         }
+        # VMD REUSES freed molecule ids, so the draw cache must forget this one
+        # or the next track handed that id is told it is already drawn and never
+        # renders - the deleted memory's frame lingers and playback jumps at it.
+        catch {dict unset _drawn_key $mem_surface_mols($k)}
         unset mem_surface_mols($k)
     }
 }
@@ -27108,12 +27163,9 @@ proc ::VMDPathFinder::_mem_sync_shared_labels {} {
 
 proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
     # Copy the ACTIVE memory's display settings to every other memory, then
-    # REDRAW them. Rewriting the stored dict alone changes nothing on screen -
-    # the other memories keep the colour and material they were drawn with until
-    # something re-renders them, and "sync presentation" that leaves the picture
-    # untouched is not sync. Each memory is activated in turn so the ordinary
-    # render path runs for it, then the original memory is restored.
-    # Run geometry is never copied: that is what makes each memory its own pore.
+    # REDRAW them: rewriting the stored dict alone leaves every other memory on
+    # screen in its old colour, and a sync that changes nothing is not a sync.
+    # Run geometry is never copied - that is what makes each memory its own pore.
     variable state
     variable pore_memories
     variable pore_memory_active
@@ -27135,23 +27187,53 @@ proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
         incr n
     }
     if {$redraw} {
-        # apply_display_change pumps the event loop between render chunks (see
-        # its own re-entrancy comment), so without a bracket a slot click
-        # arriving mid-sync would switch memories underneath this loop and the
-        # remaining redraws would land on the wrong one.
+        # Redraw each memory's CURRENT frame with the new display settings,
+        # through the same lightweight swap playback uses.
+        #
+        # NOT _mem_activate + apply_display_change, which is what this did
+        # first: _mem_apply resets last_geom_key, so apply_display_change treated
+        # every switch as a geometry change and rebuilt EVERY frame's mesh for
+        # EVERY memory - sph_process and sos_triangle per frame. On a real
+        # trajectory that never finished, which is the "sync goes into a loop
+        # and stays there" report. Sync changes colour, material and dot
+        # density; only dot density is geometry, and only the shown frame needs
+        # it now - the rest rebuild lazily when they are shown.
+        # load_surface_for_frame pumps the event loop between render chunks, so
+        # bracket the loop or a slot click lands mid-sync and the remaining
+        # redraws go to the wrong memory.
         _begin_calc
-        if {[catch {
+        set _syncerr [catch {
+            variable results
+            variable result_frames
+            variable current_surface_mol
+            set save_results $results
+            set save_frames  $result_frames
+            set save_mol     $current_surface_mol
+            set frame $state(selected_result_frame)
             foreach id $touched {
-                if {![_mem_activate $id]} { continue }
-                catch {apply_display_change}
+                set rec [dict get $pore_memories $id]
+                if {$frame eq "" || ![dict exists [dict get $rec results] $frame]} { continue }
+                set results       [dict get $rec results]
+                set result_frames [dict get $rec frames]
+                set pore_memory_active $id
+                dict for {k v} [dict get $rec params] {
+                    if {[lsearch -exact [_mem_display_keys] $k] >= 0} { set state($k) $v }
+                }
+                _mem_point_surface_mol
+                catch {load_surface_for_frame $frame 0}
+                dict set rec results $results
+                dict set pore_memories $id $rec
             }
-            _mem_activate $home
-            catch {apply_display_change}
-        } _serr _sopts]} {
-            _end_calc
-            return -options $_sopts $_serr
-        }
+            set results        $save_results
+            set result_frames  $save_frames
+            set pore_memory_active $home
+            set current_surface_mol $save_mol
+            foreach k [_mem_display_keys] {
+                if {[dict exists $src $k]} { set state($k) [dict get $src $k] }
+            }
+        } _serr _sopts]
         _end_calc
+        if {$_syncerr == 1} { return -options $_sopts $_serr }
     }
     return $n
 }
