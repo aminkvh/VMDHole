@@ -431,6 +431,7 @@ namespace eval ::VMDPathFinder:: {
         _cavity_track_cache       {form dict  tags {run results}}
         _pore_axis_memo           {form dict  tags {run results}}
         _conn_occ_memo            {form dict  tags {run results}}
+        _tunnel_rows_memo         {form dict  tags {run results}}
         hydro_topo_cache          {form dict  tags {run} free _free_hydro_topo_cache}
         sphere_atom_cache         {form dict  tags {run}}
         hydro3d_props_cache       {form dict  tags {run}}
@@ -3315,11 +3316,21 @@ proc ::VMDPathFinder::_tunnel_cluster_rows {} {
     # cross-frame pass already chose (tunnel_xrank), so a frame holding two
     # near-identical routes cannot weight the mean twice.
     #
-    # Returns a list of dicts: cid nmemb nframes ntotal seen bneck len phob chg
+    # Returns a list of dicts: cid nmemb nframes ntotal seen bneck len vol phob chg
     variable tunnel_xclusters
     variable tunnel_xrank
     variable tunnel_result_frames
     variable tunnel_lining
+    # Memoised. Nothing here depends on the displayed frame - that is the whole
+    # design of this proc - yet it was walked again on every frame step, three
+    # times per refresh, and once per Show-all click, rebuilding the whole
+    # membership index each time.
+    variable _tunnel_rows_memo
+    variable plot_data_version
+    set _rkey "$plot_data_version|[llength $tunnel_result_frames]|[llength $tunnel_xclusters]|[array size tunnel_xrank]"
+    if {[info exists _tunnel_rows_memo] && [dict exists $_tunnel_rows_memo $_rkey]} {
+        return [dict get $_tunnel_rows_memo $_rkey]
+    }
     set ntotal [llength $tunnel_result_frames]
     # Index the cluster->frame memberships ONCE, from the array's own keys.
     # This used to scan EVERY result frame for EVERY cluster, i.e. clusters x
@@ -3338,6 +3349,7 @@ proc ::VMDPathFinder::_tunnel_cluster_rows {} {
     foreach c $tunnel_xclusters {
         incr cid
         set nb 0; set sb 0.0; set sl 0.0
+        set nv 0; set sv 0.0
         set np 0; set sp 0.0
         set nc 0; set sc 0.0
         set frames {}
@@ -3355,6 +3367,14 @@ proc ::VMDPathFinder::_tunnel_cluster_rows {} {
             lassign $t _b _l
             if {[string is double -strict $_b]} { set sb [expr {$sb+$_b}]; incr nb }
             if {[string is double -strict $_l]} { set sl [expr {$sl+$_l}] }
+            # Tube volume of this member, from points already in memory - no
+            # file is read. See pore_volume for exactly what "volume" means
+            # here: a circular tube of the profile's own radius swept along
+            # the centreline, not the volume enclosed by the drawn surface.
+            if {![catch {
+                lassign [_tunnel_profile_series $t] _pd _pr
+                set _vv [pore_volume $_pd $_pr 0.0]
+            }] && [string is double -strict $_vv]} { set sv [expr {$sv+$_vv}]; incr nv }
             if {![info exists tunnel_lining($fr)]} { continue }
             if {![dict exists $tunnel_lining($fr) $rk.wprops]} { continue }
             set wp [dict get $tunnel_lining($fr) $rk.wprops]
@@ -3376,9 +3396,14 @@ proc ::VMDPathFinder::_tunnel_cluster_rows {} {
             seen    [expr {$ntotal > 0 ? 100.0*[llength $frames]/$ntotal : 0.0}] \
             bneck   [expr {$sb/$nb}] \
             len     [expr {$sl/$nb}] \
+            vol     [expr {$nv > 0 ? $sv/$nv : ""}] \
             phob    [expr {$np > 0 ? $sp/$np : ""}] \
             chg     [expr {$nc > 0 ? $sc/$nc : ""}]]
     }
+    if {![info exists _tunnel_rows_memo]} { set _tunnel_rows_memo [dict create] }
+    # One run's answer is all that is ever wanted; keeping older keys would
+    # hold every cluster set the session has seen.
+    set _tunnel_rows_memo [dict create $_rkey $out]
     return $out
 }
 
@@ -3485,7 +3510,16 @@ proc ::VMDPathFinder::_tunnel_gear_click_cid {cid} {
         # Say so instead of a silent no-op - and close a popup left open for
         # ANOTHER route, which otherwise reads as this click's result.
         catch {destroy $w.tunnel_gear}
-        set state(status) "Tunnel settings: this route is absent from the displayed frame - step to a frame where its Seen cell is green."
+        # Name a frame that HAS it. "step to a frame where Seen is green" is
+        # true but leaves the user hunting through the trajectory for one.
+        set _where ""
+        foreach _k [lsort [array names tunnel_xrank "$cid,*"]] {
+            set _where [string range $_k [expr {[string first , $_k] + 1}] end]
+            break
+        }
+        set state(status) [expr {$_where ne "" \
+            ? "Tunnel settings: route $cid is not in this frame. It first appears in frame $_where - go there to edit it." \
+            : "Tunnel settings: route $cid is not in any analysed frame."}]
         return
     }
     show_tunnel_gear_settings $tunnel_xrank($cid,$fr)
@@ -3717,7 +3751,7 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
     # tunnel_lining) that could disagree with what the cell itself shows.
     set sortcol [expr {[info exists state(tunnel_sort_col)] ? $state(tunnel_sort_col) : ""}]
     set sortdir [expr {[info exists state(tunnel_sort_dir)] ? $state(tunnel_sort_dir) : 1}]
-    array set _sortkey {bott bneck len len hydrophobicity phob charge chg seen seen}
+    array set _sortkey {bott bneck len len vol vol hydrophobicity phob charge chg seen seen}
     if {$sortcol ne "" && [info exists _sortkey($sortcol)]} {
         set dk $_sortkey($sortcol)
         set keyed {}
@@ -3833,7 +3867,7 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
     # front.
     set hdr_defs {
         {"#" ""} {"Rts" ""}
-        {"Bneck" bott} {"Len" len}
+        {"Bneck" bott} {"Len" len} {"Vol" vol}
         {"Phob" hydrophobicity}
     }
     set col 1
@@ -4015,8 +4049,9 @@ proc ::VMDPathFinder::refresh_tunnel_tab {} {
         # (e.g. -0.38095238095238093) - wide enough to push the Seen/traffic-
         # light/gear columns off the sidebar's fixed 1120px window width.
         set chgtxt [expr {$chg eq "" ? "-" : [format %.2f $chg]}]
+        set _vtxt [expr {[dict get $row vol] eq "" ? "-" : [format %.0f [dict get $row vol]]}]
         set vals [list [dict get $row nmemb] [format %.3f [dict get $row bneck]] \
-            [format %.2f [dict get $row len]] $hphob]
+            [format %.2f [dict get $row len]] $_vtxt $hphob]
         set col 2
         foreach v $vals {
             _rw_widget label $f.rv${r}_$col -text $v -anchor e -font {Helvetica 9} -background $rowbg
@@ -8441,10 +8476,17 @@ proc ::VMDPathFinder::_tunnel_gear_set_from_popup {i field value} {
     set _pcid [expr {$_pf ne "" && [info exists tunnel_xcid($_pf,$i)] \
         ? $tunnel_xcid($_pf,$i) : ""}]
     if {[info exists _gear_open_cid] && $_gear_open_cid ne "" \
-            && $_pcid ne "" && $_pcid ne $_gear_open_cid} {
+            && $_pcid ne $_gear_open_cid} {
+        # $_pcid EMPTY has to refuse too. The rank has no cluster in this frame,
+        # so _tunnel_gear_set cannot mirror the value into the per-cluster store
+        # - it writes only the rank-keyed one, which the very next render unsets
+        # from the cluster store it treats as authoritative. The setting then
+        # appears to do nothing at all.
         variable w
         catch {destroy $w.tunnel_gear}
-        set state(status) "Tunnel settings: the routes changed since this gear was opened - reopen it from the row."
+        set state(status) [expr {$_pcid eq "" \
+            ? "Tunnel settings: this route is not in the frame on screen any more - reopen the gear from its row." \
+            : "Tunnel settings: the routes changed since this gear was opened - reopen it from the row."}]
         return
     }
     _tunnel_gear_set $i $field $value

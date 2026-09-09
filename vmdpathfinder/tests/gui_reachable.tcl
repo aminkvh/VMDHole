@@ -1261,10 +1261,14 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
         # gone (not silently orphaned, still consuming a column).
         ::VMDPathFinder::refresh_tunnel_tab
         set _rowsN [::VMDPathFinder::_tunnel_cluster_rows]
+        # Asserted on the widget's NAME, not on a column index: the index moves
+        # whenever a column is added (Vol did), and a positional assertion then
+        # fails for a reason that has nothing to do with what it is checking.
         report "the old separate traffic-light widget is gone (merged into Seen)" \
-               [expr {![winfo exists $P.tunlist.c.inner.rv1_8] \
-                   && ![winfo exists $P.tunlist.hdr.hlive]}] \
-               "(rv1_8=[winfo exists $P.tunlist.c.inner.rv1_8] hlive=[winfo exists $P.tunlist.hdr.hlive])"
+               [expr {![winfo exists $P.tunlist.hdr.hlive] \
+                   && [lindex [grid size $P.tunlist.c.inner] 0] \
+                      <= [lindex [grid size $P.tunlist.hdr] 0]}] \
+               "(hlive=[winfo exists $P.tunlist.hdr.hlive] body=[lindex [grid size $P.tunlist.c.inner] 0] hdr=[lindex [grid size $P.tunlist.hdr] 0])"
         set _tl_rc [catch {::VMDPathFinder::_tunnel_update_traffic_lights} _tl_err]
         report "_tunnel_update_traffic_lights is a safe no-op with no Seen column (single frame)" \
                [expr {$_tl_rc == 0}] "($_tl_err)"
