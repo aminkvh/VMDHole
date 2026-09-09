@@ -36133,6 +36133,44 @@ proc ::VMDPathFinder::_conn_ionflow_spheres_fast {in_sph cvect_s cpoint_s margin
     set ulen [expr {sqrt($ux*$ux + $uy*$uy + $uz*$uz)}]
     if {$ulen <= 1e-9} { return {} }
     set ux [expr {$ux/$ulen}]; set uy [expr {$uy/$ulen}]; set uz [expr {$uz/$ulen}]
+
+    # The C classifier already parses this file and splits it, so use it rather
+    # than re-parsing 92000 lines per frame in Tcl - that parse was ~2.4 s of
+    # the 4.8 s this proc cost on a 10-frame Connolly run.
+    #
+    # It needs no centreline pass either: the filter below is "beyond
+    # wall+margin AND in an escaped range", and "beyond wall+margin" IS the
+    # definition of lateral, which the classifier has already decided. Pore dots
+    # pass unconditionally; only LATERAL dots are escape-tested.
+    set _nat [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin]
+    if {[dict size $_nat] && [dict exists $_nat escaped_ranges]} {
+        set _er [dict get $_nat escaped_ranges]
+        set out [_thin_spheres_to_voxels [dict get $_nat keep] 1.0]
+        # Pore and lateral are thinned in ONE pass, exactly as the Tcl path
+        # thins the whole flood-fill cloud together. Thinning them separately
+        # let two dots sharing a voxel both survive and returned 303 extra
+        # spheres (0.63%) - harmless for a distance test, but this is an input
+        # to a measurement and it should not depend on which path ran.
+        # Lateral membership is carried in a lookup so the escape filter can
+        # still be applied after thinning, which is the order the Tcl path uses.
+        set _latkey [dict create]
+        foreach _l [dict get $_nat lateral] {
+            dict set _latkey [string range $_l 30 53] 1
+        }
+        foreach _l [concat [dict get $_nat pore] [dict get $_nat lateral]] {
+            lappend _allrows $_l
+        }
+        if {![info exists _allrows]} { set _allrows {} }
+        foreach sp [_thin_spheres_to_voxels $_allrows 1.0] {
+            lassign $sp x y z r
+            if {[llength $_er] && [dict exists $_latkey [format "%8.3f%8.3f%8.3f" $x $y $z]]} {
+                set t [expr {($x-$ox)*$ux + ($y-$oy)*$uy + ($z-$oz)*$uz}]
+                if {[_conn_t_is_escaped $t $_er 1.5]} { continue }
+            }
+            lappend out [list $x $y $z $r]
+        }
+        return $out
+    }
     if {[catch {set fh [open $in_sph r]}]} { return {} }
     set cen {}
     set dotlines {}
