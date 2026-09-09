@@ -700,6 +700,7 @@ namespace eval ::VMDPathFinder:: {
         conn_lobe_tola 35.0
         conn_lobe_minseen 25
         conn_lobe_minshare 2.0
+        tunnel_trend_metric bneck
         mean_show_mean 1
         mean_show_sd 1
         mean_show_minmax 1
@@ -6298,6 +6299,45 @@ proc ::VMDPathFinder::_draw_tunnel_metrics_readout {cv ml mt pw ph} {
     if {$dx != 0} { $cv move metricsreadout $dx 0 }
 }
 
+proc ::VMDPathFinder::_tunnel_trend_metrics {} {
+    # What Trends can plot for a tunnel, as {key label} pairs. Each is a value
+    # the engine already produced per frame, so nothing new is computed.
+    return {bneck "Bottleneck radius" len "Length" vol "Tube volume"}
+}
+
+proc ::VMDPathFinder::_tunnel_trend_metric {} {
+    variable state
+    set k [expr {[info exists state(tunnel_trend_metric)] ? $state(tunnel_trend_metric) : "bneck"}]
+    if {[dict exists [_tunnel_trend_metrics] $k]} { return $k }
+    return "bneck"
+}
+
+proc ::VMDPathFinder::_tunnel_trend_label {} {
+    return [dict get [_tunnel_trend_metrics] [_tunnel_trend_metric]]
+}
+
+proc ::VMDPathFinder::_set_tunnel_trend_metric {key} {
+    variable state
+    set state(tunnel_trend_metric) $key
+    set state(tunnel_trend_metric_disp) [dict get [_tunnel_trend_metrics] $key]
+    catch {draw_tunnel_trends_plot}
+}
+
+proc ::VMDPathFinder::_tunnel_trend_value {tuple key} {
+    # One member tunnel's value for the chosen metric, or "" when it has none.
+    switch -- $key {
+        len { return [lindex $tuple 1] }
+        vol {
+            if {[catch {
+                lassign [_tunnel_profile_series $tuple] _d _r
+                set v [pore_volume $_d $_r 0.0]
+            }]} { return "" }
+            return $v
+        }
+        default { return [lindex $tuple 0] }
+    }
+}
+
 proc ::VMDPathFinder::draw_tunnel_trends_plot {} {
     # Bottleneck radius vs frame for state(tunnel_selected_id) - Tunnel mode's
     # equivalent of the Trends tab's Min R series. tunnel_selected_id is a
@@ -6317,7 +6357,7 @@ proc ::VMDPathFinder::draw_tunnel_trends_plot {} {
     if {[llength $tunnel_result_frames] < 2} {
         if {[winfo exists $cv]} { grid remove $cv }
         if {[winfo exists $tab.placeholder]} {
-            $tab.placeholder configure -text "Run the tunnel search on multiple frames to see the\nselected tunnel's bottleneck radius over time."
+            $tab.placeholder configure -text "Run the tunnel search on multiple frames to see the\nselected tunnel's [string tolower [_tunnel_trend_label]] over time."
             grid $tab.placeholder -row 0 -column 0 -sticky nsew
         }
         return
@@ -6359,8 +6399,10 @@ proc ::VMDPathFinder::draw_tunnel_trends_plot {} {
         if {$rk eq "" || ![string is integer -strict $rk] || $rk < 1} { continue }
         set tuns $tunnel_results($fr)
         if {$rk > [llength $tuns]} { continue }
+        set _tv [_tunnel_trend_value [lindex $tuns [expr {$rk-1}]] [_tunnel_trend_metric]]
+        if {![string is double -strict $_tv]} { continue }
         lappend fs $fr
-        lappend bs [lindex [lindex $tuns [expr {$rk-1}]] 0]
+        lappend bs $_tv
         # Position within the ANALYSED frames, not the frame number: that is
         # what says whether two samples are adjacent, so the line below can be
         # broken wherever this tunnel is genuinely absent.
@@ -6419,7 +6461,8 @@ proc ::VMDPathFinder::draw_tunnel_trends_plot {} {
     # $id (the DISPLAYED frame's own rank) is legitimately "" here whenever
     # landed on a frame this cluster is absent from - same fallback as the
     # Over Time tab's own title.
-    set _trend_title [expr {$id ne "" ? "Tunnel $id bottleneck radius over time" : "Selected tunnel's bottleneck radius over time"}]
+    set _tlbl [string tolower [_tunnel_trend_label]]
+    set _trend_title [expr {$id ne "" ? "Tunnel $id $_tlbl over time" : "Selected tunnel's $_tlbl over time"}]
     $cv create text [expr {$ml+$pw/2}] 12 -anchor n -font {Helvetica 10 bold} -text $_trend_title
     # The series follows the tunnel's cross-frame cluster and skips frames it
     # is absent from; stating the coverage makes that checkable at a glance.
@@ -6708,8 +6751,28 @@ proc ::VMDPathFinder::_sync_trends_exportbar_for_mode {} {
     if {![winfo exists $eb]} { return }
     if {[analysis_mode] eq "tunnel"} {
         foreach wdg {ml metric gear resb} { catch {pack forget $eb.$wdg} }
+        # Tunnel mode gets its OWN picker. The HOLE metrics above are all series
+        # this plot cannot draw, but a route does have more than one thing worth
+        # following over the trajectory.
+        variable state
+        if {![winfo exists $eb.tmetric]} {
+            label $eb.tml -text "Metric"
+            set state(tunnel_trend_metric_disp) [_tunnel_trend_label]
+            menubutton $eb.tmetric -textvariable ::VMDPathFinder::state(tunnel_trend_metric_disp) \
+                -relief raised -width 17 -anchor w -indicatoron 1 -menu $eb.tmetric.m
+            menu $eb.tmetric.m -tearoff 0
+            dict for {_tk _tl} [_tunnel_trend_metrics] {
+                $eb.tmetric.m add command -label $_tl \
+                    -command [list ::VMDPathFinder::_set_tunnel_trend_metric $_tk]
+            }
+            add_tooltip $eb.tmetric "What to plot for the selected route across the trajectory.\
+                Bottleneck radius is its narrowest point; Tube volume is the figure the list's Vol column shows."
+        }
+        catch {pack $eb.tml     -side left -padx {8 0}}
+        catch {pack $eb.tmetric -side left -padx {2 0}}
         return
     }
+    foreach wdg {tml tmetric} { catch {pack forget $eb.$wdg} }
     _sync_trends_resb
     catch {pack $eb.ml     -side left  -padx {8 0}}
     catch {pack $eb.metric -side left  -padx {2 0}}
@@ -48820,8 +48883,10 @@ proc ::VMDPathFinder::export_tunnel_trends_csv {} {
         if {$rk eq "" || ![string is integer -strict $rk] || $rk < 1} { continue }
         set tuns $tunnel_results($fr)
         if {$rk > [llength $tuns]} { continue }
+        set _tv [_tunnel_trend_value [lindex $tuns [expr {$rk-1}]] [_tunnel_trend_metric]]
+        if {![string is double -strict $_tv]} { continue }
         lappend fs $fr
-        lappend bs [lindex [lindex $tuns [expr {$rk-1}]] 0]
+        lappend bs $_tv
     }
     if {[llength $fs] < 2} {
         tk_messageBox -icon info -type ok -title "HOLE" \
