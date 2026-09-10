@@ -100,6 +100,14 @@ models are available:
 Keep the method fixed when comparing structures. Method names and equivalent
 radii are not interchangeable.
 
+**Mesher and detail.** The marching-cubes mesher samples the surface on a grid
+(**Settings > Engines > grid**, 1.4 Å by default); `sos_triangle` triangulates
+the dots themselves. On one Connolly frame of a 160k-atom system the marching
+mesh held 21,250 triangles against sos_triangle's 130,034, so a property
+colouring drawn on the marching mesh resolves correspondingly less detail even
+though both read the same values. Lower the grid if you need the finer picture,
+and keep the mesher fixed when comparing figures.
+
 **Surface smoothing.** The **Smooth** box beside the playback buttons averages
 the surface over that many neighbouring analysed frames either side; 0 is off.
 The same number is written to VMD's own trajectory smoothing on every
