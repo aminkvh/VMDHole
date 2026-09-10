@@ -5061,6 +5061,22 @@ chk "the parallel lobe worker receives and applies the live minshare setting" \
     [expr {[string first {_conn_lobe_min_share} [info body ::VMDPathFinder::_conn_lobes_parallel]] >= 0
         && [string first {state(conn_lobe_minshare)} [info body ::VMDPathFinder::_conn_lobes_parallel]] >= 0}] 1
 
+# The tunnel Trends CSV export computed values under the SELECTED metric
+# (_tunnel_trend_value already used it) but wrote a hardcoded "bottleneck"
+# label into the filename, the header comment AND the CSV column name - so
+# choosing Tube volume as the metric exported a column literally named
+# bottleneck_radius_A holding volume numbers.
+chk "the tunnel trends CSV column name follows the selected metric" \
+    [expr {[string first {_tunnel_trend_export_column} [info body ::VMDPathFinder::export_tunnel_trends_csv]] >= 0}] 1
+chk "...and the export column helper covers all three metrics distinctly" \
+    [expr {[llength [lsort -unique [list \
+        [::VMDPathFinder::_tunnel_trend_export_column]]]] == 1}] 1
+foreach {_mk _mcol} {bott bottleneck_radius_A len length_A vol volume_A3} {
+    set ::VMDPathFinder::state(tunnel_trend_metric) $_mk
+    chk "export column for metric '$_mk' is '$_mcol'" [::VMDPathFinder::_tunnel_trend_export_column] $_mcol
+}
+set ::VMDPathFinder::state(tunnel_trend_metric) bott
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.

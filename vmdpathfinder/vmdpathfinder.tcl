@@ -48995,12 +48995,23 @@ proc ::VMDPathFinder::export_passability_species_csv {} {
     set state(status) "Tunnel passability CSV exported to $fn"
 }
 
+proc ::VMDPathFinder::_tunnel_trend_export_column {} {
+    # A short, CSV-safe column name for the metric Trends is currently
+    # plotting - lowercase, underscored, with the metric's own unit.
+    switch -- [_tunnel_trend_metric] {
+        len { return "length_A" }
+        vol { return "volume_A3" }
+        default { return "bottleneck_radius_A" }
+    }
+}
+
 proc ::VMDPathFinder::export_tunnel_trends_csv {} {
-    # Tunnel mode's Trends/MinR tab shows one series (bottleneck radius vs
-    # frame for the selected tunnel's cross-frame cluster, draw_tunnel_trends_
-    # plot) - none of HOLE's conductance/ellipse/species metrics below have a
-    # tunnel equivalent, so this is deliberately a much smaller export that
-    # matches what's actually on screen, not a stub of the HOLE columns.
+    # Tunnel mode's Trends/MinR tab shows one series - bottleneck radius,
+    # length or tube volume, whichever _tunnel_trend_metric selects, for the
+    # selected tunnel's cross-frame cluster (draw_tunnel_trends_plot). None of
+    # HOLE's conductance/ellipse/species metrics below have a tunnel
+    # equivalent, so this is deliberately a much smaller export that matches
+    # what's actually on screen, not a stub of the HOLE columns.
     variable tunnel_results
     variable tunnel_result_frames
     variable state
@@ -49031,17 +49042,23 @@ proc ::VMDPathFinder::export_tunnel_trends_csv {} {
     # hidden, so reusing it would collide byte-for-byte with export_metrics_
     # csv's own filename. tunnel id + frame range so two tunnels or two
     # re-runs never overwrite each other either.
-    set fn [tk_getSaveFile -title "Export tunnel bottleneck-over-time CSV" -defaultextension .csv \
+    #
+    # The filename, header and column name all follow the SELECTED metric -
+    # a fixed "bottleneck" label here would export a column literally named
+    # bottleneck_radius_A while Length or Tube volume is what fills it.
+    set _mkey [_tunnel_trend_metric]
+    set _mcol [_tunnel_trend_export_column]
+    set fn [tk_getSaveFile -title "Export tunnel [_tunnel_trend_label] over time CSV" -defaultextension .csv \
         -initialdir [export_initial_dir] \
-        -initialfile "tunnel${id}_bottleneck_trends[_export_frame_range_tag $fs][_export_run_tag].csv" \
+        -initialfile "tunnel${id}_${_mkey}_trends[_export_frame_range_tag $fs][_export_run_tag].csv" \
         -filetypes {{CSV {.csv}} {All *}}]
     if {$fn eq ""} { return }
     set fh [open $fn w]
-    puts $fh "# VMDPathFinder tunnel bottleneck over time. tunnel=$id"
-    puts $fh "frame,bottleneck_radius_A"
+    puts $fh "# VMDPathFinder tunnel [string tolower [_tunnel_trend_label]] over time. tunnel=$id"
+    puts $fh "frame,$_mcol"
     foreach f $fs b $bs { puts $fh "$f,[format %.4f $b]" }
     close $fh
-    set state(status) "Tunnel trends exported to [file tail $fn]"
+    set state(status) "Tunnel [_tunnel_trend_label] exported to [file tail $fn]"
 }
 
 proc ::VMDPathFinder::export_metrics_csv {} {
