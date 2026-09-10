@@ -5030,6 +5030,37 @@ chk "show_tunnel_cavities distinguishes exists-but-withdrawn from already-visibl
 chk "the CVECT non-protein-endpoint warning has a widget to write to" \
     [expr {[string first {label $d.sb.note} [info body ::VMDPathFinder::_build_vector_controls]] >= 0}] 1
 
+# The native Connolly classifier returns a pre-built `lobes` key, which
+# _conn_frame_lobes short-circuits on and returns immediately - the speck
+# filter added for conn_lobe_minshare lived AFTER that short-circuit, so it
+# was unreachable whenever the native classifier ran (the default path).
+# Verified directly: at every share from 0% to 90%, the native path returned
+# the identical 14 lobes before this fix. The filter is now a shared,
+# separately-named step applied to the FINISHED lobes list from either source.
+chk "_conn_frame_lobes applies the speck filter to native lobes too" \
+    [expr {[string first {_conn_lobe_drop_specks} [info body ::VMDPathFinder::_conn_frame_lobes]] >= 0
+        && [string first {dict exists $cls lobes} [info body ::VMDPathFinder::_conn_frame_lobes]] >= 0}] 1
+chk "...and the Tcl fallback path funnels through the SAME helper" \
+    [expr {[llength [info procs ::VMDPathFinder::_conn_lobe_drop_specks]] == 1}] 1
+
+# The on-disk per-frame lobe cache signature must include conn_lobe_minshare -
+# it changes what a per-frame lobe IS (drops candidates before pooling), the
+# same category _conn_lobe_cache_sig's own comment states margin belongs to.
+# Without it, _conn_site_table's disk-cache check matched on an unrelated
+# signature and replayed lobes computed under whichever share was in effect
+# when the file was written, ignoring a live change to the field entirely.
+chk "the on-disk lobe cache signature includes conn_lobe_minshare" \
+    [expr {[string first {_conn_lobe_min_share} [info body ::VMDPathFinder::_conn_lobe_cache_sig]] >= 0}] 1
+
+# The PARALLEL lobe-classification path spawns fresh VMD worker processes that
+# just sourced the plugin - state(conn_lobe_minshare) there is whatever the
+# DEFAULT is, not the live GUI value, unless the job file carries it across
+# and the worker applies it before classifying. Without this, every run of
+# 8+ frames (the parallel path's own threshold) silently ignored the field.
+chk "the parallel lobe worker receives and applies the live minshare setting" \
+    [expr {[string first {_conn_lobe_min_share} [info body ::VMDPathFinder::_conn_lobes_parallel]] >= 0
+        && [string first {state(conn_lobe_minshare)} [info body ::VMDPathFinder::_conn_lobes_parallel]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.

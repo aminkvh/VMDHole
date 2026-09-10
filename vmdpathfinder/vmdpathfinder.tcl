@@ -38176,12 +38176,22 @@ proc ::VMDPathFinder::_conn_lobe_cache_sig {} {
     variable results
     variable result_frames
     variable state
+    # v4: the speck cut (_conn_lobe_min_share) runs INSIDE the per-frame
+    # classifier, before a lobe is even produced - so it belongs in this sig
+    # exactly like margin does, and a v3 cache predates it (a run made before
+    # this field existed defaulted to 2%, which is also what it must compare
+    # against so an unrelated import does not spuriously invalidate). Omitting
+    # it here was verified to leave the field inert: _conn_site_table checks
+    # the DISK cache before ever calling the classifier again, so a signature
+    # match replays lobes computed under whichever share was in effect when
+    # the file was written, no matter what the field says now.
+    #
     # v3: a genuine Stabilize-CVECT run's per-frame azimuth (the `a` in each
     # cached "L f z a n ..." line) now depends on the roll-checked co-rotating
     # basis (_conn_frame_lobe_basis), not just cvect/cpoint above - a v2 cache
     # predates that and would replay azimuths computed on the OLD, non-rotating
     # basis as if they were already correct.
-    set sig "v3|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)"
+    set sig "v4|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)|[_conn_lobe_min_share]"
     foreach f $result_frames {
         if {![dict exists $results $f sph_file]} continue
         set s [dict get $results $f sph_file]
@@ -38300,7 +38310,14 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         close $_fh
         source $::env(VMDPATHFINDER_LOBE_SRC)
         set _mg [lindex $_spec 0]
-        set _out [lindex $_spec 1]
+        # This worker just sourced the plugin fresh, so state(conn_lobe_minshare)
+        # is whatever the DEFAULT is - the live GUI value never reaches a
+        # separate process on its own. Without this override, every parallel
+        # classification silently ignored the field no matter what it was set
+        # to (the serial fallback path, run in-process, read it correctly -
+        # this only showed up on the 8-plus-frame runs that take the fast path).
+        set ::VMDPathFinder::state(conn_lobe_minshare) [lindex $_spec 1]
+        set _out [lindex $_spec 2]
         set _oh [open $_out w]
         # Each frame carries its OWN axis: a tracked run moves CPOINT per frame,
         # and one shared snapshot would classify every frame but the first
@@ -38309,7 +38326,7 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         # empty one) - a worker has no `results`/manifest of its own to derive
         # one from, so the main process resolves it before the job file is
         # written (see the frame_axis/basis job-file build above).
-        foreach _line [lrange $_spec 2 end] {
+        foreach _line [lrange $_spec 3 end] {
             set _f [lindex $_line 0]
             set _cv [lrange $_line 1 3]
             set _cp [lrange $_line 4 6]
@@ -38342,6 +38359,7 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         lappend outs $of
         if {[catch {set jh [open $jf w]}]} { catch {file delete -force $tmp}; return "" }
         puts $jh [_conn_pore_margin]
+        puts $jh [_conn_lobe_min_share]
         puts $jh $of
         set i 0
         foreach f $frames {
@@ -38678,8 +38696,29 @@ proc ::VMDPathFinder::_conn_lobe_tol {} {
     return [list $z $a]
 }
 
+proc ::VMDPathFinder::_conn_lobe_drop_specks {lobes nlat} {
+    # Applied to a FINISHED lobes list ({zc azim n indices escaped_frac neck_a
+    # neck_b} tuples), so it reaches a lobe list built either way - the native
+    # classifier returns one pre-built (_conn_frame_lobes's own short-circuit,
+    # right below), and a filter written only into the Tcl computation further
+    # down never touched that path at all: measured at every share from 0% to
+    # 90%, the native path returned the exact same 14 lobes regardless, because
+    # this code was simply never reached.
+    if {$nlat <= 0} { return $lobes }
+    set _speck [expr {[_conn_lobe_min_share] / 100.0}]
+    set out {}
+    foreach lb $lobes {
+        if {[lindex $lb 2] < $nlat * $_speck} continue
+        lappend out $lb
+    }
+    return $out
+}
+
 proc ::VMDPathFinder::_conn_frame_lobes {cls} {
-    if {[dict exists $cls lobes]} { return [dict get $cls lobes] }
+    if {[dict exists $cls lobes]} {
+        set _nlat [expr {[dict exists $cls n_lat] ? [dict get $cls n_lat] : 0}]
+        return [_conn_lobe_drop_specks [dict get $cls lobes] $_nlat]
+    }
     # Split one frame's lateral dots into lobes. The cloud is ONE connected
     # component - the lobes join through the lumen they branch from - so
     # connectivity in 3D cannot separate them. On the (axial, azimuth) cylinder
@@ -38807,14 +38846,11 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
         if {[llength $idx]} { lappend _out2 $idx }
     }
     set out $_out2
-    # Drop specks: a lobe worth colouring holds at least this share of the
-    # lateral cloud. Tunable, because it runs BEFORE the persistence floor and
-    # so removes openings the panel's "N below the floor" note never counts -
-    # there was no way to see them or to ask for them.
-    set _speck [expr {[_conn_lobe_min_share] / 100.0}]
+    # Specks are dropped AFTER the tuple below is built - see
+    # _conn_lobe_drop_specks, applied uniformly to both this path and the
+    # native short-circuit above, at the return statement.
     set lobes {}
     foreach idx $out {
-        if {[llength $idx] < $nlat * $_speck} continue
         set zs 0.0; set sa 0.0; set ca 0.0
         set nesc 0
         set neck_a {}; set neck_b {}
@@ -38845,7 +38881,7 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
         lappend lobes [list [expr {$zs/$n}] [expr {atan2($sa,$ca)}] $n $idx \
             [expr {double($nesc)/$n}] $neck_a $neck_b]
     }
-    return [lsort -integer -decreasing -index 2 $lobes]
+    return [_conn_lobe_drop_specks [lsort -integer -decreasing -index 2 $lobes] $nlat]
 }
 
 proc ::VMDPathFinder::_ang_delta_deg {a b} {
