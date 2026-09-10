@@ -37931,7 +37931,17 @@ proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {bas
     set key [_conn_classify_cache_key $in_sph $cvect_s $cpoint_s $margin $basis_s]
     if {$key eq ""} { return {} }
     if {[info exists _conn_cls_memo] && [dict exists $_conn_cls_memo $key]} {
-        return [dict get $_conn_cls_memo $key]
+        set cls [dict get $_conn_cls_memo $key]
+        # Promote on hit: a dict's key order is insertion order, and the
+        # eviction below drops whichever key is FIRST in that order - a plain
+        # FIFO, not an LRU. `dict set` on a key ALREADY present updates the
+        # value in place and does NOT move it - unset then re-set is what
+        # actually moves it to the end - so a frame the user keeps coming
+        # back to (the displayed one, most often) is not evicted just because
+        # a walk over 8+ OTHER frames happened to run in between.
+        dict unset _conn_cls_memo $key
+        dict set _conn_cls_memo $key $cls
+        return $cls
     }
     set cls [_conn_classify_sph $in_sph $cvect_s $cpoint_s $margin $basis_s]
     _conn_classify_cache_store $key $cls

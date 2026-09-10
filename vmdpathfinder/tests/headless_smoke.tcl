@@ -5166,6 +5166,14 @@ chk "the automatic per-frame lining redraw does not touch the status bar" \
 chk "...only the interactive toggle does" \
     [expr {[string first {state(status)} [info body ::VMDPathFinder::_cavity_show_lining]] >= 0}] 1
 
+# _conn_cls_memo's eviction was a plain FIFO (drop the first key in insertion
+# order), not an LRU - re-accessing a frame's cached entry via `dict set`
+# updates its value in place WITHOUT moving it, so a walk over 8+ other
+# frames (the openings occupancy pass) could evict the displayed frame's
+# entry even though it was the most recently touched.
+chk "_conn_classify_cached promotes a cache hit (unset then re-set), not a no-op dict set" \
+    [expr {[string first {dict unset _conn_cls_memo $key} [info body ::VMDPathFinder::_conn_classify_cached]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
