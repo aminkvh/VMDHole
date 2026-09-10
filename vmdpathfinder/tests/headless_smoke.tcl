@@ -5116,6 +5116,20 @@ foreach _proc {_update_method_dependent_controls _sync_passability_buttons \
         [expr {[string first {set_tooltip} [info body ::VMDPathFinder::$_proc]] >= 0}] 1
 }
 
+# Ion Flow's fast sphere path routed through the CACHED classifier, which
+# calls _conn_classify_sph - and that falls back to a full pure-Tcl
+# classification (computing azimuth-binned lat_zt for lobe clustering, which
+# this proc never needs) whenever the native binary is unavailable. That made
+# an install without conn_lobes pay for the EXPENSIVE fallback just to
+# discover it could not use the result, then pay AGAIN for the cheap
+# ion-flow-specific parser below it - strictly worse than never routing
+# through the cache at all on that path.
+chk "_conn_ionflow_spheres_fast checks the cache/native directly, not _conn_classify_cached" \
+    [expr {[string first {[_conn_classify_cached} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] < 0
+        && [string first {_conn_classify_native} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] >= 0}] 1
+chk "...and only caches a result it confirmed came from native" \
+    [expr {[string first {_conn_classify_cache_store} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.

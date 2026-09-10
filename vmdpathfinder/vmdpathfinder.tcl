@@ -37881,16 +37881,17 @@ proc ::VMDPathFinder::_write_conn_region_sph {cls region out_sph} {
     return $n
 }
 
-proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {basis_s ""}} {
-    # ~100 ms per call and the split does not change while the user toggles
-    # regions on and off, so it is memoised on the cloud's mtime and the margin.
+proc ::VMDPathFinder::_conn_classify_cache_key {in_sph cvect_s cpoint_s margin basis_s} {
+    if {![file exists $in_sph]} { return "" }
+    return "$in_sph|[file mtime $in_sph]|$cvect_s|$cpoint_s|$margin|$basis_s"
+}
+
+proc ::VMDPathFinder::_conn_classify_cache_store {key cls} {
+    # Shared by _conn_classify_cached and _conn_ionflow_spheres_fast's own
+    # native-only path, so both feed and read the ONE cache under the ONE key
+    # format - see _conn_classify_cache_key.
+    if {$key eq ""} { return }
     variable _conn_cls_memo
-    if {![file exists $in_sph]} { return {} }
-    set key "$in_sph|[file mtime $in_sph]|$cvect_s|$cpoint_s|$margin|$basis_s"
-    if {[info exists _conn_cls_memo] && [dict exists $_conn_cls_memo $key]} {
-        return [dict get $_conn_cls_memo $key]
-    }
-    set cls [_conn_classify_sph $in_sph $cvect_s $cpoint_s $margin $basis_s]
     if {![info exists _conn_cls_memo]} { set _conn_cls_memo [dict create] }
     # Each entry holds a whole cloud's line lists, so the cache stays small -
     # but it drops the OLDEST entry, not all of them. Emptying it whole gave a
@@ -37901,6 +37902,19 @@ proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {bas
         set _conn_cls_memo [dict remove $_conn_cls_memo [lindex [dict keys $_conn_cls_memo] 0]]
     }
     dict set _conn_cls_memo $key $cls
+}
+
+proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {basis_s ""}} {
+    # ~100 ms per call and the split does not change while the user toggles
+    # regions on and off, so it is memoised on the cloud's mtime and the margin.
+    variable _conn_cls_memo
+    set key [_conn_classify_cache_key $in_sph $cvect_s $cpoint_s $margin $basis_s]
+    if {$key eq ""} { return {} }
+    if {[info exists _conn_cls_memo] && [dict exists $_conn_cls_memo $key]} {
+        return [dict get $_conn_cls_memo $key]
+    }
+    set cls [_conn_classify_sph $in_sph $cvect_s $cpoint_s $margin $basis_s]
+    _conn_classify_cache_store $key $cls
     return $cls
 }
 
@@ -38102,11 +38116,24 @@ proc ::VMDPathFinder::_conn_ionflow_spheres_fast {in_sph cvect_s cpoint_s margin
     # wall+margin AND in an escaped range", and "beyond wall+margin" IS the
     # definition of lateral, which the classifier has already decided. Pore dots
     # pass unconditionally; only LATERAL dots are escape-tested.
-    # The CACHED classifier, not the raw native call: this runs once per frame
-    # per ion-flow scan, and the same frame's split is wanted again by the
-    # lobes panel and the redraw on the same click.
-    set _nat [_conn_classify_cached $in_sph $cvect_s $cpoint_s $margin]
-    if {[dict size $_nat] && [dict exists $_nat escaped_ranges]} {
+    # Reuse an already-cached NATIVE split (the lobes panel or an earlier call
+    # this same frame may have built one), but never TRIGGER a fresh
+    # classification through the cache - _conn_classify_sph falls back to a
+    # full pure-Tcl computation when native is unavailable, building azimuth-
+    # binned lat_zt for every lateral dot for LOBE clustering, which this proc
+    # has no use for. Checking the cache and calling native directly (cheap to
+    # fail: one tool_path lookup, no exec, when the binary is genuinely
+    # absent) gets the reuse win without ever paying for that fallback here.
+    variable _conn_cls_memo
+    set _ckey [_conn_classify_cache_key $in_sph $cvect_s $cpoint_s $margin ""]
+    set _nat {}
+    if {$_ckey ne "" && [info exists _conn_cls_memo] && [dict exists $_conn_cls_memo $_ckey]} {
+        set _nat [dict get $_conn_cls_memo $_ckey]
+    } else {
+        set _nat [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin]
+        if {[dict size $_nat]} { _conn_classify_cache_store $_ckey $_nat }
+    }
+    if {[dict size $_nat] && [dict exists $_nat escaped_ranges] && [dict exists $_nat lobes]} {
         set _er [dict get $_nat escaped_ranges]
         set out [_thin_spheres_to_voxels [dict get $_nat keep] 1.0]
         # Pore and lateral are thinned in ONE pass, exactly as the Tcl path
