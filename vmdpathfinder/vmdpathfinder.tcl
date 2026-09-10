@@ -18155,22 +18155,27 @@ proc ::VMDPathFinder::_smooth_watch_tick {} {
     # per-rep slider in Graphics > Representations. VMD never calls into the
     # plugin, so its side is polled - one `mol smoothrep` read per shown rep,
     # twice a second - and whichever moved last wins.
+    #
+    # Compared against what the PLUGIN holds, not against the previous poll. A
+    # remembered previous value is seeded from VMD itself, so the very tick that
+    # first sees a change also adopts it as the baseline and the change is then
+    # never acted on.
     variable _smooth_watch_after
-    variable _smooth_watch_last
     variable state
     set _smooth_watch_after ""
     variable w
     if {![_have_tk] || ![winfo exists $w]} { return }
     if {[catch {_vmd_smooth_window} n]} { set n 0 }
-    if {![info exists _smooth_watch_last]} { set _smooth_watch_last $n }
-    if {$n ne $_smooth_watch_last} {
-        set _smooth_watch_last $n
+    # A window stored as "follow" or "off" by an older config is migrated to a
+    # plain number once, quietly - not through _set_smooth_window, which would
+    # repaint on every tick until it happened to match.
+    if {![string is integer -strict [expr {[info exists state(surface_smooth)] ? $state(surface_smooth) : ""}]]} {
+        set state(surface_smooth) $n
+    } elseif {$n ne [_surface_smooth_window]} {
         # Changed in VMD: adopt it, which also copies it to every other rep so
         # the molecule and the pore inside it stay on one window.
-        if {$n ne [_surface_smooth_window]} { catch {_set_smooth_window $n} }
+        catch {_set_smooth_window $n}
     }
-    # The spinbox only ever displays the effective window, so it cannot drift
-    # from it even if something else writes state(surface_smooth).
     catch {set state(smooth_window_disp) [_surface_smooth_window]}
     _smooth_watch_start
 }
