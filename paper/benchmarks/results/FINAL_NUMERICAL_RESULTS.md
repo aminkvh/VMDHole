@@ -223,12 +223,9 @@ from these exact CSVs; the stage's own agreement check passed (`FIG_RESULT
 PASS`, see `fig_performance_provenance.txt`). `docs/images/
 performance_summary.png` is a copy of the PNG.
 
-The plugin's own Nelder-Mead search and marching-cubes mesher were measured
-separately from this figure (the `vmdpathfinder_nm`, `vmdpathfinder_csg` and
-`vmdpathfinder_nm_csg` rows of `endtoend.csv`): 1.0-1.7x
-over the released Monte Carlo/`sos_triangle` pipeline per frame, most of it
-from OpenMP threading inside the new engines rather than the algorithm
-itself, and washed out almost entirely once the 15-worker pool the figure's
-own end-to-end panel measures becomes the bottleneck. Not shown here by
-request - the comparison is real but easy to over-read at this figure's
-scale.
+The plugin's own Nelder-Mead search and marching-cubes mesher are the
+`vmdpathfinder_nm`, `vmdpathfinder_csg` and `vmdpathfinder_nm_csg` rows of
+`endtoend.csv` above, measured by the same stage as every other row: at the
+15-worker pool the search is 0.98x the accelerated HOLE search and the mesher
+1.26-1.28x the accelerated `sph_process` + `sos_triangle` path. They are not
+speed claims - the pool is I/O-bound there - and are left out of Figure S2.

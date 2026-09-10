@@ -6,7 +6,14 @@ Everything here is measured on the author's own Nav trajectory
 cpoint `-2.4354 -0.9136 3.8850`, cvect `0.0166 0.0289 0.9994`,
 sample 0.25, endrad 15.0, `simple.rad`.
 
-## nm_search — as accurate as HOLE is with itself, 5x faster
+## nm_search — as accurate as HOLE is with itself; the search kernel 5x faster
+
+Scope of the 5x: the search step alone, on the author's Nav trajectory, which
+is not a benchmark fixture. It is not a benchmark-suite number. In the
+plugin's 15-worker pool on the 50-frame benchmark trajectory the whole
+calc deliverable is 0.98x the accelerated HOLE search
+(`paper/benchmarks/results/endtoend.csv`, row `vmdpathfinder_nm`): the pool is
+I/O-bound there and the search step is not what limits it.
 
 | | HOLE | nm_search |
 |---|---:|---:|
