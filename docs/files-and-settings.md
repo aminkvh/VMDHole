@@ -3,7 +3,7 @@
 ## Result directories
 
 With **Save results** enabled, VMDPathFinder creates a saved run with per-frame data
-and a manifest. Use **File → Import** to restore it; do not rearrange files
+and a manifest. Use **File → Load Saved Analysis…** to restore it; do not rearrange files
 inside the saved run.
 
 | Setting | Effect |

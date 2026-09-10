@@ -55,20 +55,10 @@ down, left and right always match the screen whatever the model's rotation.
 `CPOINT`'s page moves it directly and offers **COG** and **COR** next to
 Close.
 
-`CVECT` has no single point of its own, so its page moves one end of the
-two-point definition at a time - a **Point 1 / Point 2** selector above the
-pad chooses which. While that page is open each point is drawn as a handle at
-its own position - they move independently, and they are the two points
-`Stabilize` and `Exact` carry from frame to frame. The axis itself is drawn as
-one arrow **through `CPOINT`**, along the direction those two points define,
-because `CPOINT` is what HOLE searches out from. The same arrow is what **Show
-cues** draws when the stick is closed. The stick's **Value** reports the pair's
-length and the resulting unit direction; only the magnitude is discarded when
-the vector is stored, since HOLE's `CVECT` card is a direction. CVECT is recomputed from the pair after every move, live,
-the same as pressing **Compute** below. The two entry fields, **Guess**,
-**Use Z** and **Compute** still work as typed alternatives to dragging. The
-same dialog holds the per-frame modes described below, and the cue is shown
-while it is open.
+On the `CVECT` page, choose **Point 1** or **Point 2** to move that endpoint.
+The direction updates as you move it. The two handles mark the endpoints;
+the axis arrow passes through **CPOINT**. **Value** shows the endpoint distance
+and unit direction; only the direction is used for `CVECT`.
 
 For a trajectory, `CPOINT` may be static, carried by a local rigid-body fit
 (**Stabilize**), or re-centred on nearby atoms (**Track**). A two-point `CVECT`
@@ -100,55 +90,31 @@ models are available:
 Keep the method fixed when comparing structures. Method names and equivalent
 radii are not interchangeable.
 
-**Mesher and detail.** The marching-cubes mesher samples the surface on a grid
-(**Settings > Engines > grid**, 1.4 Å by default); `sos_triangle` triangulates
-the dots themselves. On one Connolly frame of a 160k-atom system the marching
-mesh held 21,250 triangles against sos_triangle's 130,034, so a property
-colouring drawn on the marching mesh resolves correspondingly less detail even
-though both read the same values. Lower the grid if you need the finer picture,
-and keep the mesher fixed when comparing figures.
+**Mesher and detail.** Choose the **Surface mesher** in **File > Settings**.
+For marching cubes, lower **grid** for finer surface and property-colour detail
+at greater cost. For `sos_triangle`, increase dot density. Keep the mesher and
+detail settings fixed when comparing figures.
 
 **Surface smoothing.** The **Smooth** box beside the playback buttons averages
 the surface over that many neighbouring analysed frames either side; 0 is off.
-The same number is written to VMD's own trajectory smoothing on every
-representation of the molecule, so the protein and the pore inside it are
-always averaged over the same window, and changing it in Graphics >
-Representations updates the box. It is a local average of the
-surfaces themselves, not of the atom coordinates and not of the centreline: a
-feature most frames share stays where it is, a flicker averages down, and
-curvature and lateral openings survive. The marching mesher averages the
-frames' distance fields on one grid and marches the mean; sos_triangle moves
-every dot of the frame to the mean of itself and its nearest same-facing dot
-in each window frame, then triangulates as usual (the pure-Tcl fallback does
-the same, byte for byte). Windows clamp at the trajectory ends, as VMD's do.
-The profile, the Mean Profile and every other number stay per frame. The
-lining and facing residues, and the property colours, follow the smoothed
-wall: they are tested against the spheres of every frame in the window.
+It also sets VMD trajectory smoothing for the molecule's representations;
+changes in **Graphics > Representations** update the box. Pore smoothing
+averages surfaces, not atom coordinates, and can soften transient features.
+It does not change numerical profiles or exports. Lining, facing residues,
+and surface property colours use the neighbouring frames in the window.
 
 The **Search** picker in HOLE Parameters chooses how each plane's sphere is
 found: **Monte Carlo (HOLE)**, HOLE's seeded simulated annealing, whose
 steps, step size and kT fields appear only for it, or **Nelder-Mead**, a
-deterministic downhill-simplex search in the `nm_search` engine that agrees
-with HOLE to within HOLE's seed-to-seed spread. Without the engine the run
+deterministic downhill-simplex search in the `nm_search` engine. The searches
+can find different local passages; inspect their centrelines before comparing
+radii or volumes. Without the engine the run
 falls back to HOLE. Under Connolly, Nelder-Mead also builds the surface with
-a port of HOLE's Connolly pass; for a Monte Carlo search, Settings chooses
+a port of HOLE's Connolly pass; for a Monte Carlo search, **Connolly surface**
+in the **HOLE parameters** gear chooses
 between HOLE's `conn` and that port.
 
-`conn_lobes` (Settings > Engines) classifies dots and colors lateral
-openings; without it the same classification and coloring run in pure Tcl,
-correct but a few seconds slower each time a new frame's coloring is built.
-
 ### Inspect Connolly lateral openings
-
-The isosurface and wireframe are meshed by `mesh_csg` (marching cubes on the
-exact sphere union, Settings → Engines → Surface mesher). For a spherical run
-the grid is 1.4 Å in the wide regions and 0.7 Å around the narrow pore; a
-Connolly run uses 1.4 Å uniformly, since its whole surface is at probe scale.
-Either way the same mesh is used while playing and once playback stops, so the
-surface never changes shape as it settles: about 51 ms per newly visited frame
-for a spherical run on a 200k-atom system and 63 ms for a Connolly one, with
-the **grid** entry trading detail against that cost. Property colouring
-recolours the same mesh.
 
 After a Connolly run, draw an isosurface or wireframe and choose one of these
 **Color** modes:
@@ -163,12 +129,18 @@ extension beyond the margin, and its axial and azimuthal location. Use each row
 to show, color, annotate, or export one opening; use the header gear for all
 regions. The matching controls and **Seen** floor are also in that gear.
 
-**Neck** is the clearance between the opening's point of closest approach to
-the axis and the traced pore wall at that height - the width of the opening
-where it leaves the pore, not its distance from the axis. **Margin** does not
-appear in that formula, but it decides which dots count as lateral in the first
-place, so changing it can select a different closest-approach point and move
-the reported neck.
+The ion column and its tooltip summarize occupancy and visit length for each
+opening. Select **Water** in **Ion & Water** to populate water-residence
+statistics. Visit lengths are in sampled frames; radial movement within an
+opening is not a verified lumen-to-bulk crossing.
+
+**Neck** is the narrowest clearance on the widest route from the pore
+centreline into the opening's outer half, measured against the atoms by
+`nm_search` on a grid over the opening. `open` means that route is wider than
+the search's end radius. **Margin** decides which dots count as lateral, and
+so where the route has to reach, but it does not enter the clearance. The
+neck is blank when the `nm_search` engine or the frame's atoms are not
+available.
 
 Two filters decide what the table lists, and both are in the header gear.
 **Seen in at least N% of frames** hides openings that come and go; the panel
@@ -321,7 +293,7 @@ of the property-lining cutoff.
 
 ## 7. Save, import, and report
 
-Use **File → Import** to restore a saved pore or tunnel run. Exported figures
+Use **File → Load Saved Analysis…** to restore a saved pore or tunnel run. Exported figures
 should be accompanied by CSV data and the run parameters listed in the
 [parameter reference](parameters.md#minimum-reporting-set).
 

@@ -23,8 +23,8 @@ Use the terminal groups at opposite channel mouths:
 1. Select **⌖** beside `CVECT`.
 2. Set point 1 to `resname ETA and chain A`.
 3. Set point 2 to `resname ETA and chain B`.
-4. Select **Compute** and inspect the displayed vector; the stick above it can
-   then tilt the direction by whole degrees if needed.
+4. Select **Compute** and inspect the displayed vector. Choose **Point 1** or
+   **Point 2** above the pad to adjust that endpoint if needed.
 5. Set `CPOINT` to the centre of geometry of `all`.
 
 This definition remains meaningful if the coordinates are rotated. If the
@@ -73,7 +73,7 @@ Use the analysis tabs in this order:
 2. **Over Time**: confirm that the same axial region is compared across frames.
 3. **Mean Profile**: report mean radius and variation along the pore.
 4. **Trends**: compare minimum radius or pore volume per model.
-5. **Histogram**: examine the distribution without implying a time sequence.
+5. **Histogram**: summarize radii by position along the channel.
 
 Ellipse-based quantities require an additional cross-section calculation. The
 **Over Time** tab displays a **Compute** gate before this expensive calculation;

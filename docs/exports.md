@@ -18,7 +18,7 @@ message and resulting extension.
 | Trends | frame and selected metric |
 | Histogram (radius summary) | axial-bin coordinate and uncapped mean/minimum/maximum radius aggregate |
 | Hydration | coordinate, relative density, free energy, waters per frame, and available standard deviations |
-| Ion Flow | plotted occupancy or passage data and species metadata |
+| Ion & Water | plotted occupancy or passage data and species metadata |
 
 Additional exports include summary metrics, bottleneck residues, unrolled
 pore-wall layers, and tunnel lining data. Inspect the CSV header: it is the
@@ -26,9 +26,10 @@ authoritative statement of columns and units for that export.
 
 ## Save Package
 
-**File > Save Package** writes one folder holding the CSV and figure from each
-of the seven plot tabs (Pore Profile, Over Time, Trends, Mean Profile,
-Histogram, Hydration, Ion & Water) that has data, so a whole analysis can be
+**File > Save Package** first asks which of the seven plot tabs (Pore Profile,
+Over Time, Trends, Mean Profile, Histogram, Hydration, Ion & Water) to include -
+a tab without data cannot be ticked - then where to write the folder, and
+writes the CSV and figure of each ticked tab, so a whole analysis can be
 handed on in one piece. It runs the same exporters the per-tab Export menus
 run, so the files are identical to the ones those buttons write. It does not
 reach the plugin's other exports - bottleneck residues, unrolled pore-wall
@@ -39,24 +40,20 @@ The folder also contains:
 
 | File | Contents |
 |---|---|
-| `run_<id>.txt` | every parameter the run used - selection, frames, CPOINT/CVECT, method, engines, sampling, seed, radius file |
+| `run_<id>.txt` | selection, frame summary, pore axis, and pore calculation settings; not a complete record of tunnel or downstream-analysis settings |
 | `README.txt` | which tabs were included, which were skipped, and the file list |
 
-A tab is listed as skipped when it had nothing computed, when pressing Abort
-stopped the package before reaching it, or when both its exporters ran but
-neither actually wrote a file - so a tab in "Included" always has at least one
-real file behind it.
+Check `README.txt` and the files before sharing the package, especially after
+an interrupted export. Save Package is an export bundle, not a reloadable saved
+run. Record additional settings from the [minimum reporting set](parameters.md#minimum-reporting-set).
 
 ## Run identity
 
-Every run is stamped with an id: the date, the time, and a short hash of every
-input that decides what HOLE computes. Two runs with different parameters
-cannot share an id, and neither can two runs a second apart. It appears in the
-`run_<id>.txt` file written beside the results and in a one-line summary in the
-Log. Export filenames carry a separate, shorter tag (`_run2`, `_run3`, ...)
-that only distinguishes runs sharing one output folder - the first run gets no
-tag at all - so a figure and its `run_<id>.txt` are matched by which folder
-they sit in, not by a shared string in their names.
+Pore runs receive a timestamp and a short settings hash, recorded in
+`run_<id>.txt` and the Log. This label is not a checksum of the input coordinates.
+Export filenames use separate suffixes (`_run2`, `_run3`, ...) when runs share
+an output folder. Use a separate folder for each analysis to keep figures,
+data, and settings together.
 
 ## Connolly openings
 
@@ -64,6 +61,7 @@ With **Color** set to `pore_lobes`, each region gear exports the pore or one
 lateral opening. The header gear exports all regions. The all-frame table
 includes occurrence, dot count, neck, extension, axial position, and azimuth.
 An opening absent from a frame has `present=0` and blank measurement cells.
+A neck equal to the run's end radius means the route into the opening is wider than the search looks (`open`).
 
 ## Filenames
 
@@ -85,7 +83,7 @@ Standard plot exports remain CSV.
 ## Saved runs and import
 
 When **Save results** is enabled, each frame has a result directory and the run
-root contains provenance/manifest data. Use **File → Import** to restore a saved
+root contains provenance/manifest data. Use **File → Load Saved Analysis…** to restore a saved
 HOLE or tunnel calculation without executing the engine again. Imported data
 can be plotted and exported, but analyses that need the original trajectory
 coordinates, such as ion tracking, also require the matching molecule and frames

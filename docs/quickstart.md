@@ -75,7 +75,7 @@ Set **Frames** to `all` and select **Run HOLE** again. Use:
 - **Over Time** to compare position across conformers;
 - **Mean Profile** to inspect the mean and spread;
 - **Trends** to compare minimum radius, volume, or conductance estimates;
-- **Histogram** to inspect the distribution of per-frame radii.
+- **Histogram** to summarize radii by position along the channel.
 
 These five experimentally determined NMR conformers show structural variation
 and the corresponding variation in pore geometry. Unlike consecutive MD
@@ -107,9 +107,9 @@ part of validating a candidate pathway.
 
 ## Keeping the result
 
-**File > Save Package** writes every table and figure the run can produce into
-one folder, together with a file listing the parameters that produced them. It
-is the quickest way to keep a complete record of an analysis - see
+**File > Save Package** collects available plot CSVs and figures into one
+folder. Export lining, cavity, and lateral-opening tables from their own
+dialogs. To reload the analysis later, also keep **Save results** enabled. See
 [Export and import](exports.md).
 
 ## Next steps

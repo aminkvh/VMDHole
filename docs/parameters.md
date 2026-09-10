@@ -52,13 +52,13 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Parameter | Default | Definition |
 |---|---:|---|
 | Method | Spherical | Spherical probe, Connolly accessible cross-section, or Capsule anisotropic probe |
-| Search | Monte Carlo (HOLE) | HOLE's seeded simulated annealing, or the deterministic Nelder-Mead search in `nm_search`. The Monte Carlo rows apply only to Monte Carlo; Capsule always uses HOLE. Both stop the profile at ENDRAD. That is a shared TERMINATION threshold, not a guarantee of equal results: the two searches can settle on different local passages, and the repository's own validation records a 1.200 A HOLE bottleneck against 0.767 A from Nelder-Mead on the same input (native/nm/VALIDATION.md). Equal stopping radii do not imply equal centrelines, radii or integrated volumes - compare the two before treating them as interchangeable |
-| Dot density (Settings, shown for `sos_triangle`) | 15 | sph_process dots per sphere; not used by the marching-cubes mesher |
+| Search | Monte Carlo (HOLE) | Seeded simulated annealing or deterministic Nelder-Mead. Capsule uses HOLE. The searches can find different local passages; inspect centrelines before comparing results |
+| Dot density (Settings, shown for `sos_triangle`) | 15 | Dots per sphere for surface processing; marching cubes uses grid spacing instead |
 | Monte Carlo steps | blank (HOLE default 1000) | Optimization steps per search plane |
 | Monte Carlo step size | blank (HOLE default 0.1 Å) | Trial displacement scale |
 | Monte Carlo temperature | blank (HOLE default 0.1) | Simulated-annealing acceptance parameter |
-| Connolly surface (HOLE parameters, Connolly runs only) | HOLE conn | Under a Monte Carlo search, HOLE's `conn` or the `nm_search` port of it (same algorithm, byte-identical dots on the same centres). Nelder-Mead always uses the port |
-| Surface mesher (Settings → Engines, first row) | Marching cubes, grid 1.4 Å / neck 0.7 Å | Meshes the spherical, Connolly and tunnel surfaces with `mesh_csg`: marching cubes on the exact sphere union, with the edge crossings solved against the sphere itself rather than interpolated. One mesh serves both playback and the settled view, so the surface never changes shape when playback stops. The default matches `sos_triangle`'s triangle size at dot density 15; lower **grid** for a finer surface at more cost per frame. A Connolly run uses **grid** uniformly, because its whole surface is at probe scale and has no narrow neck to refine. The grid and neck entries appear only for the marching-cubes mesher. `sos_triangle` is the alternative; Capsule always uses HOLE. Property colouring recolours whichever mesh is current, and the marching-cubes one has no polygon limit, which is what let a dense Connolly run colour at all |
+| Connolly surface (HOLE parameters, Connolly runs only) | HOLE conn | Under Monte Carlo, choose HOLE's `conn` or its port in `nm_search`; Nelder-Mead uses the port |
+| Surface mesher (File → Settings) | Marching cubes, grid 1.4 Å / neck 0.7 Å | Builds pore and tunnel surfaces. Lower grid for finer detail at greater cost; neck controls spherical-pore refinement. Connolly uses grid uniformly. The alternative, `sos_triangle`, uses dot density |
 | Hide sideways spill | off | Remove Connolly surface regions classified as lateral spill |
 | Margin | 2 Å | Distance beyond the traced pore wall that still belongs to the central pore |
 | Opening axial match tolerance | 6 Å | Maximum axial displacement used to match a lateral opening across frames |
@@ -104,7 +104,11 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Start-point rule | deepest (MOLE) | Which point **Use as start** takes from a cavity: MOLE's own automatic origin (deepest by `DepthLength`), or CAVER Analyst's centre of the largest inscribed sphere |
 | Solid | off | Draw cavities opaque instead of transparent (MOLE's *Solid cavities*) |
 | Spheres | off | Draw the clearance spheres instead of a surface over them (CAVER Analyst's *Locked Probes*) |
-| Cavity tracking cutoff | 6 Å | Centroid distance within which a cavity in the next frame is taken to be the same cavity |
+| Cavity tracking cutoff | 6 Å | Maximum distance to a track's running mean centre; mobile or neighbouring pockets can be misassigned |
+### Route clustering and display
+
+| Parameter | Default | Definition |
+|---|---:|---|
 | Cluster within frame | on | Merge similar routes in one frame |
 | Within-frame cutoff | 3 Å | Distance threshold for within-frame route clustering |
 | Cross-frame maximum deviation | 12 Å | Largest geometric deviation accepted as one tracked route |
@@ -127,6 +131,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Material | Opaque | VMD material applied to the generated representation |
 | Playback stride (Settings, `sos_triangle` mesher only) | 4 | Draw every Nth triangle while the trajectory plays; the marching-cubes mesher always draws full detail |
 | Synchronize playback | on | Update VMDPathFinder geometry with the VMD frame |
+| Smooth (beside playback) | follows VMD smoothing, usually 0 | Average neighbouring analysed surfaces on either side; tunnel smoothing follows tracked routes. Also sets VMD representation smoothing. Numerical profiles are unchanged |
 | Pore lining threshold | 3 Å | Maximum atom-to-local-surface distance used to classify lining residues for display and residue-property averaging |
 | Property smoothing | 3 Å | Axial smoothing bandwidth |
 | Pore-facing only | on | Retain side chains directed toward the lumen where applicable |
@@ -138,8 +143,9 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Metrics species | Water, K, Na, Ca | Species in the on-figure passability summary; Mg, Cl, Li, and Cs are also available |
 
 The 3D surface, Pore Profile Fill, and Mean Profile synchronize a property where
-it is available. **Over Time** has an independent property and an explicit
-**Compute** gate. Kapcha–Rossky is atom-level in both modes.
+it is available. In Pore mode, **Over Time** has an independent property and an
+explicit **Compute** gate. In Tunnel mode, it uses the selected route's property
+without a separate computation. Kapcha–Rossky is atom-level in both modes.
 
 ## Plot controls
 
@@ -147,7 +153,7 @@ it is available. **Over Time** has an independent property and an explicit
 |---|---|
 | Pore Profile | None, Fill, Ellipse fit, or Unrolled; property/layer; ellipse solid/point rendering; swap axes; flip direction |
 | Over Time | Radius or Property; HOLE or Ellipse radius source; color scheme; independent property; Compute; flip Y |
-| Mean Profile | 2D fill; property; 3D isosurface; color; material; accurate 3D; frame cap; Render smoothly (off); swap/flip |
+| Mean Profile | mean line, standard-deviation band, min/max envelope; 2D fill; property; 3D isosurface; color; material; accurate 3D; frame cap; Render smoothly (off); swap/flip |
 | Trends | metric; mean overlay; conductivity preset/custom value for conductance; constriction shell |
 | Histogram (radius summary) | mean (default), minimum, or maximum radius over 50 fixed spatial bins; swap/flip |
 

@@ -67,7 +67,7 @@ added - nothing to register.
 
 ## Main suite groups (`vmdpathfinder/tests/run_tests.sh`)
 
-Twenty groups. Each wrapper is a `test_<name>.sh`; the runner streams output,
+Twenty-six groups. Each wrapper is a `test_<name>.sh`; the runner streams output,
 carries each group's real exit status out of the pipeline, names a failing
 group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 
@@ -89,6 +89,9 @@ group (`>>> <group>: FAILED (exit N)`), and lists skipped groups at the end.
 | `test_tunnel_clustering` | cross-frame cluster identity; display clustering leaves it untouched; the worst-case guard and the kernel served by the resident mesher agree with the Tcl reference |
 | `test_tunnel_import` | tunnel Save/Import round-trips byte-identically; combined HOLE+tunnel folders load |
 | `test_mole_tcl_port` | the pure-Tcl MOLE engine reproduces the C engine slot for slot |
+| `test_mole_engine_ext` | extended tunnel-engine inputs and cavity outputs |
+| `test_cavity_tracking` | cavity tracking across frames |
+| `test_mean_axis` | mean-surface axis placement |
 | `test_hcapen_cache` | HCAPEN's cutoff cache vs stock (auto-discovers `native/stock_build/hole2/src`, or pass a tree as `$1`) |
 | `test_inline_current` | the inlined HOLE engine matches its `vmdpathfinder/hole_tcl/` source |
 | `test_adapter_schema` | the export adapter schema |

@@ -11,7 +11,7 @@
   <a href="https://doi.org/10.5281/zenodo.22089390"><img src="https://zenodo.org/badge/1284504875.svg" alt="DOI"></a>
 </p>
 
-> **Formerly VMDHole.** The project was renamed in September 2026 once it outgrew HOLE - it now carries its own Nelder-Mead search, marching-cubes mesher and a MOLE-based tunnel mode. Settings from `~/.vmdhole_config` are carried over automatically.
+> **Formerly VMDHole.** Settings from `~/.vmdhole_config` are carried over automatically.
 
 VMDPathFinder is a [VMD](https://www.ks.uiuc.edu/Research/vmd/) plugin for analysing
 pores and molecular tunnels. **Pore mode** runs
@@ -35,7 +35,7 @@ VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD work
 
 * **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and chemical properties.
 
-* **More than a single pore radius.** Choose spherical, Connolly, or capsule pore models for round, irregular, or slit-like channels. Tunnel routes can be ranked, clustered, and followed across a trajectory.
+* **More than a single pore radius.** Choose spherical, Connolly, or capsule pore models for round, irregular, or slit-like channels. Track and annotate [Connolly lateral openings](docs/pore-mode.md#inspect-connolly-lateral-openings), or rank and follow tunnel routes across a trajectory.
 
 * **Structure linked to dynamics.** Examine how geometry, hydration, free energy, and ion movement change frame by frame through synchronized plots and live 3D views.
 
@@ -115,7 +115,7 @@ The distribution includes gramicidin A at
 2. Open VMDPathFinder and select **Pore** mode.
 3. Set **Selection** to `all` and **Frames** to `now`.
 4. Keep the proposed `CPOINT` and `CVECT`, or define the direction with the
-   **⌖** dialog beside `CVECT` (two points, or a stick that tilts it).
+   **⌖** dialog beside `CVECT` (two points, with controls to move either endpoint).
 5. Enable **Show cues** under the **HOLE parameters** gear and confirm that the
    point and arrow follow the channel.
 6. Select **Run HOLE**.
@@ -153,7 +153,7 @@ claims with suitable simulation or experimental data.
 ## Citation and notices
 
 For every VMDPathFinder analysis, cite VMDPathFinder and VMD. Add HOLE when you
-use Pore mode - every engine and mesher in it implements HOLE's method - and
+use Pore mode or HOLE-derived surface processing, and
 further citations for the features you report, for example MOLE 2 for tunnel
 searches, CAVER 3.0
 for tunnel clustering, and CHAP for CHAP-compatible hydration analysis. Open

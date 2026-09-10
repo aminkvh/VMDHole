@@ -84,13 +84,9 @@ identity. Expand a row for details. The row gear controls that route's
 representation, color, material, and property. The global gear applies display
 choices to routes without a per-route override.
 
-Route surfaces are meshed by `mesh_csg` (Settings → Engines → Spherical
-mesher), the same marching-cubes mesher the spherical pore uses, since a
-route is a union of spheres along its centre line. A route coloured by a
-property keeps that same marching-cubes mesh and is RECOLOURED in place
-(`mesh_csg --recolor`); `sos_triangle` is only the fallback when the mesher
-cannot do it. On a four-route frame of KcsA, meshing and drawing took 59 ms
-against 217 ms for `sos_triangle`.
+Choose the **Surface mesher** in **File > Settings**. Property colouring uses
+the same route surface as flat colouring. Lower the marching-cubes **grid**
+for finer detail at greater cost.
 
 Tunnel properties are Kyte–Doolittle, Wimley–White, Kapcha–Rossky,
 Fauchère–Pliska, and the MOLE hydropathy, hydrophobicity, polarity, charge,
@@ -141,21 +137,15 @@ Water free-energy and density properties require a pore-mode hydration result.
 
 ## 8. Cavities
 
-A **cavity** is the pocket itself - a volume - as distinct from a route, which
-is a path out of one. Routes start inside cavities, so the two are views of the
-same search: the room and the corridor leaving it.
-
-Cavities are an **input** to the tunnel search, not a result of it. MOLE derives
-them from each frame's own Delaunay geometry and then picks its automatic origins
-*inside* them, so re-running the search from one cavity cannot change which
-cavities exist - the list is a property of the structure, and it is expected to
-look the same after a re-run.
+A **cavity** is an internal pocket; a tunnel is a route from a pocket to the
+surface. MOLE identifies cavities from the structure before choosing origins.
+Changing only the tunnel start point therefore need not change the cavity list.
 
 **Cavities** lists what MOLE found in the displayed frame: type (*Cavity* when it
 opens to the surface - a pocket - or *Void* when it is fully enclosed), this
 frame's volume, the mean and spread over the frames the cavity was tracked
 through, how often it was seen, its **max probe** (the largest sphere that fits
-inside - whether your ligand fits at all), depth, the **Boundary / Inner**
+inside, not a ligand-fit test), depth, the **Boundary / Inner**
 residue counts, and the **Start pt** the chosen rule below would search from.
 Click a column header to sort. **Residues** opens the two residue sets - boundary
 residues line the opening, inner residues are buried in it - with their MOLE
@@ -170,11 +160,9 @@ when it does not. The **⚙** at the end of each row sets that pocket's own
 colour, material, and whether it is drawn as a surface or as the clearance
 spheres themselves.
 
-Most cavities are transient. On a 50-frame trajectory a typical run tracks ~315
-of them, of which ~108 appear in 5% of frames or fewer and only ~11 in half or
-more. The window therefore shows only pockets present in at least 25% of frames,
-with the count ("46 of 315 shown") beside the **All pockets** box that lifts the
-filter. The dozen that persist are what a trajectory is actually described by.
+The window initially shows pockets present in at least 25% of analysed frames.
+Enable **All pockets** to include less frequent pockets; the adjacent count
+shows how many are displayed.
 
 ### Using a cavity to start a search
 
@@ -210,39 +198,19 @@ them. **Show all** / **Hide all** apply to every cavity in the frame.
 *Id* is a **tracked** id: a pocket is intended to keep the same number, the same
 colour and the same tick across frames, matched by centroid proximity.
 
-Know how strong that guarantee is before you rely on it. The matching is
-**greedy and order-dependent**, and each new cavity is compared against the
-track's *running mean* centroid rather than its position in the previous frame -
-it is not a global one-to-one assignment between adjacent frames. Three
-consequences, all reachable with the default 6 A cutoff:
-
-* a pocket drifting steadily (say 0 A, 4 A, 8 A over three frames) can
-  fragment, because by the third frame the running centroid sits at 2 A and the
-  test needs a distance strictly under the cutoff;
-* a track can reconnect after an arbitrary gap, so *Seen %* may pool episodes
-  separated by many frames;
-* two pockets that cross, merge or split can swap tracks.
-
-The current test covers only two stationary pockets 30 A apart whose volume
-ranks swap, so drift, crossing and gaps are **not** covered. Treat *Id* as a
-reliable label for well-separated, slowly-moving pockets and check it by eye
-before quoting *Seen %*, mean volume or a trend from a crowded or mobile set. This matters because MOLE recomputes cavities independently in each
-frame and ranks them by volume, so two pockets that swap volume order swap
-ranks - keying anything on the rank would mean a ticked cavity silently became
-a different pocket on the next frame. That per-frame rank is still shown, in
-**Rank here**, and a row reading *absent* is a pocket the displayed frame does
-not have (check its *Seen %*). The tracking is this plugin's own: neither MOLE
-nor CAVER reports cavity behaviour over a trajectory at all.
+Matching uses proximity to each track's running mean centre. Drifting pockets
+can split into separate tracks; nearby pockets can exchange identities, and a
+track can reconnect after an absence. Inspect mobile or crowded pockets before
+reporting **Seen**, mean volume, or trends. **Rank here** is the volume rank in
+the displayed frame, not the tracked identity; *absent* means no cavity was
+assigned to that track in this frame.
 
 Two caveats worth carrying into a figure caption:
 
-- The drawn surface is a **marching-cubes sphere union**. MOLE triangulates the
-  boundary facets of its tetrahedra with the corners at *atom centres*, and
-  CAVER Analyst renders an analytic solvent-excluded surface. These are three
-  different surfaces of the same pocket, so areas and volumes are not
-  interchangeable between the programs.
-- MOLE's own *Volume* column is not the volume of anything it draws either: it
-  is the tetrahedra minus van der Waals caps.
+- The drawn surface is a sphere-union approximation for visualization.
+- **Volume** is MOLE's cavity volume: the sum of cavity tetrahedron volumes
+  minus atomic van der Waals corner caps. It is not the enclosed volume of
+  the displayed surface or the tube volume of a tunnel.
 
 Cavities require the compiled engine; a run made with the pure-Tcl fallback has
 none, and the window says so.

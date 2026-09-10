@@ -2,11 +2,9 @@
 
 Use this page when preparing a manuscript, figure caption, data release, or
 software acknowledgement. Cite VMDPathFinder and VMD for every analysis. Add
-HOLE for Pore mode - every engine and mesher in it implements HOLE's method -
-and then only the entries for the other methods or quantities you report. A
-Tunnel-mode run that never touches Pore mode does not use HOLE and should not
-cite it; the in-plugin citation guide (Help > About > Citations) states the same
-rule and is the one to follow.
+HOLE for Pore mode or HOLE-derived surface processing, then the entries for
+other methods or quantities you report. The same references are available in
+**Help → Guide & Citations… → Citations**.
 
 ## Cite for every VMDPathFinder analysis
 
@@ -15,10 +13,6 @@ rule and is the one to follow.
 2. Humphrey, W., Dalke, A. & Schulten, K. "VMD: Visual Molecular Dynamics."
    *J. Mol. Graph.* **14**, 33-38 (1996).
    doi:[10.1016/0263-7855(96)00018-5](https://doi.org/10.1016/0263-7855(96)00018-5)
-3. Smart, O.S., Neduvelil, J.G., Wang, X., Wallace, B.A. & Sansom, M.S.P.
-   "HOLE: A Program for the Analysis of the Pore Dimensions of Ion Channel
-   Structural Models." *J. Mol. Graph.* **14**, 354-360 (1996).
-   doi:[10.1016/S0263-7855(97)00009-X](https://doi.org/10.1016/S0263-7855(97)00009-X)
 
 Use the VMDPathFinder version shown in **Help → Guide & Citations…**. If a versioned
 release DOI is available, use it in place of the repository URL.
@@ -27,6 +21,11 @@ release DOI is available, use it in place of the repository URL.
 
 ### Pore geometry and conductance
 
+- **Pore mode or HOLE-derived surface processing:** Smart, O.S., Neduvelil,
+  J.G., Wang, X., Wallace, B.A. & Sansom, M.S.P. "HOLE: A Program for the
+  Analysis of the Pore Dimensions of Ion Channel Structural Models."
+  *J. Mol. Graph.* **14**, 354-360 (1996).
+  doi:[10.1016/S0263-7855(97)00009-X](https://doi.org/10.1016/S0263-7855(97)00009-X)
 - **Connolly surface:** Connolly, M.L. "Analytical Molecular Surface
   Calculation." *J. Appl. Crystallogr.* **16**, 548-558 (1983).
   doi:[10.1107/S0021889883010985](https://doi.org/10.1107/S0021889883010985)
@@ -114,52 +113,14 @@ The screen-space hydrophobicity scale bar adapts techniques from VMD's
 `colorscalebar.tcl`, by Wuwei Liang, Dan Wright, John Stone, and Axel
 Kohlmeyer.
 
-## Where each idea comes from
+## Cavity methods
 
-Tunnel mode ports MOLE 2's algorithm, and its cavity view borrows interface
-ideas from both MOLE and CAVER. This table records which is which, so a method
-section can be written without guesswork. Nothing here changes what must be
-cited: MOLE for Tunnel mode, CAVER additionally when route clustering is used.
+Cavity and void detection, volume, depth, and residue properties use MOLE 2.
+The start-point choices are MOLE's deepest point and the largest-inscribed-sphere
+rule used by CAVER Analyst.
 
-| Feature | Whose idea | Whose algorithm |
-|---|---|---|
-| Cavity / Void as distinct objects | MOLE | MOLE (Delaunay tetrahedra, depth) |
-| Volume and depth columns | MOLE (the only two its own GUI showed) | MOLE |
-| Boundary/Inner residues with physicochemical properties | MOLE (present only in its XML, never on screen) | MOLE |
-| The drawn cavity surface | both draw one | **this plugin** - marching-cubes sphere union; MOLE uses atom-centre facets, CAVER Analyst an analytic SES |
-| "Use as start point" | CAVER Analyst (*Create Starting Point*) | selectable: **MOLE**'s own automatic origin, or **CAVER**'s largest inscribed sphere |
-| Colour a cavity by volume / max probe | CAVER Analyst (per-cavity flat colour) | not implemented here |
-| Max probe column | CAVER Analyst | max radius over the cavity's own spheres |
-| Sortable table, Show/Hide all | CAVER Analyst | interface only |
-| Solid / transparent toggle | MOLE (*Solid cavities*) | interface only |
-| Spheres view | CAVER Analyst (*Locked Probes*) | the engine's own clearance spheres |
-| Snapping a user origin into the cavity | both (MOLE `OriginRadius`, CAVER `rmin`/`dmax`) | MOLE's |
-| Reporting the origin actually used | CAVER 3.0 requires it for reproducibility | recorded per frame in the run manifest |
-| Cavity tracked across a trajectory | **neither program does this** | this plugin (centroid proximity) |
-| Cavity coloured by a property | **neither program does this** | this plugin (per-residue sidecar + the shared recolour kernel) |
-
-Two numerical caveats follow from the third row: our cavity VOLUME is MOLE's own
-quantity - the sum of the cavity's tetrahedra minus their van der Waals corner
-caps, computed in mole_complex.c and written by the engine - and NOT the volume
-of the mesh drawn on screen. The mesh is a marching-cubes sphere union built for
-display; its enclosed volume is a different number and is not what any column or
-export reports. CAVER Analyst's is a Monte-Carlo estimate over filling balls,
-and CAVER Analyst's is a Monte-Carlo estimate over filling balls. They are three
-different quantities and should not be compared directly.
-
-### Cavity colouring, specifically
-
-CAVER Analyst has no cavity-owned colouring strategy at all: its colouring
-window has tabs for structures, selections and tunnels, and none for cavities.
-A cavity there can be given a flat colour per cavity (random, or mapped from its
-volume or max probe), or - under *Advanced coloring* - inherit the **protein's
-per-atom** colours interpolated over its surface. Colouring a void surface by a
-physicochemical property exists in CAVER only for **tunnels**, computed from
-atoms within 5 Å of each surface point. MOLE cannot colour a cavity by a
-property either; its per-vertex spectrum exporters are unimplemented stubs.
-
-Colouring a cavity surface by a property of its own lining residues is therefore
-this plugin's own, and it reuses the same per-residue sidecar and recolour
-kernel that colour a route and a pore wall, so the three are one mechanism
-rather than three. Neither reference program offers a legend for cavity
-colouring; ours follows the scale bar the other property views already use.
+Cavity tracking and lining-property surface colouring are VMDPathFinder
+features. The displayed sphere-union surface is a visualization; reported
+cavity volumes use MOLE's tetrahedra minus atomic van der Waals corner caps.
+See the [cavity workflow](tunnel-mode.md#8-cavities) for tracking limitations
+and interpretation.

@@ -72,8 +72,9 @@ Changing one does not change the other.
 ## Where properties appear
 
 The 3D surface, Pore Profile **Fill**, and Mean Profile synchronize a selected
-property where that property is available. **Over Time** has its own selector
-and **Compute** step.
+property where that property is available. In Pore mode, **Over Time** has its
+own selector and **Compute** step; in Tunnel mode it uses the selected route's
+property.
 
 After Hydration has been computed, Pore Profile Fill and Mean Profile offer
 trajectory-average **Water G(z)** and **Water density**. The 3D surface instead
@@ -97,7 +98,8 @@ the nearest pore-wall atom along a ray from the axis.
 
 ## Reading colors
 
-Read the legend, not color alone: its range stays fixed across frames. For a
-signed property, the middle is zero; other properties run from low to high.
+Read the legend, not color alone. Most scales have fixed limits; tunnel charge,
+ionizable counts, and electrostatic potential use data-dependent ranges.
+Zero-centred scales place zero in the middle; other scales run from low to high.
 Water density is shown as depletion, `1 - ρ/ρ_bulk`: positive values are below
 bulk density and negative values are above it.

@@ -48,8 +48,8 @@ across frames and figures. See [Properties](properties.md) for data sources and
 restrictions.
 
 The main surface, Pore Profile Fill, and Mean Profile synchronize a property
-where it is available. Over Time is independent and recalculates only after
-**Compute**.
+where it is available. In Pore mode, Over Time has its own property selector
+and **Compute** step. In Tunnel mode, it uses the selected route's property.
 
 ## Lining and pore-facing residues
 
@@ -75,6 +75,14 @@ in-memory cache. Relevant controls are:
 Prebuilding improves interactive playback but increases initial runtime and
 disk use. A larger cache reduces rebuilding but increases memory use.
 
+## Multiple pore analyses
+
+In Spherical mode, use **Memory** to keep several pore analyses visible at
+once. **+** starts a new slot; select a numbered slot to restore its settings
+and results. **Sync** copies the active slot's colour, material, and dot density
+to the others. **×** removes the active slot and its surface, not its saved
+files. A red slot needs recalculation with the current search settings.
+
 ## Mean Profile curves
 
 The Mean Profile gear chooses which curves are drawn: the mean line, the +/-1
@@ -86,8 +94,10 @@ only what is actually drawn.
 
 ## Mean 3D surface
 
-Mean Profile can revolve the mean radius profile into a trajectory-average 3D
-surface. It is not an average Cartesian molecular surface. Property color can
+In Pore mode, Mean Profile revolves the mean radius profile into a
+trajectory-average 3D surface. In Tunnel mode, it uses the selected route's
+centrelines from the frames where that route was found. Neither is a measured
+conformation. Property color can
 be projected with the fast approximation or **Accurate 3D** mode. **Render
 smoothly** applies mesh smoothing to this mean surface and is off by default;
 record both choices when comparing figures.

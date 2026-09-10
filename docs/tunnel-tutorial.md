@@ -91,7 +91,8 @@ VMD. **Seen** is the fraction of analysed frames assigned to the tracked route.
 ## Citations
 
 Before publishing, open **Help → Guide & Citations… → Citations**. Cite VMD,
-VMDPathFinder, HOLE, and MOLE 2 for this workflow. **Cluster within frame** is on by
+VMDPathFinder and MOLE 2 for this workflow. Add HOLE if using its surface-processing
+tools rather than marching cubes. **Cluster within frame** is on by
 default, so also cite CAVER 3.0 unless you disable clustering. See
 [References](references.md) for the full entries.
 
