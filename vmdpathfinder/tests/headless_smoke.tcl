@@ -5130,6 +5130,24 @@ chk "_conn_ionflow_spheres_fast checks the cache/native directly, not _conn_clas
 chk "...and only caches a result it confirmed came from native" \
     [expr {[string first {_conn_classify_cache_store} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] >= 0}] 1
 
+# save_package's README write is not individually guarded - open() failing
+# is caught inside _pkg_write_readme, but a puts() failing mid-write is not,
+# and an uncaught throw there would skip _end_calc, leaking _calc_depth
+# (Abort stuck visible, every later calculation refusing to start) forever.
+chk "save_package's readme write cannot skip _end_calc on a mid-write failure" \
+    [expr {[string first "catch \{_pkg_write_readme" [info body ::VMDPathFinder::save_package]] >= 0}] 1
+
+# Dots is meshed by marching cubes whenever _csg_can_mesh allows it (the SAME
+# gate surface_mesh_tag itself uses for the file it writes), regardless of
+# _csg_active - which excludes dots by definition. Keying dots-mode geometry
+# on _csg_active's voxel spec left it unable to see a grid change at all,
+# even though the file on disk was already correctly named differently.
+set _sgkbody [info body ::VMDPathFinder::surface_geom_key]
+chk "surface_geom_key's dots branch uses _csg_can_mesh, not _csg_active, for its voxel tag" \
+    [expr {[string first {_dvx} $_sgkbody] >= 0
+        && [string first {_csg_can_mesh} $_sgkbody] >= 0
+        && [string first {dots$_dvx} $_sgkbody] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.

@@ -31315,9 +31315,19 @@ proc ::VMDPathFinder::surface_geom_key {} {
     # and the setting looked inert.
     set _vx ""
     if {[_csg_active]} { catch {set _vx "|v[_csg_voxel_spec]"} }
+    # Dots is gated on _csg_can_mesh, not _csg_active, everywhere it actually
+    # builds (prebuild_surfaces_parallel and its siblings check
+    # "mode eq dots || _csg_active" - dots is meshed by marching cubes
+    # whenever the mesher can run one, regardless of _csg_active excluding
+    # it) - the SAME gate surface_mesh_tag itself uses for the file it
+    # actually writes. Using _vx (built above from _csg_active alone) left
+    # dots-mode geometry keyed the same across a grid change even though the
+    # file on disk was already correctly named differently.
+    set _dvx ""
+    if {[_csg_can_mesh]} { catch {set _dvx "|v[_csg_voxel_spec]"} }
     switch -- $state(display_mode) {
         centerline { return "centerline$_vx" }
-        dots       { return "dots$_vx" }
+        dots       { return "dots$_dvx" }
         default    {
             # pore_lat and the sideways gate are the exceptions to "color is a
             # draw-time override": both are separate MESHES, so they need their
@@ -54008,7 +54018,13 @@ proc ::VMDPathFinder::save_package {} {
         set _frames [expr {[analysis_mode] eq "tunnel" ? $tunnel_result_frames : $result_frames}]
         _write_run_parameters $dir $stamp [resolve_molid_or -1] $state(selection) $_frames
     }
-    _pkg_write_readme $dir $stamp $done $skipped $_files $aborted
+    # catch, matching _write_run_parameters above: open() failing is already
+    # guarded inside _pkg_write_readme, but a puts() failing mid-write (a full
+    # disk, the folder vanishing) is not, and an uncaught throw here would skip
+    # _end_calc below - leaving _calc_depth incremented forever, the Abort
+    # button stuck visible, and every later calculation refusing to start
+    # ("something is already running") until the plugin is reopened.
+    catch {_pkg_write_readme $dir $stamp $done $skipped $_files $aborted}
     _end_calc
     set state(status) "Package written to $dir - [llength $_files] file(s)."
     set _msg "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped (no data): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
