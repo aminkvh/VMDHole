@@ -4,6 +4,9 @@ Generated: 2026-09-07T01:14:34Z
 Benchmarked commit: `061f7d75dafd9c4bbd3126b6ff1176844359eb49` (branch main; working tree CLEAN at run time
 except these regenerated result files). The commits after it, up to `71d9ae9` where this
 document was written, change only the CPOINT/CVECT stick dialog and documentation - no measured path.
+On 2026-09-07 the project was renamed (commit `9ed96e9`): labels and paths in these result files
+read `vmdpathfinder`/`VMDPathFinder` where the run wrote `vmdhole`/`VMDHole`. That edit is textual;
+no measured value changed, and `SHA256_MANIFEST.txt` was re-hashed for it on 2026-09-10.
 Protocol: `paper/benchmarks/reproduce.sh`, the repository's own harness,
 3 timing repetitions per point, medians reported. No benchmark script parameter
 or dataset changed for this run; the harness gained three plugin rows
@@ -221,7 +224,8 @@ PASS`, see `fig_performance_provenance.txt`). `docs/images/
 performance_summary.png` is a copy of the PNG.
 
 The plugin's own Nelder-Mead search and marching-cubes mesher were measured
-separately from this figure (see the 2026-09-07 session notes): 1.0-1.7x
+separately from this figure (the `vmdpathfinder_nm`, `vmdpathfinder_csg` and
+`vmdpathfinder_nm_csg` rows of `endtoend.csv`): 1.0-1.7x
 over the released Monte Carlo/`sos_triangle` pipeline per frame, most of it
 from OpenMP threading inside the new engines rather than the algorithm
 itself, and washed out almost entirely once the 15-worker pool the figure's
