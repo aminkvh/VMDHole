@@ -3688,6 +3688,15 @@ chk "...and has nothing to say for a cloud without them" \
 chk "a fitted neck is stored as it is" [::VMDPathFinder::_conn_neck_value 1.72 22.0] 1.72
 chk "a route wider than the end radius reads open (= endrad)" [::VMDPathFinder::_conn_neck_value 31.5 22.0] 22.0
 chk "no answer leaves the neck blank" [list [::VMDPathFinder::_conn_neck_value - 22.0] [::VMDPathFinder::_conn_neck_value "" 22.0] [::VMDPathFinder::_conn_neck_value -1 22.0]] {{} {} {}}
+# Opening traffic: a sample counts only in an opening's own cell AND out past
+# the opening's nearest dot there - a lumen ion in the same sector does not.
+set _c2s [dict create "3,5" 2]
+set _cmin [dict create "3,5" 9.0]
+chk "a sample out in the opening is attributed to it" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,5" 10.2] 2
+chk "...a lumen sample in the same sector is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,5" 4.0] ""
+chk "...and a sample in another cell is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,6" 10.2] ""
+chk "cell keys follow the lobe grid (azimuth wraps)" \
+    [list [::VMDPathFinder::_conn_cell_key 7.9 0.0 3.0 24] [::VMDPathFinder::_conn_cell_key -0.1 3.14159 3.0 24]] {2,12 -1,23}
 chk "_conn_nearest_t picks the closest sorted position" \
     [list [::VMDPathFinder::_conn_nearest_t {0 1 2 3} 2.4] [::VMDPathFinder::_conn_nearest_t {0 1 2 3} -5] [::VMDPathFinder::_conn_nearest_t {0 1 2 3} 9]] {2 0 3}
 chk "_conn_lobe_necks hands the lobes back untouched without a centreline" \

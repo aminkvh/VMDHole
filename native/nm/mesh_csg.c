@@ -228,8 +228,6 @@ static int build_axis(double origin, int ncoarse, const double *ivlo, const doub
     *out = t;
     return n;
 }
-static int dbg_normsrc = 0;
-static long dbg_clipdom = 0, dbg_vtot = 0;
 static float *fpos, *fclip;      /* per-corner signed distances, init +INF */
 static int *fown, *fownc;        /* per-corner nearest DOT / CLIP sphere (argmin) */
 
@@ -413,78 +411,29 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     for (size_t i = 0; i < ncorner; i++) { fpos[i] = 1e9f; fclip[i] = 1e9f; fown[i] = -1; fownc[i] = -1; }
     double t1 = now_ms();
 
-    dbg_normsrc = getenv("CSG_DEBUG_NORMSRC") ? 1 : 0;
-    dbg_clipdom = dbg_vtot = 0;
     fill_field(fpos, 0);
     fill_field(fclip, 1);
     /* smoothing: the mean of every frame's field, marched in place of the
        centre's; the centre's own fields still decide caps and colour */
-    /* WHY A FRAME SMOOTHED AGAINST COPIES OF ITSELF DOES NOT REPRODUCE THE
-       UNSMOOTHED MESH, measured rather than guessed:
-
-       The averaged FIELD is bit-identical - CSG_DEBUG_IDENT reports
-       differing=0 maxdiff=0 over 105245 corners with three identical frames.
-       The mesh differs because smoothing takes two other branches:
-
-         1. vert_interp is passed -1 instead of corner_sphere(), dropping the
-            analytic sphere-based vertex refinement. Restoring it alone put the
-            count back to 3308 from 3309.
-         2. normals are taken from the marched field instead of fpos.
-            Restoring that as well made the mesh BYTE-IDENTICAL.
-
-       Both are deliberate and correct for real smoothing: an averaged field is
-       no longer a union of spheres, so no single sphere governs a corner, and
-       the normal should be the gradient of the field actually marched. So
-       "smoothed against itself == not smoothed" is NOT an achievable
-       invariant, and asserting it would force a special case that only helps a
-       test. The invariant that IS true and now tested is field identity.
-
-       Worth flagging separately: OFF the smoothing path normals come from
-       fpos, while the surface is fval = max(fpos, -fclip). Where the clip term
-       dominates, the normal is the gradient of a different function than the
-       one that defined the surface. That is a latent inconsistency in the
-       ordinary path, not in smoothing.
-
-       MEASURED (CSG_DEBUG_NORMSRC=1, which counts emitted vertices where
-       -fclip > fpos): 118 of 4986 (2.37%) on the 1GRM fixture, 952 of 78255
-       (1.22%) on a 160k-atom pore. It stays that small because the centroid
-       test above already discards facets the clip term owns; what survives is
-       the rim of each mouth, where the two terms cross. So the affected
-       normals are a thin ring at both ends, not the pore wall. Fixing it would
-       mean taking the normal from whichever term governs at that vertex, which
-       moves every existing normal in that ring - left alone deliberately until
-       someone asks for it. The probe is inert unless the variable is set
-       (verified byte-identical output). */
-    /* The field marching cubes actually marches, materialised so the NORMALS
-       can be its gradient. Without smoothing the corner values come from
-       fval() = max(fpos, -fclip) - the pore minus the ENDRAD clip spheres -
-       while the normals were taken from fpos alone. On the wall those agree;
-       on a mouth cap, where the clip term decides the surface, the normal
-       described the wall the cap was carved out of instead of the cap.
-       Sampling this array makes the normal the gradient of exactly the
-       interpolant whose zero set the vertices sit on, which is what the
-       smoothing path (favg) has always done - so the two paths now agree
-       rather than one being patched.
-       Where fpos governs, max() returns fpos and this array holds the same
-       bits, so those normals are unchanged; only the mouths move. */
+    /* The field marching cubes actually marches, kept so the normals can be
+       its gradient. The corner values are fval() = max(fpos, -fclip), the
+       pore minus the ENDRAD clip spheres; where fpos governs this holds the
+       same bits, so only the mouth caps get a different normal from fpos
+       alone. The smoothing path takes its normals from favg the same way.
+       A frame smoothed against copies of itself does not give back the
+       unsmoothed mesh: the averaged field is identical (CSG_DEBUG_IDENT
+       below reports it), but an averaged field is no longer a union of
+       spheres, so vert_interp gets no sphere to refine against. */
     float *fvalf = malloc(ncorner * sizeof(float));
     for (size_t i = 0; i < ncorner; i++) fvalf[i] = fval(i);
 
     float *favg = NULL;
     if (nwith > 0) {
-        /* Every corner is averaged over ALL frames, sentinel included.
-           A corner beyond fill_field's radius+2h band is NOT unknown - it is
-           known to be far OUTSIDE in that frame - so the 1e9 must count.
-           Dividing instead by "frames that reached this corner" (tried
-           2026-09-09, reverted) gave a corner reached by 1 frame of N that one
-           frame's value at FULL strength: a transient bulge survived smoothing
-           undiminished and appeared as a blob or a false lateral opening.
-           Accumulated in DOUBLE: three identical float fields summed and
-           divided in float round by an ULP, which flips a corner across the
-           isosurface and changed a smoothed mesh of identical inputs from 3308
-           to 3309 triangles. In double the sum of n identical floats divided by
-           n returns the float exactly, so averaging identical frames is the
-           identity it should be. That part is kept. */
+        /* Every corner is averaged over ALL frames, sentinel included: a
+           corner beyond fill_field's radius+2h band is known to be far
+           outside in that frame, so its 1e9 must count, or a feature one
+           frame has survives smoothing at full strength. Accumulated in
+           double so that n identical frames average to exactly themselves. */
         double *acc = malloc(ncorner * sizeof(double));
         favg = malloc(ncorner * sizeof(float));
         for (size_t i = 0; i < ncorner; i++) acc[i] = fval(i);
@@ -511,8 +460,8 @@ static long mesh_run(const char *outpath, const char *plotpath) {
         free(fp2); free(fc2);
         sph_restore(centre);
         for (size_t i = 0; i < ncorner; i++) favg[i] = (float)(acc[i] / (double)nused);
-        /* CSG_DEBUG_IDENT=1: report how far the averaged field is from the
-           centre's own. Zero cost unless set; the identity test reads this. */
+        /* CSG_DEBUG_IDENT=1: how far the averaged field is from the centre's
+           own; the identity test reads this. */
         if (getenv("CSG_DEBUG_IDENT")) {
             double mx = 0; size_t nd = 0, nsent = 0;
             for (size_t i = 0; i < ncorner; i++) {
@@ -604,14 +553,6 @@ static long mesh_run(const char *outpath, const char *plotpath) {
                     /* outward normal = gradient of f (central differences) */
                     double e = 0.5 * hf;
                     const float *nf = favg ? favg : fvalf;
-                    /* CSG_DEBUG_NORMSRC=1: count vertices where the clip term
-                       decides the surface - the ones this fix moves. */
-                    if (dbg_normsrc) {
-                        if (-trisample(fclip, vv[q][0], vv[q][1], vv[q][2]) >
-                             trisample(fpos,  vv[q][0], vv[q][1], vv[q][2]))
-                            __sync_fetch_and_add(&dbg_clipdom, 1);
-                        __sync_fetch_and_add(&dbg_vtot, 1);
-                    }
                     double nx2 = trisample(nf, vv[q][0]+e, vv[q][1], vv[q][2]);
                     double nx1 = trisample(nf, vv[q][0]-e, vv[q][1], vv[q][2]);
                     double ny2 = trisample(nf, vv[q][0], vv[q][1]+e, vv[q][2]);
@@ -723,9 +664,6 @@ static long mesh_run(const char *outpath, const char *plotpath) {
     }
     for (int th = 0; th < nslab; th++) free(tbuf[th]);
     free(tbuf); free(tcnt); free(tcap);
-    if (dbg_normsrc)
-        fprintf(stderr, "CSG_NORMSRC clip_dominated=%ld of %ld vertices (%.4f%%)\n",
-                dbg_clipdom, dbg_vtot, dbg_vtot ? 100.0*dbg_clipdom/dbg_vtot : 0.0);
     free(fvalf);
     free(fpos); free(fclip); free(fown); free(fownc); free(favg);
     fpos = fclip = NULL; fown = fownc = NULL;

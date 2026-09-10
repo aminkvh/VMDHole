@@ -27074,10 +27074,10 @@ proc ::VMDPathFinder::_mem_stale_keys {} {
     # mesher, the display mode and the smoothing are re-derived at draw time
     # from the live settings, so switching triangulated to dots redraws every
     # memory correctly and must not turn the whole row red telling the user to
-    # re-run analyses that are perfectly current. These four are exactly the
-    # fields run_signature records, which is what makes a loaded run comparable
-    # with a live one.
-    return {sample pore_method search_engine conn_engine}
+    # re-run analyses that are perfectly current. All five are fields
+    # run_signature records, which is what makes a loaded run comparable with
+    # a live one.
+    return {sample pore_method search_engine conn_engine radius_file}
 }
 
 proc ::VMDPathFinder::_mem_shared_signature {} {
@@ -36780,6 +36780,24 @@ proc ::VMDPathFinder::_conn_open_close_episode {outvar lb run r_first r_last {is
     dict set out $lb $e
 }
 
+proc ::VMDPathFinder::_conn_cell_key {t th zcell nth} {
+    # The (axial, azimuth) cell of a point, as the lobe grid keys it.
+    set PI [expr {acos(-1.0)}]
+    set ti [expr {int(floor(($th + $PI)/(2*$PI)*$nth)) % $nth}]
+    if {$ti < 0} { incr ti $nth }
+    return "[expr {int(floor($t/$zcell))}],$ti"
+}
+
+proc ::VMDPathFinder::_conn_sample_site {c2s cmin key r} {
+    # The opening a sample sits in: its cell must be one of the opening's,
+    # and it must be as far from the axis as the opening's nearest dot there
+    # (less 0.5 A) - closer in, it is in the lumen behind the opening. "" for
+    # none.
+    if {![dict exists $c2s $key]} { return "" }
+    if {[dict exists $cmin $key] && $r ne "" && $r < [dict get $cmin $key] - 0.5} { return "" }
+    return [dict get $c2s $key]
+}
+
 proc ::VMDPathFinder::_conn_opening_occupancy {args} {
     # Ion traffic through each lateral OPENING, keyed by the pooled SITE id the
     # openings list shows.
@@ -36821,64 +36839,52 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
     # (caught below, dropping the discriminator entirely) on an odd one.
     catch {append _okey "|[llength [dict get $ion_flow_raw traces]]"}
     if {[dict exists $_conn_occ_memo $_okey]} { return [dict get $_conn_occ_memo $_okey] }
-    set _cv [normalize_triplet_value $state(cvect)]
-    set _cp [normalize_triplet_value $state(cpoint)]
-    if {[llength $_cp] != 3} {
-        set _cp ""
-        catch {set _cp [_resolve_point_input $state(cpoint) [resolve_molid_or -1] \
-            [lindex $result_frames 0]]}
-    }
-    if {[llength $_cp] != 3 || [llength $_cv] != 3} { return {} }
     lassign [_conn_lobe_grid] zcell nth
-    set PI [expr {acos(-1.0)}]
-    set twopi [expr {2*$PI}]
-    lassign $_cp ox oy oz
-    lassign $_cv ux uy uz
-    set un [expr {sqrt($ux*$ux+$uy*$uy+$uz*$uz)}]
-    if {$un < 1e-9} { return {} }
-    set ux [expr {$ux/$un}]; set uy [expr {$uy/$un}]; set uz [expr {$uz/$un}]
-    lassign [_conn_axis_basis $ux $uy $uz] e1x e1y e1z e2x e2y e2z
 
-    # one cell -> site map PER FRAME
+    # Per frame: cell -> site, the opening's nearest dot per cell (its inner
+    # edge, so a lumen ion in the same sector is not counted), and the angle
+    # from the Ion Flow azimuth basis to the one this frame's lobes were
+    # classified against. Same per-frame axis and basis as the site table.
     set permap [dict create]
     foreach fr $result_frames {
         if {![dict exists $results $fr sph_file]} continue
         set sph [dict get $results $fr sph_file]
         if {![file exists $sph]} continue
-        set cls [_conn_classify_cached $sph $_cv $_cp [_conn_pore_margin]]
+        lassign [_conn_frame_axis $fr] _cv _cp _basis
+        if {[llength $_cp] != 3 || [llength $_cv] != 3} continue
+        set cls [_conn_classify_cached $sph $_cv $_cp [_conn_pore_margin] $_basis]
         if {![dict size $cls]} continue
         set lobes [_conn_frame_lobes $cls]
         if {![llength $lobes]} continue
         set smap [_conn_lobe_site_map $table $fr $lobes]
+        lassign $_cp ox oy oz
+        lassign [_axg_unit $_cv] ux uy uz
+        lassign [_conn_axis_basis $ux $uy $uz] i1x i1y i1z i2x i2y i2z
+        if {[llength $_basis] == 6} { lassign $_basis e1x e1y e1z e2x e2y e2z } \
+        else { lassign [list $i1x $i1y $i1z $i2x $i2y $i2z] e1x e1y e1z e2x e2y e2z }
+        set dth [expr {atan2($e1x*$i2x+$e1y*$i2y+$e1z*$i2z, $e1x*$i1x+$e1y*$i1y+$e1z*$i1z)}]
         set lat [dict get $cls lateral]
-        set lat_zt [expr {[dict exists $cls lat_zt] ? [dict get $cls lat_zt] : {}}]
         set c2s [dict create]
+        set cmin [dict create]
         set li -1
         foreach L $lobes {
             incr li
             if {![dict exists $smap $li]} continue
             set sid [dict get $smap $li]
             foreach k [lindex $L 3] {
-                if {[llength $lat_zt]} {
-                    lassign [lindex $lat_zt $k] t th
-                } else {
-                    set ln [lindex $lat $k]
-                    set x [string trim [string range $ln 30 37]]
-                    set y [string trim [string range $ln 38 45]]
-                    set z [string trim [string range $ln 46 53]]
-                    if {![string is double -strict $x]} continue
-                    set dx [expr {$x-$ox}]; set dy [expr {$y-$oy}]; set dz [expr {$z-$oz}]
-                    set t [expr {$dx*$ux + $dy*$uy + $dz*$uz}]
-                    set qx [expr {$dx-$t*$ux}]; set qy [expr {$dy-$t*$uy}]; set qz [expr {$dz-$t*$uz}]
-                    set th [expr {atan2($qx*$e2x+$qy*$e2y+$qz*$e2z, $qx*$e1x+$qy*$e1y+$qz*$e1z)}]
-                }
-                set zi [expr {int(floor($t/$zcell))}]
-                set ti [expr {int(floor(($th + $PI)/$twopi*$nth)) % $nth}]
-                if {$ti < 0} { incr ti $nth }
-                dict set c2s "$zi,$ti" $sid
+                lassign [_conn_line_xyz [lindex $lat $k]] x y z
+                if {$x eq ""} continue
+                set dx [expr {$x-$ox}]; set dy [expr {$y-$oy}]; set dz [expr {$z-$oz}]
+                set t [expr {$dx*$ux + $dy*$uy + $dz*$uz}]
+                set qx [expr {$dx-$t*$ux}]; set qy [expr {$dy-$t*$uy}]; set qz [expr {$dz-$t*$uz}]
+                set th [expr {atan2($qx*$e2x+$qy*$e2y+$qz*$e2z, $qx*$e1x+$qy*$e1y+$qz*$e1z)}]
+                set key [_conn_cell_key $t $th $zcell $nth]
+                dict set c2s $key $sid
+                set rr [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
+                if {![dict exists $cmin $key] || $rr < [dict get $cmin $key]} { dict set cmin $key $rr }
             }
         }
-        if {[dict size $c2s]} { dict set permap $fr $c2s }
+        if {[dict size $c2s]} { dict set permap $fr [list $c2s $cmin $dth] }
     }
     if {![dict size $permap]} { return {} }
 
@@ -36896,11 +36902,9 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         foreach t $zs th $azs f $fs rr $rs {
             set site ""
             if {$th ne "" && $t ne "" && [dict exists $permap $f]} {
-                set zi [expr {int(floor($t/$zcell))}]
-                set ti [expr {int(floor(($th + $PI)/$twopi*$nth)) % $nth}]
-                if {$ti < 0} { incr ti $nth }
-                set c2s [dict get $permap $f]
-                if {[dict exists $c2s "$zi,$ti"]} { set site [dict get $c2s "$zi,$ti"] }
+                lassign [dict get $permap $f] c2s cmin dth
+                set site [_conn_sample_site $c2s $cmin \
+                    [_conn_cell_key $t [expr {$th - $dth}] $zcell $nth] $rr]
             }
             if {$site eq ""} {
                 if {$prev_site ne "" && $run > 0} { _conn_open_close_episode out $prev_site $run $r_first $r_last $_iswater }
@@ -37866,6 +37870,7 @@ proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {bas
         # actually moves it to the end - so a frame the user keeps coming
         # back to (the displayed one, most often) is not evicted just because
         # a walk over 8+ OTHER frames happened to run in between.
+        set cls [_conn_classify_finish $in_sph $cls $cvect_s $cpoint_s]
         dict unset _conn_cls_memo $key
         dict set _conn_cls_memo $key $cls
         return $cls
@@ -37881,8 +37886,17 @@ proc ::VMDPathFinder::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_
     set cls [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin $basis_s]
     if {![dict size $cls]} { set cls [_conn_classify_tcl $in_sph $cvect_s $cpoint_s $margin $basis_s] }
     if {![dict size $cls]} { return {} }
+    return [_conn_classify_finish $in_sph $cls $cvect_s $cpoint_s]
+}
+
+proc ::VMDPathFinder::_conn_classify_finish {in_sph cls cvect_s cpoint_s} {
+    # Lobes split (when the engine did not) and their necks, marked done so a
+    # cached split stored without them (the Ion Flow fast path stores the raw
+    # native result) is finished on its first use by the openings panel.
+    if {[dict exists $cls necked]} { return $cls }
     if {![dict exists $cls lobes]} { dict set cls lobes [_conn_split_lobes $cls] }
     dict set cls lobes [_conn_lobe_necks $in_sph $cls $cvect_s $cpoint_s]
+    dict set cls necked 1
     return $cls
 }
 
@@ -41632,7 +41646,7 @@ proc ::VMDPathFinder::_write_run_parameters {root run_id molid seltext frames} {
     if {$root eq ""} { return "" }
     set f [file join $root "run_${run_id}.txt"]
     if {[catch {set fh [open $f w]}]} { return "" }
-    puts $fh "# VMDPathFinder run parameters. Everything needed to repeat this run."
+    puts $fh "# VMDPathFinder run parameters: selection, frames, axis and the pore search settings."
     foreach l [_run_parameter_lines $run_id $molid $seltext $frames] { puts $fh $l }
     close $fh
     return $f

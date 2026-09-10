@@ -698,8 +698,6 @@ static void nm_march(double sample, double endrad, double clipstop) {
                 }
             }
             ct[ncoarse] = tt; cu[ncoarse] = u; cv[ncoarse] = v; ncoarse++;
-            if (getenv("NM_DEBUG_COARSE"))
-                fprintf(stderr, "coarse t=%7.2f u=%7.2f v=%7.2f r=%.3f\n", tt, u, v, r);
             if (r > clipstop || ncoarse >= MAXSL) break;
         }
     }
