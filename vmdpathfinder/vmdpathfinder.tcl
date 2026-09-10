@@ -36740,11 +36740,10 @@ proc ::VMDPathFinder::_conn_azim_deg {rad} {
 }
 
 proc ::VMDPathFinder::_conn_lobe_frame_drop_note {} {
-    # Openings present in the DISPLAYED frame that this list does not admit.
-    # The list is pooled over the trajectory and gates on the persistence floor;
-    # the two-tone (pore + lateral) coloring is per-frame and draws every
-    # lateral dot, so it can show sideways geometry that has no row here.
-    # Counted by _build_conn_lobes_plot, which already has the classification.
+    # Openings present in the DISPLAYED frame that this list does not admit:
+    # the list is pooled over the trajectory and gates on the persistence
+    # floor. They are drawn in the pore's colour, not left out. Counted by
+    # _build_conn_lobes_plot.
     variable _conn_lobe_frame_drops
     if {![info exists _conn_lobe_frame_drops]} { return "" }
     lassign $_conn_lobe_frame_drops nfloor nosite nhidden
@@ -37127,22 +37126,17 @@ proc ::VMDPathFinder::_build_conn_lobes_plot {run_dir sph_file frame dotden out_
         [expr {[_conn_site_shown 0] ? 1 : 0}]]
     set li 0
     set _drop_floor 0; set _drop_nosite 0; set _drop_hidden 0
+    set _pore_extra {}
     foreach lb $lobes {
         set sid [expr {[dict exists $map $li] ? [dict get $map $li] : 0}]
         incr li
-        # A site hidden by the persistence threshold has no row to switch it
-        # off, so the render has to honour the threshold itself or it would
-        # draw openings the list does not admit exist.
-        # A lobe with no site, or one below the persistence floor, has no row to
-        # switch it off, so it is neither drawn nor meshed - but it still has to
-        # be classified out of the pore, which _conn_classify_sph already did.
+        # A lobe with no row (no site, or below the persistence floor) stays
+        # part of the surface: its dots join the pore region, so the pore is
+        # drawn whole and only the listed openings carry their own colour.
         # An UNTICKED site is meshed and simply not drawn (see the note above).
         if {$sid == 0 || ![_conn_site_persistent $table $sid]} {
-            # Counted so the panel can say WHY this frame shows fewer openings
-            # than the two-tone view does: that one is per-frame and draws every
-            # lateral dot, while this list is pooled over the trajectory and a
-            # rare opening never earns a row.
             if {$sid == 0} { incr _drop_nosite } else { incr _drop_floor }
+            foreach i [lindex $lb 3] { lappend _pore_extra [lindex $lat $i] }
             continue
         }
         if {![_conn_site_shown $sid]} { incr _drop_hidden }
@@ -37153,6 +37147,16 @@ proc ::VMDPathFinder::_build_conn_lobes_plot {run_dir sph_file frame dotden out_
     }
     variable _conn_lobe_frame_drops
     set _conn_lobe_frame_drops [list $_drop_floor $_drop_nosite $_drop_hidden]
+    # Lateral dots in no lobe at all (specks, stray cells) stay in the surface
+    # the same way: as pore.
+    array set _used {}
+    foreach lb $lobes { foreach i [lindex $lb 3] { set _used($i) 1 } }
+    for {set i 0} {$i < [llength $lat]} {incr i} {
+        if {![info exists _used($i)]} { lappend _pore_extra [lindex $lat $i] }
+    }
+    if {[llength $_pore_extra]} {
+        lset regions 0 1 [concat [lindex $regions 0 1] $_pore_extra]
+    }
     if {![llength $regions]} { return 0 }
     set _anyshown 0
     foreach _r $regions { if {[lindex $_r 3] ne "0"} { set _anyshown 1; break } }
@@ -37576,9 +37580,13 @@ proc ::VMDPathFinder::_build_conn_region_meshes {run_dir cls regions dotden {src
         # built, so every check passed and the TRIMMED mesh was served with the
         # trim switched off. Putting the state in the name makes the two
         # variants different files instead of one file with two meanings.
+        # The dot count is part of the name: the pore region holds different
+        # dots under pore_lat and under pore_lobes (where every lateral dot
+        # outside a listed opening joins it), and a cached plot must not
+        # answer for the other.
         set tag [expr {[_csg_can_mesh]
-            ? "${name}_[_conn_margin_tag]_u2[_conn_surface_suffix][surface_mesh_tag]"
-            : "${name}_[_conn_margin_tag]_d${_rdd}_u2[_conn_surface_suffix]"}]
+            ? "${name}_[_conn_margin_tag]_n[llength $lines]_u2[_conn_surface_suffix][surface_mesh_tag]"
+            : "${name}_[_conn_margin_tag]_n[llength $lines]_d${_rdd}_u2[_conn_surface_suffix]"}]
         set rsph  [file join $run_dir "hole_conn_${tag}.sph"]
         set rsos  [file join $run_dir "hole_conn_${name}.sos"]
         set rplot [file join $run_dir "hole_conn_${tag}.vmd_plot"]
