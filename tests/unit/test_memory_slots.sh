@@ -5,7 +5,8 @@
 #     keeps the method settings and the frame range;
 #   * switching back restores that memory's settings, results and folder;
 #   * a new memory has no folder until it runs (the run makes one);
-#   * sync copies display settings only, never run geometry.
+#   * sync copies display settings only, never run geometry;
+#   * the saved settings (not the shipped ones) are what a new memory starts from.
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -47,6 +48,8 @@ $(awk '/^proc ::VMDPathFinder::_mem_new/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_activate/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_delete/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_sync_presentation/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_config_persistent_keys/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_config_adopt_defaults/,/^}/' "$TCL")
 
 namespace eval ::VMDPathFinder {
     array set default_state {selection protein cpoint {} cvect {0 0 1} sample 0.25
@@ -54,6 +57,9 @@ namespace eval ::VMDPathFinder {
                              display_mode triangulated mesher csg search_engine mc
                              conn_engine hole show_mean_surface 0 frame_spec now}
     array set state [array get default_state]
+    # the user's saved default endrad is 20, the shipped one 15
+    set state(endrad) 20.0
+    _config_adopt_defaults
     # memory 1: a real run
     set state(cpoint) "1 2 3"
     set state(selection) "protein and chain A"
@@ -71,6 +77,7 @@ namespace eval ::VMDPathFinder {
     puts "NEW_METHOD \$state(pore_method) \$state(frame_spec)"
     puts "NEW_RESULTS [dict size \$results]"
     puts "NEW_ROOT '\$run_root'"
+    puts "NEW_ENDRAD \$state(endrad)"
     # memory 2 runs its own pore into its own folder
     set state(cpoint) "9 9 9"
     set results [dict create 5 {c d}]
@@ -112,6 +119,7 @@ get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
 [ "$(get NEW_METHOD)" = "connolly all" ] && ok "...but keeps the method and the frame range" || bad "new method/frames $(get NEW_METHOD)"
 [ "$(get NEW_RESULTS)" = "0" ] && ok "...with no results of its own yet" || bad "new results $(get NEW_RESULTS)"
 [ "$(get NEW_ROOT)" = "''" ] && ok "...and no folder until it runs" || bad "new root $(get NEW_ROOT)"
+[ "$(get NEW_ENDRAD)" = "20.0" ] && ok "...from the saved defaults, not the shipped ones" || bad "new endrad $(get NEW_ENDRAD)"
 
 [ "$(get BACK_CPOINT)" = "'1 2 3'" ] && ok "switching back restores that memory's cpoint" || bad "back cpoint $(get BACK_CPOINT)"
 [ "$(get BACK_SEL)" = "'protein and chain A'" ] && ok "...and its selection" || bad "back selection $(get BACK_SEL)"

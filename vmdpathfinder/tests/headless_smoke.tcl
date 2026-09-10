@@ -1565,9 +1565,16 @@ set ::VMDPathFinder::state(export_run_next) 1
 set ::_test_cfg "probe 1.1 interior 1.25"
 ::VMDPathFinder::_export_run_tag
 set ::_test_cfg "probe 2.2 interior 1.25"
+set _sv_endrad $::VMDPathFinder::state(endrad)
+set ::VMDPathFinder::state(endrad) 99.5
 set _tp [::VMDPathFinder::_export_run_tag]
+set ::VMDPathFinder::state(endrad) $_sv_endrad
 chk "(setup) a second run is tagged before the restart" [expr {$_tp ne ""}] 1
 chk "...and _export_run_tag saved the config by itself" [file exists $::VMDPathFinder::config_file] 1
+set _cfgtxt ""
+catch { set _fh [open $::VMDPathFinder::config_file r]; set _cfgtxt [read $_fh]; close $_fh }
+chk "...writing only the run number, not the live settings" \
+    [expr {[string match "*export_run_map*" $_cfgtxt] && ![string match "*endrad*" $_cfgtxt]}] 1
 # Simulate the restart: wipe the in-memory map, reload from disk.
 set ::VMDPathFinder::state(export_run_map)  {}
 set ::VMDPathFinder::state(export_run_next) 1
@@ -2309,7 +2316,7 @@ chk "a region that overshoots the ceiling falls back through the one surface pip
            && [string first "run_sph_process \$sph \$sos \$color \$dd" \
                    [info body ::VMDPathFinder::_legacy_sos]] >= 0}] 1
 # --- Surface smoothing: one entry, both meshers, window from VMD --------------
-chk "surface_smooth is persisted with the other mesher settings" [expr {[string first "surface_smooth" [info body ::VMDPathFinder::save_config]] >= 0}] 1
+chk "surface_smooth is persisted with the other mesher settings" [expr {"surface_smooth" in [::VMDPathFinder::_config_persistent_keys]}] 1
 set _sv_ss $::VMDPathFinder::state(surface_smooth)
 set ::VMDPathFinder::state(surface_smooth) off
 chk "smoothing off: no window" [::VMDPathFinder::_surface_smooth_window] 0

@@ -809,11 +809,11 @@ namespace eval ::VMDPathFinder:: {
         status {Ready.}
     }
 
-    # The defaults as shipped, captured BEFORE the config file is read. A new
-    # memory slot resets its run parameters to these: a second pore is a
-    # different pore, so inheriting the previous slot's CPOINT would be the
-    # wrong starting point. Taken here rather than re-typed, so the two can
-    # never drift apart.
+    # The defaults as shipped; the saved settings overlay them once the config
+    # file is read (load_config) or written (save_config). A new memory slot
+    # resets its run parameters to these: a second pore is a different pore,
+    # so inheriting the previous slot's CPOINT would be the wrong starting
+    # point. Taken here rather than re-typed, so the two can never drift apart.
     variable default_state
     array set default_state [array get state]
 
@@ -1057,15 +1057,12 @@ proc ::VMDPathFinder::load_config {} {
     set _loading_config 0
 }
 
-proc ::VMDPathFinder::save_config {} {
-    variable config_file
-    variable state
+proc ::VMDPathFinder::_config_persistent_keys {} {
     # Keys persisted across sessions: executable locations plus genuine UI/workflow
-    # PREFERENCES - not per-molecule/runtime state (molid, frame_spec, cpoint, status),
-    # HOLE run parameters, analysis-method choices, or per-panel view toggles (see
-    # load_config's skip_keys for the full exclusion list and why). Must stay in sync
-    # with skip_keys, its read-side counterpart.
-    set persistent_keys {
+    # PREFERENCES - not per-molecule/runtime state (molid, frame_spec, cpoint, status)
+    # or per-panel view toggles (see load_config's skip_keys for the full exclusion
+    # list and why). Must stay in sync with skip_keys, its read-side counterpart.
+    return {
         hole_exec sph_process_exec sos_triangle_exec mole_engine_exec nm_search_exec conn_lobes_exec mesh_csg_exec radius_file
         dot_density
         hydro_fast hole_accel sph_accel
@@ -1101,9 +1098,57 @@ proc ::VMDPathFinder::save_config {} {
         mean_tunnel_display_mode
         export_run_map export_run_next
     }
+}
+
+proc ::VMDPathFinder::_config_adopt_defaults {} {
+    # The saved settings are the defaults a new memory starts from.
+    variable state
+    variable default_state
+    foreach key [_config_persistent_keys] {
+        if {[info exists state($key)]} { set default_state($key) $state($key) }
+    }
+}
+
+proc ::VMDPathFinder::_config_update_keys {keys} {
+    # Rewrite only KEYS in the config file, leaving every other saved setting
+    # as it is. Used where a value must persist without the user asking to
+    # save their settings (the export run number).
+    variable config_file
+    variable state
+    set lines {}
+    if {[file isfile $config_file] && ![catch {open $config_file r} fh]} {
+        set lines [split [string trimright [read $fh] \n] \n]
+        close $fh
+    }
+    if {![llength $lines]} { set lines [list "# VMDPathFinder configuration - auto-generated"] }
+    set out {}
+    set seen {}
+    foreach line $lines {
+        if {[regexp {^\s*(\w+)\s*=} $line -> k] && $k in $keys} {
+            if {[info exists state($k)]} { lappend out "$k = $state($k)" }
+            lappend seen $k
+            continue
+        }
+        lappend out $line
+    }
+    foreach k $keys {
+        if {$k ni $seen && [info exists state($k)]} { lappend out "$k = $state($k)" }
+    }
+    set tmp "$config_file.tmp[pid]"
+    if {[catch {open $tmp w} fh]} { return }
+    puts $fh [join $out \n]
+    close $fh
+    catch {file rename -force $tmp $config_file}
+}
+
+proc ::VMDPathFinder::save_config {} {
+    variable config_file
+    variable state
+    set persistent_keys [_config_persistent_keys]
+    _config_adopt_defaults
     # Sibling temp + rename, not truncate-in-place: save runs automatically
-    # (GUI open, headless init, export-name resolution), so a concurrent
-    # load_config in the same user's batch job could read a torn file.
+    # (headless init, export-name resolution), so a concurrent load_config in
+    # the same user's batch job could read a torn file.
     set _cfg_pub $config_file
     set config_file "$_cfg_pub.tmp[pid]"
     if {[catch {open $config_file w} fh]} {
@@ -1305,6 +1350,7 @@ proc ::VMDPathFinder::init_executables {} {
     }
     load_config
     dict for {_k _v} $_preset { set state($_k) $_v }
+    _config_adopt_defaults
     # Scratch reclaim has to happen here, not only in show_gui: a batch job
     # never opens the GUI - docs/scripting.md tells batch authors not to call
     # it - so a run killed by the scheduler left its /tmp and /dev/shm scratch
@@ -1709,6 +1755,8 @@ proc ::VMDPathFinder::_log_state_change {name1 name2 op} {
     # Print discrete setting changes to the console - see
     # _loggable_setting_labels for why this is an allowlist, not "everything".
     variable state
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     if {$name2 eq ""} { return }
     array set _labels [_loggable_setting_labels]
     if {![info exists _labels($name2)]} { return }
@@ -18053,9 +18101,12 @@ proc ::VMDPathFinder::_update_mesher_rows {} {
     variable state
     if {![info exists _settings_d] || ![winfo exists $_settings_d.ms_vx]} { return }
     set csg [expr {$state(mesher) eq "csg"}]
-    if {$csg} { grid $_settings_d.ms_vx } else { grid remove $_settings_d.ms_vx }
+    set _row $_settings_d.ms_row
+    if {$csg} { pack $_settings_d.ms_vx -in $_row -side left -padx {6 0}; raise $_settings_d.ms_vx } \
+    else { pack forget $_settings_d.ms_vx }
     if {[winfo exists $_settings_d.ms_dd]} {
-        if {$csg} { grid remove $_settings_d.ms_dd } else { grid $_settings_d.ms_dd }
+        if {$csg} { pack forget $_settings_d.ms_dd } \
+        else { pack $_settings_d.ms_dd -in $_row -side left -padx {6 0}; raise $_settings_d.ms_dd }
     }
     # dot density and the playback thinning belong to sph_process/sos_triangle
     if {[winfo exists $_settings_d.pb]} {
@@ -22879,6 +22930,8 @@ proc ::VMDPathFinder::build_run_panel {parent} {
 }
 
 proc ::VMDPathFinder::update_color_row_visibility {parent args} {
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     variable state
     # Display + Material share one row (mc_box). Material applies only when
     # something is actually drawn; Display itself always stays visible (it's
@@ -23401,9 +23454,16 @@ proc ::VMDPathFinder::show_settings_dialog {} {
     entry $d.ms_dd.e3 -textvariable ::VMDPathFinder::state(conn_draft_dotden) -width 4
     pack $d.ms_dd.l $d.ms_dd.e $d.ms_dd.l2 $d.ms_dd.e2 $d.ms_dd.l3 $d.ms_dd.e3 -side left -padx {0 2}
     grid $d.ms_l -row $row -column 0 -sticky w -padx 8 -pady 3
-    grid $d.ms_mb -row $row -column 1 -sticky w -padx 8 -pady 3
-    grid $d.ms_vx -row $row -column 2 -sticky w -padx {0 8} -pady 3
-    grid $d.ms_dd -row $row -column 2 -sticky w -padx {0 8} -pady 3
+    # One row frame: the mesher menu and its fields sit next to each other,
+    # not in grid columns whose widths other rows set.
+    frame $d.ms_row
+    grid $d.ms_row -row $row -column 1 -columnspan 2 -sticky w -padx 8 -pady 3
+    pack $d.ms_mb -in $d.ms_row -side left
+    raise $d.ms_mb
+    pack $d.ms_vx -in $d.ms_row -side left -padx {6 0}
+    raise $d.ms_vx
+    pack $d.ms_dd -in $d.ms_row -side left -padx {6 0}
+    raise $d.ms_dd
     incr row
     add_tooltip $d.ms_mb "Marching cubes (mesh_csg) or HOLE\'s sos_triangle."
     add_tooltip $d.ms_vx "Cell size in \u00c5. Neck applies to spherical runs only."
@@ -27263,7 +27323,13 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     variable state
     if {![_mem_enabled] || [dict size $pore_memories] < 2} { return }
     variable _mem_render_busy
+    variable _mem_swapping
     set _mem_render_busy 1
+    # Swapping another memory's display keys into state() fires the same
+    # traces a user edit does; those re-arm apply_display_change and
+    # apply_material_now, which render the other memories again - an idle
+    # two-memory session redrew forever. The handlers return while this is up.
+    set _mem_swapping 1
     set save_results $results
     set save_frames  $result_frames
     set save_mol     $current_surface_mol
@@ -27300,6 +27366,7 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     set pore_memory_active $save_active
     set current_surface_mol $save_mol
     dict for {k v} $save_disp { set state($k) $v }
+    set _mem_swapping 0
     set _mem_render_busy 0
     # The flag this loop raised is the one it consumes. Leaving it up would
     # abort the next real calculation before it started.
@@ -27692,8 +27759,10 @@ proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
         variable _display_applying
         set _lock_prev [list [expr {[info exists _frame_render_busy] ? $_frame_render_busy : 0}] \
                              [expr {[info exists _display_applying] ? $_display_applying : 0}]]
+        variable _mem_swapping
         set _frame_render_busy 1
         set _display_applying 1
+        set _mem_swapping 1
         set _syncerr [catch {
             variable results
             variable result_frames
@@ -27724,6 +27793,7 @@ proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
                 if {[dict exists $src $k]} { set state($k) [dict get $src $k] }
             }
         } _serr _sopts]
+        set _mem_swapping 0
         lassign $_lock_prev _frame_render_busy _display_applying
         _end_calc
         if {$_syncerr == 1} { return -options $_sopts $_serr }
@@ -30643,6 +30713,8 @@ proc ::VMDPathFinder::_hm_tunnel_prop_pick {tok} {
 }
 
 proc ::VMDPathFinder::_sync_surface_color_disp {args} {
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     variable state
     set state(surface_color_disp) $state(surface_color)
 }
@@ -30737,6 +30809,8 @@ proc ::VMDPathFinder::_hydration_sync_view_vis {} {
 }
 
 proc ::VMDPathFinder::on_mean_coloring_changed {args} {
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     # Color/Material/Property changes EXCLUSIVE to the Mean Profile 3D surface -
     # rebuilds ONLY that surface (if shown), never the main per-frame isosurface (its own
     # independent picker). See refresh_mean_surface_if_shown.
@@ -31242,6 +31316,8 @@ proc ::VMDPathFinder::surface_geom_key {} {
 
 proc ::VMDPathFinder::on_display_setting_changed {args} {
     # Coalesce a burst of writes (e.g. a menu pick) into one apply on idle.
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     variable display_apply_after
     if {[info exists display_apply_after] && $display_apply_after ne ""} {
         after cancel $display_apply_after
@@ -31250,6 +31326,8 @@ proc ::VMDPathFinder::on_display_setting_changed {args} {
 }
 
 proc ::VMDPathFinder::on_hydro_method_changed {args} {
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     # A change to the hydrophobicity method (scheme, atom/residue averaging, or
     # the pore-facing filter) changes every per-frame colored surface AND the
     # hydrophobicity-profile tab. Drop the cached colored meshes and profile
@@ -31587,6 +31665,8 @@ proc ::VMDPathFinder::prebuild_hydro_variants_dispatch {} {
 }
 
 proc ::VMDPathFinder::on_material_changed {args} {
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     # Material has its own handler (not apply_display_change) because a material
     # change is special: re-rendering produces an IDENTICAL display list (same
     # geometry, same per-vertex colors - only the material binding differs), and
@@ -53420,11 +53500,7 @@ proc ::VMDPathFinder::_export_run_tag {} {
         if {[llength $map] > 64} { set map [lrange $map end-63 end] }
         set state(export_run_map) $map
         set state(export_run_next) [expr {$n + 1}]
-        # Yes, resolving a FILENAME writes the config. That is the price of the
-        # numbering surviving a restart, and it is bounded: only a signature
-        # never seen before gets here, so it is one write per new run, not one
-        # per export.
-        catch {save_config}
+        catch {_config_update_keys {export_run_map export_run_next}}
     }
     return [expr {$n <= 1 ? "" : "_run$n"}]
 }

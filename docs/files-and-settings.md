@@ -23,8 +23,9 @@ Two runs are comparable only if their settings say so: read `run_<id>.txt`.
 
 ## Persistent configuration
 
-**Set default** saves settings for later sessions. Saved runs and exported CSV
-files record individual analyses.
+**Set default** and **Save Settings** save settings for later sessions; nothing
+else writes them, except the export run number. A new memory starts from the
+saved settings. Saved runs and exported CSV files record individual analyses.
 
 ## Executable settings
 
