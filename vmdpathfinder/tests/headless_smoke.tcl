@@ -5148,6 +5148,24 @@ chk "surface_geom_key's dots branch uses _csg_can_mesh, not _csg_active, for its
         && [string first {_csg_can_mesh} $_sgkbody] >= 0
         && [string first {dots$_dvx} $_sgkbody] >= 0}] 1
 
+# Cavity lining reps were keyed "$molid|$which" - shared across EVERY pocket,
+# not per pocket. With two pockets' linings toggled on at once, redrawing
+# either on a frame settle repainted the SAME pair of reps, so only the
+# most-recently-drawn pocket's lining was ever actually visible even though
+# both toggle buttons showed "on". Verified directly: toggling two pockets on
+# now produces four distinct rep-key entries (2 pockets x boundary/inner),
+# all still present and shown after a simulated frame-settle refresh.
+chk "cavity lining reps are keyed per pocket, not shared across all of them" \
+    [expr {[string first {"$molid|$_key_tid|$which"} [info body ::VMDPathFinder::_cavity_redraw_lining]] >= 0
+        && [string first {"$molid|$_key_tid|$which"} [info body ::VMDPathFinder::_cavity_show_lining]] >= 0}] 1
+# The automatic per-frame redraw must not touch the status bar - it runs once
+# per SHOWN pocket on every settled frame, and each call would overwrite
+# whichever pocket's message a sibling call in that same pass had just set.
+chk "the automatic per-frame lining redraw does not touch the status bar" \
+    [expr {[string first {state(status)} [info body ::VMDPathFinder::_cavity_redraw_lining]] < 0}] 1
+chk "...only the interactive toggle does" \
+    [expr {[string first {state(status)} [info body ::VMDPathFinder::_cavity_show_lining]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.

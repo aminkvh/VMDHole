@@ -20184,8 +20184,11 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
     set _trk [_cavity_track_for $frame $id]
     set _key_tid [expr {[llength $_trk] ? [dict get $_trk tid] : $id}]
     if {[dict exists $_cavity_lining_on $_key_tid] && [dict get $_cavity_lining_on $_key_tid]} {
+        # Keyed by POCKET too, not just molid - see _cavity_redraw_lining for
+        # why sharing one pair of reps across every pocket is the bug this
+        # fixes.
         foreach which {bres ires} {
-            set _k "$molid|$which"
+            set _k "$molid|$_key_tid|$which"
             if {[dict exists $_cavity_lining_rep $_k]} {
                 catch {mol showrep $molid [dict get $_cavity_lining_rep $_k] 0}
             }
@@ -20197,6 +20200,8 @@ proc ::VMDPathFinder::_cavity_show_lining {frame id} {
     }
     dict set _cavity_lining_on $_key_tid 1
     _cavity_redraw_lining $frame $id $_key_tid
+    set cv [dict get $tunnel_lining($frame) cav.$id]
+    set state(status) "Pocket $_key_tid lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red) residues on molecule $molid."
     # The SHOW path has to sync the button too, or it stays raised while the
     # lining is on and the only way to tell is that the structure changed.
     catch {_cavity_refresh}
@@ -20225,7 +20230,12 @@ proc ::VMDPathFinder::_cavity_redraw_lining {frame id key_tid} {
         foreach e [dict get $cv $which] {
             lappend sel "(resid [dict get $e resid] and chain [dict get $e chain])"
         }
-        set key "$molid|$which"
+        # Keyed by POCKET, not just molid+which - two pockets shown at once
+        # otherwise shared the SAME pair of reps, so redrawing one on a frame
+        # step silently repainted it over whichever pocket's lining was drawn
+        # there last, and only the most-recently-drawn pocket's lining was
+        # ever actually visible.
+        set key "$molid|$_key_tid|$which"
         if {![llength $sel]} {
             if {[dict exists $_cavity_lining_rep $key]} {
                 catch {mol showrep $molid [dict get $_cavity_lining_rep $key] 0}
@@ -20249,10 +20259,10 @@ proc ::VMDPathFinder::_cavity_redraw_lining {frame id key_tid} {
         mol addrep $molid
         dict set _cavity_lining_rep $key [expr {[molinfo $molid get numreps] - 1}]
     }
-    # Name the TRACKED id, which is what the table shows - $id is MOLE's
-    # per-frame rank and is a different number on most frames.
-    set _lbl $_key_tid
-    set state(status) "Pocket $_lbl lining: [llength [dict get $cv bres]] boundary (yellow) + [llength [dict get $cv ires]] inner (red), $n residues on molecule $molid."
+    # No status-bar line here - _cavity_refresh calls this once per shown
+    # pocket on every settled frame, and each call would overwrite whichever
+    # pocket's message the previous call in that same pass had just set.
+    # _cavity_show_lining, the interactive toggle, sets its own message once.
 }
 
 proc ::VMDPathFinder::_cavity_export_csv {} {
