@@ -24637,6 +24637,31 @@ proc ::VMDPathFinder::_detect_pore_axis {molid seltext} {
     if {![info exists _pore_axis_memo]} { set _pore_axis_memo [dict create] }
     set _key "$molid|$seltext"
     catch {append _key "|[molinfo $molid get numatoms]|[molinfo $molid get numframes]"}
+    # A cheap coordinate fingerprint, not just molid/numatoms/numframes - the
+    # same idea run_signature already uses for the same reason. Without it,
+    # aligning the trajectory (the panel's own "Align traj" button, which
+    # MODIFIES coordinates in place - molid, atom count and frame count all
+    # stay the same) left this returning the PRE-alignment axis forever.
+    #
+    # Centroid alone would miss a ROTATION-dominant alignment (an RMSD fit can
+    # leave the centroid nearly where it was while turning the structure,
+    # which is exactly the case this axis guess needs to notice) - so the
+    # first atom's own absolute position is included too, cheap to read and
+    # sensitive to rotation the centroid is blind to.
+    catch {
+        set _fcs [atomselect $molid "all" frame 0]
+        set _fcc [measure center $_fcs]
+        $_fcs delete
+        set _fa0 {0.0 0.0 0.0}
+        catch {
+            set _a0 [atomselect $molid "index 0" frame 0]
+            set _fa0 [lindex [$_a0 get {x y z}] 0]
+            $_a0 delete
+        }
+        append _key [format "|%.2f,%.2f,%.2f|%.2f,%.2f,%.2f" \
+            [lindex $_fcc 0] [lindex $_fcc 1] [lindex $_fcc 2] \
+            [lindex $_fa0 0] [lindex $_fa0 1] [lindex $_fa0 2]]
+    }
     if {[dict exists $_pore_axis_memo $_key]} { return [dict get $_pore_axis_memo $_key] }
     set _res [_detect_pore_axis_uncached $molid $seltext]
     dict set _pore_axis_memo $_key $_res

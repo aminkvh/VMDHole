@@ -5094,6 +5094,16 @@ set _write_params_at [string first {_write_run_parameters $root_dir} $_rabody]
 chk "run_analysis writes the parameter file after resolving the axis, not before" \
     [expr {$_axis_init_at >= 0 && $_write_params_at >= 0 && $_write_params_at > $_axis_init_at}] 1
 
+# _detect_pore_axis's memo key was molid+selection+atom/frame COUNT only, with
+# no coordinate identity - aligning the trajectory (the panel's own "Align
+# traj" button) modifies coordinates in place without changing any of those,
+# so the memo kept returning the PRE-alignment axis forever. A pure centroid
+# would still miss a rotation-dominant change, so a specific atom's absolute
+# position is part of the key too.
+chk "_detect_pore_axis's memo key includes atom-level coordinate identity" \
+    [expr {[string first {measure center} [info body ::VMDPathFinder::_detect_pore_axis]] >= 0
+        && [string first {index 0} [info body ::VMDPathFinder::_detect_pore_axis]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
