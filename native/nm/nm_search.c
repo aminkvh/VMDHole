@@ -481,7 +481,8 @@ static int nm_connected(double u1, double v1, double u2, double v2, double t) {
 /* --neck FILE: no march. FILE holds one block per lateral opening,
  *   LOBE sx sy sz ndots     start point, on the pore centreline
  *   x y z                   the opening's surface dots, ndots lines
- * and prints one line per block: the neck radius, or "-".
+ * and prints one line per block: "r x y z" (the neck radius and where it
+ * sits), or "-".
  * The neck is the narrowest clearance on the widest route from the start
  * to the dots. It is found on a grid over the opening's box by a search
  * that always extends the widest route so far (Dijkstra on clearance),
@@ -529,7 +530,7 @@ static double nk_climb(double x, double y, double z, double step) {
     }
     return best;
 }
-static double nk_one(const double *s, const double *d, int nd) {
+static double nk_one(const double *s, const double *d, int nd, double *bpos) {
     double lo[3] = {s[0], s[1], s[2]}, hi[3] = {s[0], s[1], s[2]};
     for (int i = 0; i < nd; i++)
         for (int k = 0; k < 3; k++) {
@@ -569,7 +570,7 @@ static double nk_one(const double *s, const double *d, int nd) {
         cr[ci] = (float)clearance(lo[0] + x*h, lo[1] + y*h, lo[2] + z*h);
         if (cr[ci] > sr) { sr = cr[ci]; sc = ci; }
     }
-    double ans = -1;
+    double ans = -1, bx = 0, by = 0, bz = 0;
     if (sc >= 0 && sr > 0) {
         NkItem *heap = NULL; int nh = 0, cap = 0;
         best[sc] = sr; bott[sc] = sc;
@@ -581,7 +582,8 @@ static double nk_one(const double *s, const double *d, int nd) {
             done[c] = 1;
             if (tg[c]) {
                 int b = bott[c];
-                ans = nk_climb(lo[0] + (b % nx)*h, lo[1] + ((b / nx) % ny)*h, lo[2] + (b / nxy)*h, h);
+                bx = lo[0] + (b % nx)*h; by = lo[1] + ((b / nx) % ny)*h; bz = lo[2] + (b / nxy)*h;
+                ans = nk_climb(bx, by, bz, h);
                 if (ans < best[c]) ans = best[c];
                 break;
             }
@@ -604,6 +606,7 @@ static double nk_one(const double *s, const double *d, int nd) {
         free(heap);
     }
     free(cr); free(best); free(bott); free(tg); free(done);
+    bpos[0] = bx; bpos[1] = by; bpos[2] = bz;
     return ans;
 }
 static int nm_neck(const char *path) {
@@ -624,13 +627,15 @@ static int nm_neck(const char *path) {
     }
     fclose(f);
     double *ans = malloc((nl > 0 ? nl : 1) * sizeof(double));
+    double (*bp)[3] = malloc((nl > 0 ? nl : 1) * sizeof(*bp));
     #pragma omp parallel for schedule(dynamic, 1)
-    for (int i = 0; i < nl; i++) ans[i] = nd[i] > 0 ? nk_one(st[i], dots[i], nd[i]) : -1;
+    for (int i = 0; i < nl; i++) ans[i] = nd[i] > 0 ? nk_one(st[i], dots[i], nd[i], bp[i]) : -1;
     for (int i = 0; i < nl; i++) {
-        if (ans[i] > 0) printf("%.3f\n", ans[i]); else printf("-\n");
+        /* "r x y z": the neck and where on the route it sits */
+        if (ans[i] > 0) printf("%.3f %.3f %.3f %.3f\n", ans[i], bp[i][0], bp[i][1], bp[i][2]); else printf("-\n");
         free(dots[i]);
     }
-    free(st); free(dots); free(nd); free(ans);
+    free(st); free(dots); free(nd); free(ans); free(bp);
     return 1;
 }
 

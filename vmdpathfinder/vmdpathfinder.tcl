@@ -1611,7 +1611,7 @@ proc ::VMDPathFinder::_frame_progress_line {text} {
     # warnings do not end that way, so the shape is the rule, not a word list.
     set t [string trim $text]
     if {![regexp {(\.\.\.|\u2026)$} $t]} { return 0 }
-    return [regexp -nocase {frame|surface|triangulat|render|smooth|mesh|prim|bak|scan|read|pars} $t]
+    return [regexp -nocase {frame|surface|triangulat|render|smooth|mesh|prim|bak|scan|read|pars|worker|complet} $t]
 }
 
 proc ::VMDPathFinder::_log_status_line {name1 name2 op} {
@@ -6704,10 +6704,12 @@ proc ::VMDPathFinder::on_mode_tab_changed {args} {
         # settle path deliberately avoids. Redisplay only: the results did not
         # change, so this must not invalidate either mode's analysis caches.
         catch {_redisplay_results_list}
+        catch {_tunnel_cavity_toggle}
     } else {
         catch {$w.actions.run configure -text "Run HOLE"}
         set state(status) "Pore mode - through-pore profile along a defined axis (HOLE)."
         _sync_mode_tabs 1
+        catch {_cavity_graphics_clear}
         # Symmetric to the tunnel branch: only that branch rebuilt the bottom
         # frame list, so coming BACK left it holding tunnel rows and a tunnel
         # header - or, with no tunnel run yet, empty. That read as "pore mode
@@ -18883,8 +18885,11 @@ proc ::VMDPathFinder::_conn_classify_native {in_sph cvect_s cpoint_s margin {bas
             set nn [lindex $fields 2]
             set ef [lindex $fields 3]
             set kb [lindex $fields 4]
+            set at 5
+            # An older engine prints a neck before the stretch; skip it.
+            if {![string is integer -strict [lindex $fields $at]]} { set kb [lindex $fields $at]; incr at }
             if {$kb eq "-"} { set kb "" }
-            set idx [lrange $fields 5 end]
+            set idx [lrange $fields $at end]
             lappend lobes [list $z $a $nn $idx $ef {} $kb]
         }
         set marked [dict create]
@@ -19563,8 +19568,6 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
     set cm [ensure_cavity_mol $molid]
     catch {graphics $cm delete all}
     if {$fd eq ""} { set fd [file join $tunnel_root [format "tunnel_%05d" $frame]] }
-    set prop [expr {[info exists state(cavity_prop)] ? $state(cavity_prop) : "none"}]
-    if {$prop ne "none" && $prop ne "" && $prop ni [_cavity_prop_tokens]} { set prop "none" }
     # A CAP on how many pockets are meshed at once. Each one is a full
     # sph_process/mesher build, and nothing else bounded this: ticking every
     # pocket with the filter lifted asked for 315 meshes in one pass and took
@@ -19591,6 +19594,7 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         # Per pocket, so one pocket's gear cannot decide how the others draw.
         set mat [_cavity_effective_material $tid]
         set col [_cavity_effective_color $tid]
+        set prop [_cavity_effective_prop $tid]
         if {[_cavity_effective_spheres $tid]} {
             # CAVER Analyst's "Locked Probes": the clearance spheres themselves
             # rather than a surface over them, which is the cavity as the
@@ -19607,7 +19611,7 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
         # built a different way. Cached beside it on the mesh's own mtime, as
         # the route colouring is, so a redraw is not a re-recolour.
         set done 0
-        if {$prop ne "none" && $prop ne ""} {
+        if {$prop ne "none"} {
             set cplot [file join $fd [format "cavity_%02d_%s_v1.plot" $id $prop]]
             if {[surface_has_geometry $cplot] && [file mtime $cplot] >= [file mtime $plot]} {
                 # color_mode "property": the plot carries its OWN per-triangle
@@ -20001,8 +20005,9 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     variable cavity_gear_color
     variable cavity_gear_material
     variable cavity_gear_style
+    variable cavity_gear_prop
     if {![_have_tk]} { return }
-    foreach _a {cavity_gear_color cavity_gear_material cavity_gear_style} {
+    foreach _a {cavity_gear_color cavity_gear_material cavity_gear_style cavity_gear_prop} {
         if {![info exists ${_a}]} { set $_a [dict create] }
     }
     set d $w.cavgear
@@ -20014,10 +20019,13 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     set state(cavgear_color)    [expr {[dict exists $cavity_gear_color $tid]    ? [dict get $cavity_gear_color $tid]    : "auto"}]
     set state(cavgear_material) [expr {[dict exists $cavity_gear_material $tid] ? [dict get $cavity_gear_material $tid] : "auto"}]
     set state(cavgear_style)    [expr {[dict exists $cavity_gear_style $tid]    ? [dict get $cavity_gear_style $tid]    : "auto"}]
+    set state(cavgear_prop)     [expr {[dict exists $cavity_gear_prop $tid]     ? [dict get $cavity_gear_prop $tid]     : "auto"}]
     set r 0
     foreach {var label opts tip} [list \
+        cavgear_prop "Color by" [concat auto none [_cavity_prop_tokens]] \
+            "Colour this pocket by a property of its lining residues. auto = the setting every pocket shares; none = the flat colour below." \
         cavgear_color "Color" [concat auto [_vmd_color_names {white black}]] \
-            "Flat colour for this pocket. Only applies when it is not coloured by a property - property colouring bakes per-triangle colours into the mesh." \
+            "Flat colour for this pocket, used when it is not coloured by a property." \
         cavgear_material "Material" [concat auto [_cavity_material_names]] \
             "VMD material for this pocket's surface." \
         cavgear_style "Draw as" {auto surface spheres} \
@@ -20028,16 +20036,23 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
             -indicatoron 1 -menu $_mb.m -width 14
         menu $_mb.m -tearoff 0
         foreach o $opts {
-            $_mb.m add command -label $o -command [list ::VMDPathFinder::_cavity_gear_set $var $o]
+            $_mb.m add command -label [expr {$var eq "cavgear_prop" && $o ni {auto none} ? [_tunnel_prop_label_short $o] : $o}] \
+                -command [list ::VMDPathFinder::_cavity_gear_set $var $o]
         }
-        grid $d.l$r -row $r -column 0 -sticky w -padx {10 4} -pady 3
-        grid $_mb   -row $r -column 1 -sticky w -padx {0 10} -pady 3
+        if {$var eq "cavgear_prop"} { _menu_two_columns $_mb.m }
+        grid $d.l$r -row $r -column 0 -sticky w -padx {8 4} -pady 1
+        grid $_mb   -row $r -column 1 -sticky w -padx {0 8} -pady 1
         add_tooltip $_mb $tip
         incr r
     }
+    button $d.all -text "Color all pockets by this" -font {Helvetica 8} -padx 4 -pady 0 \
+        -command ::VMDPathFinder::_cavity_prop_to_all
+    grid $d.all -row $r -column 0 -columnspan 2 -sticky w -padx 8 -pady {2 1}
+    add_tooltip $d.all "Make this pocket's Color by the shared setting and clear every other pocket's own choice."
+    incr r
     button $d.close -text "Close" -command [list destroy $d]
-    grid $d.close -row $r -column 0 -columnspan 2 -sticky e -padx 10 -pady {4 10}
-    _center_toplevel $d 320 [expr {$r*34 + 70}]
+    grid $d.close -row $r -column 0 -columnspan 2 -sticky e -padx 8 -pady {2 6}
+    _center_toplevel $d
     wm deiconify $d
 }
 
@@ -20048,12 +20063,14 @@ proc ::VMDPathFinder::_cavity_gear_set {var value} {
     variable cavity_gear_color
     variable cavity_gear_material
     variable cavity_gear_style
+    variable cavity_gear_prop
     set state($var) $value
     set tid $state(cavgear_tid)
     switch -exact -- $var {
         cavgear_color    { set _which cavity_gear_color }
         cavgear_material { set _which cavity_gear_material }
         cavgear_style    { set _which cavity_gear_style }
+        cavgear_prop     { set _which cavity_gear_prop }
         default          { return }
     }
     if {$value eq "auto"} {
@@ -20347,10 +20364,40 @@ proc ::VMDPathFinder::_cavity_sort {col} {
 }
 
 proc ::VMDPathFinder::_cavity_set_prop {prop} {
+    # The Color by every pocket shares unless its own gear says otherwise.
     variable state
     set state(cavity_prop) $prop
     set state(cavity_prop_disp) [_tunnel_prop_label_short $prop]
     _tunnel_cavity_toggle
+}
+
+proc ::VMDPathFinder::_cavity_prop_to_all {} {
+    # The open gear's Color by becomes the shared one; own choices are cleared.
+    variable state
+    variable cavity_gear_prop
+    set p [expr {[info exists state(cavgear_prop)] && $state(cavgear_prop) ne "auto" ? $state(cavgear_prop) : "none"}]
+    set cavity_gear_prop [dict create]
+    set state(cavgear_prop) auto
+    _cavity_set_prop $p
+}
+
+proc ::VMDPathFinder::_cavity_effective_prop {tid} {
+    # This pocket's Color by: its own gear choice, else the shared one.
+    variable state
+    variable cavity_gear_prop
+    set p [expr {[info exists state(cavity_prop)] ? $state(cavity_prop) : "none"}]
+    if {[info exists cavity_gear_prop] && [dict exists $cavity_gear_prop $tid]} { set p [dict get $cavity_gear_prop $tid] }
+    if {$p eq "" || $p ni [_cavity_prop_tokens]} { return "none" }
+    return $p
+}
+
+proc ::VMDPathFinder::_cavity_graphics_clear {} {
+    # Take every drawn pocket off the screen; the ticks stay, so returning to
+    # tunnel mode draws them again.
+    variable cavity_mols
+    set molid [_cavity_structure_molid]
+    if {$molid < 0 || ![info exists cavity_mols($molid)]} { return }
+    if {![catch {molinfo $cavity_mols($molid) get name}]} { catch {graphics $cavity_mols($molid) delete all} }
 }
 
 proc ::VMDPathFinder::_cavity_use_as_start {frame id} {
@@ -20423,16 +20470,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     frame $t.ctl
     # One checkbox over the per-row ones, as the tunnel list has - two buttons
     # for the same pair of states was a control the checkbox already is.
-    label $t.ctl.pl -text "  Color by:"
-    menubutton $t.ctl.pm -textvariable ::VMDPathFinder::state(cavity_prop_disp) \
-        -relief raised -indicatoron 1 -menu $t.ctl.pm.m -width 14
-    menu $t.ctl.pm.m -tearoff 0
-    foreach _p [concat none [_cavity_prop_tokens]] {
-        $t.ctl.pm.m add command -label [_tunnel_prop_label_short $_p] \
-            -command [list ::VMDPathFinder::_cavity_set_prop $_p]
-    }
-    _menu_two_columns $t.ctl.pm.m
-    label $t.ctl.rl -text "  Start point:"
+    label $t.ctl.rl -text "Start point:"
     set state(cavity_rule_disp) [expr {$state(cavity_origin_rule) eq "caver" \
         ? "largest sphere (CAVER)" : "deepest point (MOLE)"}]
     menubutton $t.ctl.rm -textvariable ::VMDPathFinder::state(cavity_rule_disp) \
@@ -20442,11 +20480,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         -command [list ::VMDPathFinder::_cavity_set_rule mole "deepest point (MOLE)"]
     $t.ctl.rm.m add command -label "largest sphere (CAVER)" \
         -command [list ::VMDPathFinder::_cavity_set_rule caver "largest sphere (CAVER)"]
-    pack $t.ctl.pl $t.ctl.pm \
-        $t.ctl.rl $t.ctl.rm -side left -padx {0 6}
-    grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {8 4}
-
-    add_tooltip $t.ctl.pm "Colour EVERY pocket by a chemical property of the residues lining it - how water-repelling they are, their charge, and so on. This is the default for all pockets; a single pocket can override it from its own gear button."
+    pack $t.ctl.rl $t.ctl.rm -side left -padx {0 6}
+    grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {6 2}
     add_tooltip $t.ctl.rl "A pocket is where a tunnel search BEGINS. \"Use as start\" copies this point into the Start point box, so the next search looks for routes leading out of that pocket. The two rules pick that point differently."
     add_tooltip $t.ctl.rm "Where inside the pocket a search would start.\n\ndeepest point (MOLE) - the point furthest from the surface, which MOLE itself would pick.\nlargest sphere (CAVER) - the centre of the biggest sphere that fits, which is what CAVER Analyst uses.\n\nThey usually differ by a few Angstroms; the Start pt column shows the point you would get."
 
@@ -20472,7 +20507,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     add_tooltip $t.ctl.allt "Off: only pockets present in at least $state(cavity_min_seen)% of analysed frames. On: every track, including one-frame transients."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
-    set _hmax 460
+    set _hmax 340
     set _th [expr {$_want < $_hmax ? $_want : $_hmax}]
     frame $t.hdr
     grid $t.hdr -row 1 -column 0 -sticky ew -padx 8 -pady {2 0}
@@ -20480,7 +20515,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     grid $t.sc -row 2 -column 0 -sticky nsew -padx 8 -pady {0 2}
     grid rowconfigure $t 2 -weight 1
     grid columnconfigure $t 0 -weight 1
-    _scrollable_fixed $t.sc $_th 900
+    _scrollable_fixed $t.sc $_th
     set g $t.sc.c.inner
     set hg $t.hdr
 
@@ -20622,22 +20657,26 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         button $g.gear$r -text "\u2699" -font {Helvetica 10} -padx 2 -pady 0 -relief flat \
             -command [list ::VMDPathFinder::show_cavity_gear_settings $tid]
         grid $g.gear$r -row $r -column $c -sticky w -padx {6 4}
-        add_tooltip $g.gear$r "Per-pocket display: colour, material, and surface vs clearance spheres."
+        add_tooltip $g.gear$r "This pocket's display: colour by property, flat colour, material, surface or spheres."
     }
 
     set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
     # The detail lives in the column tooltips, read when needed.
-    label $t.note -justify left -wraplength 840 -foreground gray40 -font {Helvetica 8} -text \
-        "A pocket is where a search STARTS: re-running from one cannot change which pockets exist. Id is tracked across all $_nfr frames; \"Rank here\" is MOLE's own per-frame rank. Hover any heading for what it means."
+    # The table sets the width: as wide as its rows, no wider.
+    update idletasks
+    set _cw [expr {[winfo reqwidth $g] + 4}]
+    $t.sc.c configure -width $_cw
+    label $t.note -justify left -wraplength $_cw -foreground gray40 -font {Helvetica 8} -text \
+        "A pocket is where a search starts. Id follows the pocket across all $_nfr frames; \"Rank here\" is MOLE's own per-frame rank. Colour, material and Color by are in each row's gear."
     # Row 3. At row 2 it sat ON TOP of the table, drawing a grey band across the
     # middle of the results.
-    grid $t.note -row 3 -column 0 -sticky ew -padx 8 -pady {4 8}
+    grid $t.note -row 3 -column 0 -sticky ew -padx 8 -pady {2 6}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
     # Only on a first open: re-centring on every sort would move the window
     # out from under the pointer.
     if {!$_rebuild} {
-        _center_toplevel $t 900 [expr {$_th + 180}]
+        _center_toplevel $t
         wm deiconify $t
     }
     _sync_cavity_header_columns $t
@@ -24205,7 +24244,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. All pockets includes those below the initial 25% Seen filter. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
 
     $t insert end "Settings and saved results\n" h2
-    $t insert end "File > Settings selects executable paths, acceleration, the surface mesher, grid, and parallel jobs. The HOLE and MOLE parameter gears hold search controls. Keep Save results enabled for a reloadable run; use File > Load Saved Analysis to restore it. File > Save Package collects available plot CSVs and figures, not every dialog's export or a complete settings record. Export lining, cavity, and opening tables separately. Consult the Citations tab for the methods you use.\n\n"
+    $t insert end "File > Settings selects executable paths, acceleration, the surface mesher, grid, and parallel jobs. The HOLE and MOLE parameter gears hold search controls. Keep Save results enabled for a reloadable run; use File > Load Saved Analysis to restore it. File > Save Package lets you select plot tabs and a destination folder, then exports their CSVs and figures. It does not include every dialog's export or a complete settings record. Export lining, cavity, and opening tables separately. Consult the Citations tab for the methods you use.\n\n"
 }
 
 proc ::VMDPathFinder::_about_fill_citations {t version author} {
@@ -33216,7 +33255,10 @@ proc ::VMDPathFinder::_lining_facing_sets_cached {res_ca res_all spheres} {
         set _f [dict get $results $_fr sph_file]
         set _src "f$_fr:$_f:[expr {[file exists $_f] ? [file mtime $_f] : 0}]"
     }
-    set key "$_src|[llength $spheres]|[dict size $res_all]|[dict size $res_ca]|[lining_dist_thresh_value]"
+    # The residue keys are part of the key: two selections with the same
+    # counts but different residues must not share an answer.
+    set _rk [dict keys $res_all]
+    set key "$_src|[llength $spheres]|[dict size $res_all]|[dict size $res_ca]|[lindex $_rk 0]|[lindex $_rk end]|[string length $_rk]|[lining_dist_thresh_value]"
     if {[info exists _lining_sets_memo] && [dict exists $_lining_sets_memo $key]} {
         return [dict get $_lining_sets_memo $key]
     }
@@ -33489,7 +33531,10 @@ proc ::VMDPathFinder::update_pore_lining_rep {{verbose 0}} {
         return
     }
     set idx_list {}
-    foreach k [dict keys $lining] { lappend idx_list [dict get $res_anyidx $k] }
+    foreach k [dict keys $lining] {
+        if {[dict exists $res_anyidx $k]} { lappend idx_list [dict get $res_anyidx $k] }
+    }
+    if {![llength $idx_list]} { return }
     # "same residue as index ..." leans on VMD's own residue grouping instead of
     # manually reconstructing/quoting a segname/chain/resid selection string.
     set repsel "(same residue as index $idx_list) and noh"
@@ -39003,11 +39048,13 @@ proc ::VMDPathFinder::_conn_lobe_necks {in_sph cls cvect_s cpoint_s} {
     if {$exe eq ""} { return $lobes }
     lassign [_axg_unit $cvect_s] ux uy uz
     lassign $cpoint_s ox oy oz
+    # The centreline spheres with HOLE's own sphere radius (occupancy column),
+    # so the start sits on the sphere the mouth actually opens from.
     set cen {}
     foreach l [dict get $cls keep] {
-        set r [_sph_centerline_radius $l]
+        set r [string trim [string range $l 54 59]]
         lassign [_conn_line_xyz $l] x y z
-        if {$x eq "" || ![string is double -strict $r] || $r <= 0.005} continue
+        if {$x eq "" || ![string is double -strict $r] || $r <= 0.005 || $r > 900} continue
         lappend cen [list [expr {($x-$ox)*$ux+($y-$oy)*$uy+($z-$oz)*$uz}] $x $y $z $r]
     }
     if {[llength $cen] < 2} { return $lobes }
@@ -39046,7 +39093,9 @@ proc ::VMDPathFinder::_conn_lobe_necks {in_sph cls cvect_s cpoint_s} {
         set cmd [list $exe {*}[tool_args nm_search] $atoms $state(radius_file) 0 0 0 0 0 1 0.25 $endrad --neck $sf --quiet]
         set ign [join [split [string trim $state(ignore)]] ,]
         if {$ign ne ""} { lappend cmd --ignore $ign }
-        if {![catch {exec {*}$cmd 2>/dev/null} out]} { set answers [split [string trim $out] "\n"] }
+        if {![catch {exec {*}$cmd 2>/dev/null} out]} {
+            foreach l [split [string trim $out] "\n"] { lappend answers [lindex $l 0] }
+        }
         catch {file delete $sf}
     }
     if {$tmp} { catch {file delete $atoms} }

@@ -210,7 +210,7 @@ if {$nmx ne "" && [file readable $RAD]} {
     catch {set got [exec $nmx {*}[::VMDPathFinder::tool_args nm_search] $wall $RAD 0 0 0 0 0 1 0.25 22 --neck $lobe --quiet]}
     note "--neck through the hole: $got"
     chk "--neck reports the hole's clearance (5 - 1.85, within 0.35 A)" \
-        [expr {[string is double -strict $got] && abs($got - 3.15) < 0.35}] 1
+        [expr {[string is double -strict [lindex $got 0]] && abs([lindex $got 0] - 3.15) < 0.35}] 1
     set got ""
     catch {set got [exec $nmx {*}[::VMDPathFinder::tool_args nm_search] $solid $RAD 0 0 0 0 0 1 0.25 22 --neck $lobe --quiet]}
     chk "--neck finds no route through a solid wall" $got "-"

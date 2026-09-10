@@ -6097,11 +6097,11 @@ if {$ntun > 0} {
         # colour/material/spheres moved to a per-row gear.
         # The master checkbox sits in the HEADER's column 0, directly above the
         # per-row ticks and left of Id, not in the controls lane.
-        report "the cavities window offers the master checkbox, the start-point menu and a per-row gear" \
+        report "the cavities window offers the master checkbox, the start-point menu and a per-row gear (Color by lives in the gear)" \
                [expr {[winfo exists $w.tuncav.hdr.h0]
                       && [winfo class $w.tuncav.hdr.h0] eq "Checkbutton"
                       && [winfo exists $w.tuncav.ctl.rm]
-                      && [winfo exists $w.tuncav.ctl.pm]
+                      && ![winfo exists $w.tuncav.ctl.pm]
                       && [winfo exists $w.tuncav.sc.c.inner.gear1]
                       && [winfo exists $w.tuncav.sc.c.inner.use1]}] \
                "(allc=[winfo exists $w.tuncav.hdr.h0] gear1=[winfo exists $w.tuncav.sc.c.inner.gear1])"
