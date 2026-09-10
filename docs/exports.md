@@ -26,29 +26,37 @@ authoritative statement of columns and units for that export.
 
 ## Save Package
 
-**File > Save Package** writes one folder holding every table and figure the
-results on hand can produce, so a whole analysis can be handed on in one piece.
-It runs the same exporters the per-tab Export menus run, so the files are
-identical to the ones those buttons write.
+**File > Save Package** writes one folder holding the CSV and figure from each
+of the seven plot tabs (Pore Profile, Over Time, Trends, Mean Profile,
+Histogram, Hydration, Ion & Water) that has data, so a whole analysis can be
+handed on in one piece. It runs the same exporters the per-tab Export menus
+run, so the files are identical to the ones those buttons write. It does not
+reach the plugin's other exports - bottleneck residues, unrolled pore-wall
+layers, tunnel lining, per-opening tables, cavity CSVs - which stay on their
+own dialogs.
 
 The folder also contains:
 
 | File | Contents |
 |---|---|
 | `run_<id>.txt` | every parameter the run used - selection, frames, CPOINT/CVECT, method, engines, sampling, seed, radius file |
-| `README.txt` | which tabs were included, which were skipped for having nothing computed, and the file list |
+| `README.txt` | which tabs were included, which were skipped, and the file list |
 
-A tab with nothing computed is listed as skipped rather than written empty, so
-an empty file in the package always means an export failed.
+A tab is listed as skipped when it had nothing computed, when pressing Abort
+stopped the package before reaching it, or when both its exporters ran but
+neither actually wrote a file - so a tab in "Included" always has at least one
+real file behind it.
 
 ## Run identity
 
 Every run is stamped with an id: the date, the time, and a short hash of every
 input that decides what HOLE computes. Two runs with different parameters
 cannot share an id, and neither can two runs a second apart. It appears in the
-`run_<id>.txt` file written beside the results, in the export filenames, and in
-a one-line summary in the Log - so a figure can always be traced back to the
-parameters that produced it.
+`run_<id>.txt` file written beside the results and in a one-line summary in the
+Log. Export filenames carry a separate, shorter tag (`_run2`, `_run3`, ...)
+that only distinguishes runs sharing one output folder - the first run gets no
+tag at all - so a figure and its `run_<id>.txt` are matched by which folder
+they sit in, not by a shared string in their names.
 
 ## Connolly openings
 

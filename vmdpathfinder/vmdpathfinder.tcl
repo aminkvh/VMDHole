@@ -2920,6 +2920,10 @@ Stricter than Passage, which counts ions that merely entered."
     spinbox $w.bottom.transport.sm -width 3 -from 0 -to 99 -increment 1 -justify right \
         -textvariable ::VMDPathFinder::state(smooth_window_disp) \
         -command ::VMDPathFinder::_smooth_spin_changed
+    # Remembered so the 500 ms VMD-side poll can tell it has focus and skip
+    # overwriting it mid-edit - see _smooth_watch_tick.
+    variable _sm_spin_path
+    set _sm_spin_path $w.bottom.transport.sm
     bind $w.bottom.transport.sm <Return>   ::VMDPathFinder::_smooth_spin_changed
     bind $w.bottom.transport.sm <KP_Enter> ::VMDPathFinder::_smooth_spin_changed
     bind $w.bottom.transport.sm <FocusOut> ::VMDPathFinder::_smooth_spin_changed
@@ -18169,18 +18173,31 @@ proc ::VMDPathFinder::_smooth_watch_tick {} {
     set _smooth_watch_after ""
     variable w
     if {![_have_tk] || ![winfo exists $w]} { return }
-    if {[catch {_vmd_smooth_window} n]} { set n 0 }
-    # A window stored as "follow" or "off" by an older config is migrated to a
-    # plain number once, quietly - not through _set_smooth_window, which would
-    # repaint on every tick until it happened to match.
-    if {![string is integer -strict [expr {[info exists state(surface_smooth)] ? $state(surface_smooth) : ""}]]} {
-        set state(surface_smooth) $n
-    } elseif {$n ne [_surface_smooth_window]} {
-        # Changed in VMD: adopt it, which also copies it to every other rep so
-        # the molecule and the pore inside it stay on one window.
-        catch {_set_smooth_window $n}
+    if {[catch {_vmd_smooth_window} n]} { set n "" }
+    # "" means no readable representation right now - no molecule, or every rep
+    # hidden - and is NOT the same as VMD reporting a genuine 0. Treating it as
+    # 0 zeroed the stored window (and every representation, via
+    # _set_smooth_window) the moment the molecule momentarily had none, e.g.
+    # before a structure is loaded at all.
+    if {$n ne ""} {
+        # A window stored as "follow" or "off" by an older config is migrated
+        # to a plain number once, quietly - not through _set_smooth_window,
+        # which would repaint on every tick until it happened to match.
+        if {![string is integer -strict [expr {[info exists state(surface_smooth)] ? $state(surface_smooth) : ""}]]} {
+            set state(surface_smooth) $n
+        } elseif {$n ne [_surface_smooth_window]} {
+            # Changed in VMD: adopt it, which also copies it to every other rep
+            # so the molecule and the pore inside it stay on one window.
+            catch {_set_smooth_window $n}
+        }
     }
-    catch {set state(smooth_window_disp) [_surface_smooth_window]}
+    # Never while the spinbox has keyboard focus: a plain -textvariable binding
+    # already shows every keystroke, and overwriting it out from under the user
+    # mid-edit erased digits they had just typed.
+    variable _sm_spin_path
+    set _has_focus 0
+    catch {set _has_focus [expr {[info exists _sm_spin_path] && [focus] eq $_sm_spin_path}]}
+    if {!$_has_focus} { catch {set state(smooth_window_disp) [_surface_smooth_window]} }
     _smooth_watch_start
 }
 
@@ -18354,16 +18371,24 @@ proc ::VMDPathFinder::_tunnel_smooth_with {frame rank} {
 proc ::VMDPathFinder::_vmd_smooth_window {} {
     # VMD's own trajectory smoothing window, as the widest of the shown
     # representations. Read straight from VMD, not from state(surface_smooth).
+    # Returns "" when there is no readable representation to ask - no molecule,
+    # or every rep hidden - which is NOT the same answer as "every visible rep
+    # reports 0", and the caller must not treat them alike.
+    set molid ""
+    if {[catch {resolve_molid} molid] || $molid eq ""} { return "" }
     set n 0
+    set saw 0
     catch {
-        set molid [resolve_molid]
         for {set r 0} {$r < [molinfo $molid get numreps]} {incr r} {
             if {![mol showrep $molid $r]} continue
             set wv [mol smoothrep $molid $r]
-            if {[string is integer -strict $wv] && $wv > $n} { set n $wv }
+            if {[string is integer -strict $wv]} {
+                set saw 1
+                if {$wv > $n} { set n $wv }
+            }
         }
     }
-    return $n
+    return [expr {$saw ? $n : ""}]
 }
 
 proc ::VMDPathFinder::_set_smooth_window {n} {
@@ -20348,8 +20373,16 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # a filter change look like the window closing and reopening - and with a
     # few hundred pockets the row build between the two is long enough to read
     # as a hang.
-    set _rebuild [winfo exists $t]
-    if {$_rebuild} {
+    #
+    # _rebuild (skip centering/deiconify) is NOT the same question as "does
+    # the toplevel already exist" (skip `toplevel $t`, which errors on a
+    # duplicate path). Closing the MAIN window withdraws every child dialog
+    # without destroying them (_withdraw_child_dialogs), so after that this
+    # window exists but is not visible - and re-showing it must deiconify it
+    # again, or it stays invisible forever while still updating underneath.
+    set _existed [winfo exists $t]
+    set _rebuild [expr {$_existed && [wm state $t] ne "withdrawn"}]
+    if {$_existed} {
         foreach _c [winfo children $t] { catch {destroy $_c} }
     } else {
         toplevel $t
@@ -26162,7 +26195,12 @@ proc ::VMDPathFinder::_build_vector_controls {d} {
     checkbutton $d.sb.ex  -text "Exact selection" \
         -variable ::VMDPathFinder::state(cvect_exact) \
         -command [list ::VMDPathFinder::_cvect_stab_excl $d exact]
-    pack $d.sb.l $d.sb.cv $d.sb.ex -side left -padx {0 6}
+    # Dynamic only: empty unless Exact is on with a non-protein endpoint. The
+    # STATIC "why is this greyed" text lives in the checkboxes' own tooltips
+    # (_cvect_sync_stab_controls) - this is not that; removing it silently
+    # dropped the warning _cvect_stab_excl sets, which fires only sometimes.
+    label $d.sb.note -text "" -foreground gray40 -font {Helvetica 8}
+    pack $d.sb.l $d.sb.cv $d.sb.ex $d.sb.note -side left -padx {0 6}
     grid $d.sb -row 4 -column 0 -columnspan 4 -sticky w -padx 6 -pady {0 4}
     label $d.result -text "" -anchor w -foreground blue -wraplength 340 -justify left
     grid $d.result -row 5 -column 0 -columnspan 4 -sticky ew -padx 6
@@ -36765,8 +36803,17 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
     variable _conn_occ_memo
     variable plot_data_version
     if {![info exists _conn_occ_memo]} { set _conn_occ_memo [dict create] }
-    set _okey "$plot_data_version|[_conn_pore_margin]|[llength $result_frames]"
-    catch {append _okey "|[dict size [dict get $ion_flow_raw traces]]"}
+    # Same discriminators _conn_site_table's own cache key uses (tolz/tola:
+    # they change which openings the site ids below even refer to - without
+    # them here, changing the match tolerance left this memo returning
+    # occupancy pooled under the OLD site grouping, attributed to the NEW
+    # table's site ids).
+    lassign [_conn_lobe_tol] _otolz _otola
+    set _okey "$plot_data_version|[_conn_pore_margin]|$_otolz|$_otola|[llength $result_frames]"
+    # llength, not dict size: traces is a LIST of per-ion dicts, not a dict
+    # itself - dict size on a list silently halves an even count and throws
+    # (caught below, dropping the discriminator entirely) on an odd one.
+    catch {append _okey "|[llength [dict get $ion_flow_raw traces]]"}
     if {[dict exists $_conn_occ_memo $_okey]} { return [dict get $_conn_occ_memo $_okey] }
     set _cv [normalize_triplet_value $state(cvect)]
     set _cp [normalize_triplet_value $state(cpoint)]
@@ -50906,13 +50953,44 @@ proc ::VMDPathFinder::show_selected_surface {{draft 0}} {
     # so without this an event handled mid-build re-entered here, and with
     # several memories each doing that once per memory the status bar cycled
     # "Loading surface / Building surface" indefinitely.
+    #
+    # COALESCE the re-entrant call, do not drop it. A plain "busy, do nothing"
+    # guard also swallowed a genuinely NEW frame: if the user scrubbed on while
+    # this was mid-build, the re-entrant call for the frame they landed on saw
+    # busy=1 and returned, and nothing ever rendered that frame - the screen
+    # was left on whichever frame the in-flight build was for.
     variable _frame_render_busy
-    if {[info exists _frame_render_busy] && $_frame_render_busy} { return }
-    set _frame_render_busy 1
-    if {[catch {load_surface_for_frame $state(selected_result_frame) $draft} msg]} {
-        set state(status) $msg
+    variable _frame_render_pending_draft
+    if {[info exists _frame_render_busy] && $_frame_render_busy} {
+        # Remember the best fidelity asked for (0, full quality, beats a
+        # draft) and let the in-flight call pick up the CURRENT frame again
+        # once it finishes, rather than rendering this stale request itself.
+        # "" is the sentinel for "nothing pending" - checked with `eq`, not left
+        # to `info exists`, which is already true once the loop below has run
+        # once (it sets this to "" between iterations). Comparing 0 < "" throws,
+        # and since that throw happens with no catch of its own, it unwound
+        # into the OUTER call's catch and was swallowed as a status message -
+        # so the pending frame was silently never recorded at all.
+        if {![info exists _frame_render_pending_draft] || $_frame_render_pending_draft eq "" \
+                || $draft < $_frame_render_pending_draft} {
+            set _frame_render_pending_draft $draft
+        }
+        return
     }
-    catch {_mem_render_other_memories $state(selected_result_frame) $draft}
+    set _frame_render_busy 1
+    set _frame_render_pending_draft ""
+    while 1 {
+        if {$state(selected_result_frame) eq "" || [surface_is_hidden]} { break }
+        if {[catch {load_surface_for_frame $state(selected_result_frame) $draft} msg]} {
+            set state(status) $msg
+        }
+        catch {_mem_render_other_memories $state(selected_result_frame) $draft}
+        if {$_frame_render_pending_draft eq ""} { break }
+        # A request arrived while this one was running - render again for
+        # whatever frame the user is on NOW, which may have moved since.
+        set draft $_frame_render_pending_draft
+        set _frame_render_pending_draft ""
+    }
     set _frame_render_busy 0
 }
 
@@ -53681,16 +53759,30 @@ proc ::VMDPathFinder::_pkg_capture_off {} {
 }
 
 proc ::VMDPathFinder::save_package {} {
-    # One folder holding every table and figure the results on hand can
-    # produce, plus the parameters that produced them. What goes in is decided
-    # by what has data - the same test the export bars use to show or hide
-    # themselves - so a tab you never computed is listed as skipped rather
-    # than written empty.
+    # One folder holding the CSV and figure from each of the seven plot tabs
+    # that has data - see _pkg_tabs - plus the parameters that produced them.
+    # It does not reach the other exports this plugin has (bottleneck
+    # residues, unrolled pore-wall layers, tunnel lining, per-opening tables,
+    # cavity CSVs): those stay on their own dialogs. What goes into a plot
+    # tab's pair is decided by whether it has data - the same test the export
+    # bars use to show or hide themselves - so a tab you never computed is
+    # listed as skipped rather than written empty.
     variable w
     variable state
     variable _pkg_written
     variable _pkg_notes
+    variable _pkg_running
     if {![_have_tk]} { return }
+    # _pkg_capture_on/_off proxy the GLOBAL tk_getSaveFile/tk_messageBox. A
+    # second call reached while the first is still exporting would clobber
+    # _pkg_dir mid-loop and then _pkg_capture_off would strip the first call's
+    # proxies out from under it, sending its remaining exports to the real
+    # dialogs instead. Cheap to close outright rather than reason about
+    # whether it is reachable.
+    if {[info exists _pkg_running] && $_pkg_running} {
+        set state(status) "A package is already being written - wait for it to finish."
+        return
+    }
     set any 0
     foreach {k lbl c f} [_pkg_tabs] { if {[_tab_has_data $k]} { set any 1; break } }
     if {!$any} {
@@ -53708,15 +53800,25 @@ proc ::VMDPathFinder::save_package {} {
         tk_messageBox -icon error -type ok -title "Save package" -message "Could not create $dir: $_e"
         return
     }
-    set done {}; set skipped {}
+    set done {}; set skipped {}; set aborted {}
     set nb $w.plotframe.nb
     set _prev_tab ""
     catch {set _prev_tab [$nb select]}
+    set _pkg_running 1
     _begin_calc
     _pkg_capture_on $dir
     if {[catch {
         foreach {k lbl csv_cmd fig_cmd} [_pkg_tabs] {
             if {![_tab_has_data $k]} { lappend skipped $lbl; continue }
+            if {[_abort_requested]} {
+                # Say so explicitly rather than writing whatever the exporter
+                # produces from a half-computed cache and calling it included -
+                # some of these check the abort flag themselves and would
+                # otherwise return early with partial data, no error, and a
+                # file that still lands in "Included".
+                lappend aborted $lbl
+                continue
+            }
             set state(status) "Packaging: $lbl..."
             # SHOW the tab before exporting it. Every plot here is drawn only
             # while its own tab is on screen, so a tab never visited had a 1x1
@@ -53727,13 +53829,23 @@ proc ::VMDPathFinder::save_package {} {
             catch {update idletasks}
             catch {redraw_visible_analysis_tab}
             catch {update idletasks}
-            catch {uplevel #0 $csv_cmd}
-            catch {uplevel #0 $fig_cmd}
-            lappend done $lbl
+            set _before [llength $_pkg_written]
+            catch {uplevel #0 $csv_cmd} _cerr
+            catch {uplevel #0 $fig_cmd} _ferr
+            # Included means a file actually landed, not that the calls
+            # returned without throwing - both exporters can fail silently
+            # (a swallowed "nothing to export" message box, in particular)
+            # and the tab was still reported as included either way.
+            if {[llength $_pkg_written] > $_before} {
+                lappend done $lbl
+            } else {
+                lappend skipped "$lbl (nothing written)"
+            }
         }
     } _perr]} { }
     catch {if {$_prev_tab ne ""} { $nb select $_prev_tab }}
     _pkg_capture_off
+    set _pkg_running 0
     # The parameters that produced all of it, beside it.
     set _files {}
     foreach f $_pkg_written { if {[file exists $f]} { lappend _files [file tail $f] } }
@@ -53746,14 +53858,15 @@ proc ::VMDPathFinder::save_package {} {
         set _frames [expr {[analysis_mode] eq "tunnel" ? $tunnel_result_frames : $result_frames}]
         _write_run_parameters $dir $stamp [resolve_molid_or -1] $state(selection) $_frames
     }
-    _pkg_write_readme $dir $stamp $done $skipped $_files
+    _pkg_write_readme $dir $stamp $done $skipped $_files $aborted
     _end_calc
     set state(status) "Package written to $dir - [llength $_files] file(s)."
-    tk_messageBox -icon info -type ok -title "Save package" -message \
-        "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped (no data): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    set _msg "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped (no data): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    if {[llength $aborted]} { append _msg "\nStopped before: [join $aborted {, }]" }
+    tk_messageBox -icon info -type ok -title "Save package" -message $_msg
 }
 
-proc ::VMDPathFinder::_pkg_write_readme {dir stamp done skipped files} {
+proc ::VMDPathFinder::_pkg_write_readme {dir stamp done skipped files {aborted {}}} {
     if {[catch {open [file join $dir README.txt] w} fh]} { return }
     puts $fh "VMDPathFinder package $stamp"
     puts $fh "Written [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S %Z}]"
@@ -53762,7 +53875,11 @@ proc ::VMDPathFinder::_pkg_write_readme {dir stamp done skipped files} {
     puts $fh "figures are PostScript, which most vector editors and LaTeX read."
     puts $fh ""
     puts $fh "Included:  [expr {[llength $done] ? [join $done {, }] : {nothing}}]"
-    puts $fh "Skipped (nothing computed): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    puts $fh "Skipped (nothing computed, or nothing was actually written): \
+[expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    if {[llength $aborted]} {
+        puts $fh "Stopped before (Abort was pressed): [join $aborted {, }]"
+    }
     puts $fh ""
     puts $fh "Files:"
     foreach f [lsort $files] { puts $fh "  $f" }

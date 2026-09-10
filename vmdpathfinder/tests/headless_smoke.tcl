@@ -4962,6 +4962,74 @@ chk "the package's parameter file uses the analysed frame list, not frame_spec" 
         [info body ::VMDPathFinder::save_package]] >= 0
         && [string first {$state(frame_spec)} [info body ::VMDPathFinder::save_package]] < 0}] 1
 
+# save_package must not be re-entrant (it proxies the GLOBAL tk_getSaveFile/
+# tk_messageBox; a nested call's teardown would strip the outer call's
+# capture), and it must not mark a tab Included when Abort stopped the
+# package before reaching it or when nothing was actually written.
+chk "save_package refuses a re-entrant call" \
+    [expr {[string first {_pkg_running} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+chk "save_package checks the abort flag inside its export loop" \
+    [expr {[string first {_abort_requested} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+chk "save_package only counts a tab as Included when a file actually landed" \
+    [expr {[string first {llength $_pkg_written} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+
+# The Connolly ion-occupancy memo must key on the same discriminators
+# _conn_site_table's own cache does (tolz/tola) - without them, changing the
+# opening-match tolerance re-pooled the site table but left this memo
+# returning occupancy computed under the OLD grouping, attributed to the
+# NEW table's site ids.
+chk "the occupancy memo keys on the lobe match tolerances" \
+    [expr {[string first {_conn_lobe_tol} [info body ::VMDPathFinder::_conn_opening_occupancy]] >= 0}] 1
+# traces is a LIST of per-ion dicts (see _ion_flow_scan's own callers), not a
+# dict itself - `dict size` on a list silently halves an even-length count and
+# throws (silently swallowed) on an odd one. llength is what is actually wanted.
+chk "the occupancy memo key uses llength, not dict size, on the trace list" \
+    [expr {[string first {llength [dict get $ion_flow_raw traces]} \
+        [info body ::VMDPathFinder::_conn_opening_occupancy]] >= 0
+        && [string first {dict size [dict get $ion_flow_raw traces]} \
+        [info body ::VMDPathFinder::_conn_opening_occupancy]] < 0}] 1
+set _dszchk [catch {dict size {a b c}}]
+chk "...verified: dict size throws on an odd-length list" $_dszchk 1
+chk "...and silently halves an even-length one" [dict size {a b c d}] 2
+
+# _vmd_smooth_window must distinguish "no readable representation right now"
+# from "VMD genuinely reports 0" - conflating them zeroed the user's chosen
+# smoothing window (and rewrote every representation to match) the instant a
+# molecule momentarily had none, e.g. before any structure is loaded.
+chk "_vmd_smooth_window returns a distinguishable no-answer, not 0" \
+    [expr {[string first {return ""} [info body ::VMDPathFinder::_vmd_smooth_window]] >= 0}] 1
+chk "_smooth_watch_tick skips adoption on that no-answer" \
+    [expr {[string first {if {$n ne ""}} [info body ::VMDPathFinder::_smooth_watch_tick]] >= 0}] 1
+# The poll must not overwrite the spinbox display while it has keyboard focus -
+# a plain -textvariable already echoes every keystroke live, and the 500 ms
+# poll used to stomp on it mid-edit.
+chk "the smoothing poll does not overwrite the spinbox while it has focus" \
+    [expr {[string first {[focus] eq $_sm_spin_path} [info body ::VMDPathFinder::_smooth_watch_tick]] >= 0}] 1
+
+# show_selected_surface's busy guard must COALESCE a re-entrant call for a
+# different frame, not drop it - a plain "busy, do nothing" guard silently
+# left the screen on whichever frame the in-flight build was for even after
+# the user had moved on, because load_surface_for_frame's own full `update`
+# on the non-draft path can dispatch a queued frame-change mid-build.
+chk "show_selected_surface remembers a re-entrant request instead of dropping it" \
+    [expr {[string first {_frame_render_pending_draft} [info body ::VMDPathFinder::show_selected_surface]] >= 0}] 1
+chk "...and the pending check cannot throw on the empty-sentinel value" \
+    [expr {[string first {$_frame_render_pending_draft eq ""} \
+        [info body ::VMDPathFinder::show_selected_surface]] >= 0}] 1
+
+# Cavities: closing the MAIN window withdraws every child dialog WITHOUT
+# destroying them (_withdraw_child_dialogs), so re-opening Cavities afterward
+# must re-deiconify it - checking only `winfo exists` treated "exists but
+# withdrawn" the same as "already visible" and never showed it again.
+chk "show_tunnel_cavities distinguishes exists-but-withdrawn from already-visible" \
+    [expr {[string first {wm state $t} [info body ::VMDPathFinder::show_tunnel_cavities]] >= 0}] 1
+
+# _cvect_stab_excl's non-protein-endpoint warning writes to $d.sb.note - the
+# widget must actually exist, or the warning silently never displays (guarded
+# by winfo exists, so no error - just a warning nobody sees).
+chk "the CVECT non-protein-endpoint warning has a widget to write to" \
+    [expr {[string first {label $d.sb.note} [info body ::VMDPathFinder::_build_vector_controls]] >= 0}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
