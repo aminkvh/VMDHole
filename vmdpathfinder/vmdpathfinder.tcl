@@ -31517,6 +31517,9 @@ proc ::VMDPathFinder::_apply_display_change_now {} {
         catch {vmdcon -err "VMDPathFinder: $::errorInfo"}
         return
     }
+    # The other memories follow the same display mode, mesher and colour
+    # mode; left alone they kept whatever they were drawn with last.
+    catch {_mem_render_other_memories $_adc_frame 0}
     catch {display update}
     catch {refresh_hydro_views}
     # Property coloring: proactively recolor every OTHER frame whose base geometry
