@@ -7811,10 +7811,10 @@ proc ::VMDPathFinder::show_tunnel_global_gear_settings {} {
 
 proc ::VMDPathFinder::_sync_tunnel_global_gear_prop_row {d} {
     # Property only matters once Color is "Property" - grid/grid-remove its
-    # label+dropdown together (they sit in row 2, columns 2-3, immediately
-    # to the RIGHT of Color - see show_tunnel_global_gear_settings). The
-    # dialog is size-pinned (_pin_toplevel_size) before this ever runs, so
-    # removing them leaves blank space rather than resizing the window.
+    # label+dropdown together (they are their own row, directly under Color -
+    # see show_tunnel_global_gear_settings). The dialog is size-pinned
+    # (_pin_toplevel_size) before this ever runs, so removing them leaves
+    # blank space rather than resizing the window.
     variable state
     if {![winfo exists $d.prop_l]} { return }
     if {[info exists state(tunnel_display_color)] && $state(tunnel_display_color) eq "property"} {
@@ -8482,10 +8482,10 @@ proc ::VMDPathFinder::_sync_tunnel_gear_prop_row {d i} {
     # override, else the global default) is "property" - so "Global default"
     # correctly reveals the row too when the global default itself is
     # Property, not just an explicit per-tunnel Property pick. Grid/grid-
-    # remove its label+dropdown together (row 2, columns 2-3, immediately to
-    # Color's RIGHT - see show_tunnel_gear_settings). The dialog is
-    # size-pinned before this ever runs, so removing them leaves blank space
-    # rather than resizing the window.
+    # remove its label+dropdown together (their own row, directly under
+    # Color - see show_tunnel_gear_settings). The dialog is size-pinned
+    # before this ever runs, so removing them leaves blank space rather than
+    # resizing the window.
     if {![winfo exists $d.prop_l]} { return }
     if {[_tunnel_effective_colormode $i] eq "property"} {
         catch { grid $d.prop_l; grid $d.pm }
@@ -20223,8 +20223,8 @@ proc ::VMDPathFinder::_cavity_redraw_lining {frame id key_tid} {
     set _key_tid $key_tid
     set cv [dict get $tunnel_lining($frame) cav.$id]
     set n 0
-    # 4 is yellow, 1 is red - the colours the button tooltip and the status
-    # line have always named. 7 is green.
+    # 4 is yellow, 1 is red - matches what the button tooltip and the status
+    # line below both say.
     foreach {which colour} {bres 4 ires 1} {
         set sel {}
         foreach e [dict get $cv $which] {
@@ -23574,9 +23574,9 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
         $d.hp.ce_mb.m add command -label $_ced -command [list ::VMDPathFinder::_set_conn_engine $_cev $_ced]
     }
     grid $d.hp.ce_mb -row 3 -column 1 -sticky w -padx {2 6}
-    add_tooltip $d.hp.ce_mb "HOLE\'s own conn, or the nm_search port of it - same dots, faster. Monte Carlo can use\
-        either. Nelder-Mead ignores this and uses the port, because HOLE\'s conn cannot run on centres it did not\
-        find itself; if the port is missing, or a card sends the frame back to HOLE, HOLE\'s conn runs instead."
+    add_tooltip $d.hp.ce_mb "HOLE\'s own conn, or the faster nm_search port - same dots. Monte Carlo can use\
+        either; Nelder-Mead normally uses the port (it falls back to HOLE\'s own conn if the port is missing or\
+        cannot take a card you added)."
     set ::VMDPathFinder::_hp_frame $d.hp
     after idle ::VMDPathFinder::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
@@ -36468,7 +36468,7 @@ proc ::VMDPathFinder::_conn_gear_dialog {sid} {
         grid $d.c.mshf -row $row -column 1 -sticky w -padx 6 -pady 2
         add_tooltip $d.c.mshf.e "How big a patch has to be before it is called an opening rather than noise,\
             as a share of all the dots outside the pore. Applied before the Seen filter, so anything it drops\
-            is not counted in the \"below the floor\" line either. Lower it to see small openings."
+            is not counted in the \"under the floor\" line either. Lower it to see small openings."
         incr row
     }
     # Export goes LAST, after every field that is typed into.
