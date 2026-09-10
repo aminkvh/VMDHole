@@ -2763,6 +2763,12 @@ proc ::VMDPathFinder::build_gui {w} {
     _build_export_menu $fb.export ::VMDPathFinder::export_ion_flow_csv \
         [list ::VMDPathFinder::_export_fig ionflow $w.plotframe.nb.ionflow.cv]
     button $fb.go -text "Compute" -command ::VMDPathFinder::_run_ion_flow
+    # set_tooltip only re-texts an EXISTING binding - this establishes it once.
+    # _update_method_dependent_controls re-texts it every time the pore method
+    # changes; using add_tooltip there instead would stack a fresh <Enter>
+    # binding on every single change with nothing ever removing the old ones.
+    add_tooltip $fb.go "Maps ion occupancy and flow through the pore over the trajectory,\
+and counts crossings of the constriction. PBC-safe."
     # No "View:"/"Ions:" text labels - the dropdowns show their own value (the same
     # convention used elsewhere, e.g. the Mean Profile Color/Material pickers), which
     # keeps this already-crowded row (2 dropdowns + gear + Compute + Permeation +
@@ -7109,9 +7115,11 @@ proc ::VMDPathFinder::_sync_profile_exportbar_for_mode {} {
             set _mtxt "Shows an AVERAGE of the selected route's own 3D centrelines across every frame it is tracked in"
             append _mtxt [expr {$_mtn ne "" ? " ($_mtn frame(s) for the current selection)" : ""}]
             append _mtxt " - not a single measured route. Members are aligned on their own bottleneck and oriented consistently before averaging."
-            catch {add_tooltip $meb.show3d $_mtxt}
+            # set_tooltip: this proc re-texts the button on every mode/selection
+            # change (the widget's own add_tooltip runs once, at creation).
+            catch {set_tooltip $meb.show3d $_mtxt}
         } else {
-            catch {add_tooltip $meb.show3d "Show the averaged profile as a 3D surface in the VMD viewer."}
+            catch {set_tooltip $meb.show3d "Show the averaged profile as a 3D surface in the VMD viewer."}
         }
     }
 }
@@ -23830,8 +23838,6 @@ proc ::VMDPathFinder::show_mean_profile_settings {} {
         grid $d.$_mv -row $row -column 0 -sticky w -padx 20 -pady 1; incr row
         add_tooltip $d.$_mv $_mtip
     }
-    add_tooltip $d.fill "Colour the area under the curve by the sphere-mean property.\
-        It reaches up to the outermost curve still shown, so turning Min / max off fills to the std band instead."
     checkbutton $d.swap -text "Swap X/Y" \
         -variable ::VMDPathFinder::state(mean_swap) -command ::VMDPathFinder::draw_mean_profile
     grid $d.swap -row $row -column 0 -sticky w -padx 8 -pady 3; incr row
@@ -23885,8 +23891,8 @@ proc ::VMDPathFinder::show_mean_profile_settings {} {
     add_tooltip $d.vgrid.se "Gaussian width in voxels. Each region is smoothed separately, so the pore does not bleed into an opening."
     add_tooltip $d.vth.e "Fraction of frames a point must be inside the pore to count. 0.5 is the median lumen - what was open more often than not."
     add_tooltip $d.vth.oe "The same, per opening, counted over the frames that opening appears in. Lower than the pore's because openings show for fewer frames."
-    add_tooltip $d.fill "Shade the area under the mean curve by the selected property.
-Independent of the 3D IsoSurface."
+    add_tooltip $d.fill "Shade the area under the mean curve by the selected property. Reaches up to the\
+outermost curve still shown, so turning Min / max off fills to the std band instead. Independent of the 3D IsoSurface."
     add_tooltip $d.swap  "Swap the R and Z axes of the 2D mean plot."
     add_tooltip $d.flipz "Reverse the channel-coordinate (Z) direction of the 2D mean plot."
     add_tooltip $d.acc3d "Color the 3D surface by true 3D distance to each residue (varies around the pore), not just axial height. No effect for the water schemes."
@@ -35268,17 +35274,23 @@ proc ::VMDPathFinder::_update_method_dependent_controls {} {
     catch {$w.plotframe.nb.hydration.exportbar.go configure -state [expr {$_hyd_off ? "disabled" : "normal"}]}
     catch {$w.plotframe.nb.ionflow.exportbar.go   configure -state [expr {$capsule ? "disabled" : "normal"}]}
     catch {$w.plotframe.nb.ionflow.exportbar.perm configure -state [expr {$capsule ? "disabled" : "normal"}]}
+    # set_tooltip, not add_tooltip: this proc re-texts these two buttons every
+    # time the pore method changes, and add_tooltip stacks a NEW binding on
+    # every call rather than updating the one already there (from each
+    # button's own creation) - harmless in what is shown (the newest binding
+    # always wins), but it left an unbounded, ever-growing pile of dead
+    # bindings on both widgets over a session with several method changes.
     if {$_hyd_off} {
-        catch {add_tooltip $w.plotframe.nb.hydration.exportbar.go \
+        catch {set_tooltip $w.plotframe.nb.hydration.exportbar.go \
             "Run the water density / free energy calculation.\nNot available for [expr {$capsule ? {CAPSULE - it has no single centerline} : {CONNOLLY - its radius is an equal-area Requiv mixed with a spherical fallback, so the pore volume this normalises by is not one quantity}}] (see the ⚙ pore method note)."}
     } else {
-        catch {add_tooltip $w.plotframe.nb.hydration.exportbar.go "Run the water density / free energy calculation."}
+        catch {set_tooltip $w.plotframe.nb.hydration.exportbar.go "Run the water density / free energy calculation."}
     }
     if {$capsule} {
-        catch {add_tooltip $w.plotframe.nb.ionflow.exportbar.go \
+        catch {set_tooltip $w.plotframe.nb.ionflow.exportbar.go \
             "Maps ion occupancy and flow through the pore over the trajectory, and counts crossings of the constriction. PBC-safe.\nNot available for CAPSULE - it has no single centerline (see the ⚙ pore method note)."}
     } else {
-        catch {add_tooltip $w.plotframe.nb.ionflow.exportbar.go \
+        catch {set_tooltip $w.plotframe.nb.ionflow.exportbar.go \
             "Maps ion occupancy and flow through the pore over the trajectory, and counts crossings of the constriction. PBC-safe."}
     }
     # The Margin field on the color row is CONNOLLY-only, and nothing trace-fires
@@ -48651,19 +48663,19 @@ proc ::VMDPathFinder::_sync_passability_buttons {} {
     # Re-packed before the branches below decide to hide it again, so switching
     # back to a method that HAS an ellipse restores the button.
     catch {pack $d.btn.ell -side left}
-    add_tooltip $d.btn.ell "Conductance using the ellipse cross-section (pi*a*b) instead of the circular pi*R^2. A few seconds to compute."
+    set_tooltip $d.btn.ell "Conductance using the ellipse cross-section (pi*a*b) instead of the circular pi*R^2. A few seconds to compute."
     catch {$d.btn.csv configure -state normal -command ::VMDPathFinder::export_metrics_csv}
-    add_tooltip $d.btn.csv "Export the full per-frame metrics trajectory as CSV."
+    set_tooltip $d.btn.csv "Export the full per-frame metrics trajectory as CSV."
     if {[analysis_mode] eq "tunnel"} {
         catch {$d.btn.ell configure -state disabled}
-        add_tooltip $d.btn.ell "Not available for MOLE tunnels."
+        set_tooltip $d.btn.ell "Not available for MOLE tunnels."
         # The whole-trajectory export (export_metrics_csv) walks HOLE's own
         # per-frame results dict, which tunnel mode has no equivalent of - but
         # the species passability table right here IS real, single-tunnel
         # data (metrics_for_tunnel), so route this button at the table it can
         # actually see instead of leaving export dead in tunnel mode entirely.
         catch {$d.btn.csv configure -command ::VMDPathFinder::export_passability_species_csv}
-        add_tooltip $d.btn.csv "Export this tunnel's species passability table as CSV."
+        set_tooltip $d.btn.csv "Export this tunnel's species passability table as CSV."
     } elseif {[_run_uses_card conn] || [_run_uses_card connolly] || [_run_uses_card capsule]} {
         # Hidden, not greyed: the ellipse fit needs a single centreline, which
         # these methods do not produce, so it is not a setting the user can
@@ -48819,8 +48831,13 @@ proc ::VMDPathFinder::show_passability_dialog {} {
     pack $d.btn.close -side right -padx 4
     pack $d.btn.csv -side right
     pack $d.btn.ell -side left
+    # Establishes the ONE binding these buttons ever get - _sync_passability_
+    # buttons only re-TEXTS it from here on (set_tooltip), because that proc
+    # runs on every mode switch and reopen (see its own comment), and
+    # add_tooltip stacks a fresh binding rather than replacing one.
+    add_tooltip $d.btn.ell ""
+    add_tooltip $d.btn.csv ""
     _sync_passability_buttons
-    add_tooltip $d.btn.ell "Conductance using the ellipse cross-section (pi*a*b) instead of the circular pi*R^2. A few seconds to compute."
     pack $d.btn -fill x -padx 8 -pady {0 8}
     _fill_passability_dialog
     _sync_passability_kappa_editable

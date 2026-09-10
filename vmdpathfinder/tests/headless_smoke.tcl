@@ -5104,6 +5104,18 @@ chk "_detect_pore_axis's memo key includes atom-level coordinate identity" \
     [expr {[string first {measure center} [info body ::VMDPathFinder::_detect_pore_axis]] >= 0
         && [string first {index 0} [info body ::VMDPathFinder::_detect_pore_axis]] >= 0}] 1
 
+# add_tooltip's Enter/Leave bindings are ADDITIVE ("+..."), so calling it
+# twice on the same widget stacks a second scheduler that cancels the
+# first's pending popup on every hover - the LAST-EXECUTED call always wins,
+# and any call re-run over a widget's lifetime (a "sync"/"update" proc,
+# called again on every mode switch) keeps growing the binding list forever.
+# set_tooltip exists precisely to re-text a binding in place instead.
+foreach _proc {_update_method_dependent_controls _sync_passability_buttons \
+               _sync_profile_exportbar_for_mode} {
+    chk "$_proc re-texts its persistent widget(s) with set_tooltip, not add_tooltip" \
+        [expr {[string first {set_tooltip} [info body ::VMDPathFinder::$_proc]] >= 0}] 1
+}
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
