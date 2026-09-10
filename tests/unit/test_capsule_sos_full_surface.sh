@@ -2,18 +2,10 @@
 # A capsule surface built through sph_process + sos_triangle must cover the
 # whole pore, not a fraction of it.
 #
-# THE DEFECT THIS GUARDS:
-#   sph_process's -colour mode also emits "endrad points" at colour -1, which
-#   sos_triangle uses to cut sharp ends on a SPHERICAL pore. On capsule records
-#   those markers clip nearly the entire surface away. The plugin passed
-#   -colour unconditionally, so capsule surfaces rendered as a stub: measured on
-#   one frame, 1596 triangles spanning 22.8 A where the marching-cubes mesher
-#   drew 148.66 A from the same spheres. Reported as "sos in capsule does not
-#   render the full surface but the marching does".
-#
-# This drives the REAL binaries on a committed capsule .sph, both ways, so it
-# fails if either the flag's effect changes or the plugin starts passing it
-# again.
+# sph_process -colour files a capsule's third radius band under the end-cap
+# header, which sos_triangle clips: the surface came out as a stub. The plugin
+# repairs that header after sph_process. This drives the real binaries on a
+# committed capsule .sph.
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -63,23 +55,33 @@ else
     bad "capsule surface could not be built without -colour"
 fi
 
-# The hazard itself: -colour must be shown to truncate, or this test proves
-# nothing about why the plugin omits it.
+# The hazard: -colour files the third radius band under the end-cap header
+# {1 -1 -1 -1}, which sos_triangle clips. The plugin keeps -colour and repairs
+# that header after sph_process (_capsule_sos_fix / _capsule_sos_fix_cmd), so
+# the coloured surface must span the pore like the plain one.
 if build "-colour" col && [ -n "$(span "$T/col.plot")" ]; then
     COL=$(span "$T/col.plot")
-    if awk -v a="$COL" -v b="$PLAIN" 'BEGIN{exit !(a < 0.8*b)}'; then
-        ok "-colour still truncates it, which is why the plugin omits it ($COL vs $PLAIN A)"
+    awk 'NF==7 && $1+0==1 && $2+0==-1 && $3+0==-1 && $4+0==-1 {printf "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f\n",1,2,-55,18,0,0,0; next} {print}' \
+        "$T/col.sos" > "$T/fix.sos"
+    "$ST" -s < "$T/fix.sos" > "$T/fix.plot" 2>/dev/null
+    FIX=$(span "$T/fix.plot")
+    NCOL=$(grep -o "color [a-z0-9]*" "$T/fix.plot" | sort -u | wc -l)
+    if awk -v a="$FIX" -v b="$SPHSPAN" 'BEGIN{exit !(a >= b)}'; then
+        ok "with the header repaired, the coloured surface covers the pore ($FIX of $SPHSPAN A; unrepaired $COL A)"
     else
-        ok "-colour no longer truncates ($COL vs $PLAIN A) - the workaround may be droppable"
+        bad "the repaired coloured surface is still short ($FIX of $SPHSPAN A)"
     fi
+    [ "$NCOL" -ge 3 ] && ok "...in three radius bands" || bad "expected three colour bands, found $NCOL"
+else
+    bad "capsule surface could not be built with -colour"
 fi
 
-# ...and the plugin must actually omit it, in BOTH surface builders.
-n=$(grep -c 'set color 0' "$TCL" 2>/dev/null || echo 0)
-if [ "$n" -ge 2 ]; then
-    ok "both surface builders drop -colour under capsule"
+# ...and the plugin repairs it in every builder that runs sph_process.
+n=$(grep -c '_capsule_sos_fix' "$TCL" 2>/dev/null || echo 0)
+if [ "$n" -ge 4 ]; then
+    ok "the plugin keeps -colour and repairs the header in its builders ($n sites)"
 else
-    bad "expected 2 capsule 'set color 0' guards in the surface builders, found $n"
+    bad "expected the header repair in the surface builders, found $n mention(s)"
 fi
 
 echo "capsule-sos-full-surface: $pass passed, $fail failed"

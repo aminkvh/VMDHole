@@ -1705,25 +1705,18 @@ set _empty 0
 foreach _v [lindex [lindex $_tp2 0] 4] { if {$_v eq ""} { incr _empty } }
 chk "...so no empty coordinate reaches the point list" $_empty 0
 
-# --- no run path may block on a modal dialog headless -----------------------
-# confirm_overwrite_dialog builds a modal toplevel. run_tunnel_analysis gated it
-# on _have_tk; run_analysis did NOT, so a headless or scripted rerun into an
-# existing output root either blocked on a dialog nobody can answer or died on
-# `toplevel`. Both now refuse to prompt without a GUI, leaving the results alone
-# and proceeding - never destroy data no one was asked about. Both also require
-# the plugin's own window: VMD's Tk Console has Tk but not $w, and the modal
-# builds its toplevel under $w.
-#
-# Asserted SEPARATELY because the two guard differently: HOLE gates on the same
-# `if` as the overwrite test, tunnel gates on an enclosing one. A single generic
-# matcher passed on a nearby unrelated _have_tk, which is worse than no test.
+# --- overwrite prompts -------------------------------------------------------
+# A pore run never overwrites: every run gets its own folder (_run_root_new),
+# so run_analysis has no prompt at all. The tunnel run still reuses one folder
+# and prompts before clobbering - only with a GUI, and only under the plugin's
+# own window (VMD's Tk Console has Tk but not $w).
 set _rab [info body ::VMDPathFinder::run_analysis]
 set _rtb [info body ::VMDPathFinder::run_tunnel_analysis]
-chk "both run paths still prompt before clobbering" \
-    [expr {[string first {confirm_overwrite_dialog} $_rab] >= 0
-           && [string first {confirm_overwrite_dialog} $_rtb] >= 0}] 1
-chk "run_analysis gates its prompt on the SAME if as overwrite_results" \
-    [string match {*$state(overwrite_results) && \[_have_tk\] && \[winfo exists $w\]*} $_rab] 1
+chk "a pore run makes its own folder and never prompts to overwrite" \
+    [expr {[string first {confirm_overwrite_dialog} $_rab] < 0
+           && [string first {_run_root_new} $_rab] >= 0}] 1
+chk "the tunnel run still prompts before clobbering" \
+    [expr {[string first {confirm_overwrite_dialog} $_rtb] >= 0}] 1
 chk "run_tunnel_analysis gates its prompt on an enclosing _have_tk" \
     [string match {*!$is_tmp && \[_have_tk\] && \[winfo exists $w\]*} $_rtb] 1
 
@@ -3427,18 +3420,14 @@ proc _ra_body_has {re} {
     regsub -all {(?m)^\s*#.*$} $b {} b
     return [regexp $re $b]
 }
-# Every exit has to carry a value; one bare `return` left behind reintroduces
-# the empty result on exactly the path that took it. Exactly ONE survives - the
-# overwrite-confirm decline, which is INSIDE the big catch and so is intercepted
-# rather than escaping, with _cancelled carrying the outcome to the real exit.
+# Every exit has to carry a value; a bare `return` reintroduces the empty
+# result on exactly the path that took it.
 proc _ra_bare_returns {} {
     set b [info body ::VMDPathFinder::run_analysis]
     regsub -all {(?m)^\s*#.*$} $b {} b
     return [llength [regexp -all -inline {(?m)^[ \t]*return[ \t]*$} $b]]
 }
-chk "only the intercepted cancel still returns empty" [_ra_bare_returns] 1
-chk "...and it does set the flag that carries its outcome out" \
-    [_ra_body_has {set _cancelled 1\s*\n\s*return\s*\n}] 1
+chk "no path of run_analysis returns empty" [_ra_bare_returns] 0
 chk "...and the normal end returns the success/failure flag" \
     [_ra_body_has {return \[expr \{\$_failed \|\| \$_cancelled}] 1
 # The error path must not depend on Tk being present. tk_messageBox was called

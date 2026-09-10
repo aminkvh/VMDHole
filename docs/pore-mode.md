@@ -134,13 +134,12 @@ opening. Select **Water** in **Ion & Water** to populate water-residence
 statistics. Visit lengths are in sampled frames; radial movement within an
 opening is not a verified lumen-to-bulk crossing.
 
-**Neck** is the narrowest clearance on the widest route from the pore
-centreline into the opening's outer half, measured against the atoms by
-`nm_search` on a grid over the opening. `open` means that route is wider than
-the search's end radius. **Margin** decides which dots count as lateral, and
-so where the route has to reach, but it does not enter the clearance. The
-neck is blank when the `nm_search` engine or the frame's atoms are not
-available.
+**Neck** estimates the largest probe radius that can pass from the pore
+centreline into the opening's outer half. `open` means the calculated clearance
+reaches or exceeds **ENDRAD**, not that the exact radius is known. **Margin**
+defines the lateral region the route must reach and can therefore affect the
+result. A neck value requires the compiled `nm_search` helper and the frame's
+atoms; otherwise it is blank.
 
 Two filters decide what the table lists, and both are in the header gear.
 **Seen in at least N% of frames** hides openings that come and go; the panel

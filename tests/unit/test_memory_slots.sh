@@ -1,16 +1,11 @@
 #!/bin/sh
-# Memory slots: several spherical analyses held at once, none overwriting another.
-#
-# The properties that matter, and that the UI will rest on:
-#   * a new memory starts from DEFAULTS, not from a copy of the current one -
-#     a second memory describes a DIFFERENT pore, so inheriting the last CPOINT
-#     would be the wrong start;
-#   * switching back restores that memory's own numbers AND its results;
-#   * a new memory does not touch an older memory's results or work dir - the
-#     whole point is that the first pore keeps describing the first pore;
-#   * each memory runs into its own directory, so a second run cannot write
-#     over the first one's frames;
-#   * sync copies DISPLAY settings only, never run geometry.
+# Memory slots: each memory is one run, held with its settings, its results and
+# the folder it lives in.
+#   * a new memory starts from the defaults for the pore's own settings, and
+#     keeps the method settings and the frame range;
+#   * switching back restores that memory's settings, results and folder;
+#   * a new memory has no folder until it runs (the run makes one);
+#   * sync copies display settings only, never run geometry.
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -23,34 +18,23 @@ command -v tclsh >/dev/null 2>&1 || { echo "SKIP: no tclsh"; exit 0; }
 [ -f "$TCL" ] || { echo "SKIP: no plugin source"; exit 0; }
 
 OUT=$(tclsh <<TCLEOF 2>&1
-# The memory core is pure state handling - no VMD, no Tk. Pull in just those
-# procs plus the variables they use.
 namespace eval ::VMDPathFinder {
-    # the cue redraw needs no VMD here - the point is that switching a slot
-    # drives it; that it actually draws is asserted in test_gui_smoke.sh
     proc _sync_point_marker {args} {}
     proc _mem_point_surface_mol {} {}
-    # needs a real molecule; the seeded value is asserted in test_gui_smoke.sh
     proc _mem_seed_axis {} {}
     proc _mem_keep_frame {} {}
     proc _sync_cvect_handles {args} {}
+    proc _mem_sync_shared_labels {} {}
     variable state; variable default_state
     variable results [dict create]; variable result_frames {}
     variable pore_memories [dict create]; variable pore_memory_active ""
     variable pore_memory_next 1; variable plot_data_version 0
-    variable pore_memory_runsig ""; variable last_geom_key ""
+    variable run_root ""; variable run_root_temp 0; variable last_geom_key ""
     variable mem_surface_mols; array set mem_surface_mols {}
     proc analysis_mode {} { return "pore" }
 }
 $(awk '/^proc ::VMDPathFinder::_mem_run_keys/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_shared_keys/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_stale_keys/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_shared_signature/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_mark_fresh/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_stale /,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_stale_ids/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_track_ids/,/^}/' "$TCL")
-$(awk '/^proc ::VMDPathFinder::_mem_workdir_for/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_forget_tracks/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_sync_cues/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_display_keys/,/^}/' "$TCL")
@@ -68,43 +52,41 @@ namespace eval ::VMDPathFinder {
     array set default_state {selection protein cpoint {} cvect {0 0 1} sample 0.25
                              endrad 15.0 surface_color hole_def pore_method circular
                              display_mode triangulated mesher csg search_engine mc
-                             show_mean_surface 0 work_dir /tmp/base}
+                             conn_engine hole show_mean_surface 0 frame_spec now}
     array set state [array get default_state]
-    set state(work_dir) /tmp/base
-    # memory 1: a real pore
+    # memory 1: a real run
     set state(cpoint) "1 2 3"
     set state(selection) "protein and chain A"
     set state(surface_color) green
+    set state(pore_method) connolly
+    set state(frame_spec) all
     set results [dict create 0 {a b}]
     set result_frames {0}
-    _mem_ensure_first; _mem_mark_fresh
+    set run_root /tmp/base/1BL8_20260910-120000-abc123
+    _mem_ensure_first
     set id2 [_mem_new]
     puts "ID2 \$id2"
     puts "NEW_CPOINT '\$state(cpoint)'"
     puts "NEW_SEL '\$state(selection)'"
+    puts "NEW_METHOD \$state(pore_method) \$state(frame_spec)"
     puts "NEW_RESULTS [dict size \$results]"
-    puts "NEW_WORKDIR [_mem_workdir_for \$id2 \$state(work_dir)]"
-    # fill memory 2 with its own pore
+    puts "NEW_ROOT '\$run_root'"
+    # memory 2 runs its own pore into its own folder
     set state(cpoint) "9 9 9"
     set results [dict create 5 {c d}]
     set result_frames {5}
-    _mem_mark_fresh
-    # back to 1
+    set run_root /tmp/base/1BL8_20260910-130000-def456
+    _mem_stash_active
     _mem_activate 1
     puts "BACK_CPOINT '\$state(cpoint)'"
     puts "BACK_SEL '\$state(selection)'"
     puts "BACK_RESULTS [dict size \$results] frames \$result_frames"
     puts "BACK_COLOR \$state(surface_color)"
-    # memory 2 must be untouched by having visited 1
+    puts "BACK_ROOT '\$run_root'"
     _mem_activate \$id2
     puts "M2_CPOINT '\$state(cpoint)'"
     puts "M2_RESULTS [dict size \$results] frames \$result_frames"
-    # SHARED settings: a memory must not carry its own copy
-    set _ov {}
-    foreach _k [_mem_shared_keys] {
-        if {[dict exists [dict get [dict get \$pore_memories 1] params] \$_k]} { lappend _ov \$_k }
-    }
-    puts "SHARED_IN_PARAMS [llength \$_ov] \$_ov"
+    puts "M2_ROOT '\$run_root'"
     # sync presentation: display only
     set state(surface_color) red
     set state(dot_density) 30
@@ -114,15 +96,6 @@ namespace eval ::VMDPathFinder {
     puts "SYNC_COLOR \$state(surface_color)"
     puts "SYNC_DISPLAY \$state(dot_density)"
     puts "SYNC_CPOINT_UNCHANGED '\$state(cpoint)'"
-    # work dirs must differ
-    puts "WD1 [_mem_workdir_for 1 /tmp/base]"
-    puts "WD2 [_mem_workdir_for \$id2 /tmp/base]"
-    # a shared setting changing makes stored results stale
-    puts "STALE_BEFORE [_mem_stale_ids]"
-    set state(sample) 1.0
-    puts "STALE_AFTER [_mem_stale_ids]"
-    set state(sample) 0.25
-    puts "STALE_RESTORED [_mem_stale_ids]"
     # cannot delete the last one
     _mem_delete 1
     puts "AFTER_DEL [lsort -integer [dict keys \$pore_memories]]"
@@ -135,35 +108,27 @@ get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
 
 [ "$(get ID2)" = "2" ] && ok "the second memory gets its own id" || bad "id2=$(get ID2)"
 [ "$(get NEW_CPOINT)" != "'1 2 3'" ] && ok "a new memory never inherits the previous memory's cpoint" || bad "new cpoint $(get NEW_CPOINT)"
-[ "$(get NEW_SEL)" = "'protein'" ] && ok "...and the default selection" || bad "new selection $(get NEW_SEL)"
+[ "$(get NEW_SEL)" = "'protein'" ] && ok "...and starts from the default selection" || bad "new selection $(get NEW_SEL)"
+[ "$(get NEW_METHOD)" = "connolly all" ] && ok "...but keeps the method and the frame range" || bad "new method/frames $(get NEW_METHOD)"
 [ "$(get NEW_RESULTS)" = "0" ] && ok "...with no results of its own yet" || bad "new results $(get NEW_RESULTS)"
-case "$(get NEW_WORKDIR)" in */mem_2) ok "...and reports its own work dir" ;; *) bad "new workdir $(get NEW_WORKDIR)" ;; esac
+[ "$(get NEW_ROOT)" = "''" ] && ok "...and no folder until it runs" || bad "new root $(get NEW_ROOT)"
 
 [ "$(get BACK_CPOINT)" = "'1 2 3'" ] && ok "switching back restores that memory's cpoint" || bad "back cpoint $(get BACK_CPOINT)"
 [ "$(get BACK_SEL)" = "'protein and chain A'" ] && ok "...and its selection" || bad "back selection $(get BACK_SEL)"
-printf '%s' "$(get BACK_RESULTS)" | grep -q "^1 frames 0$" && ok "...and its own results, not the other memory's" || bad "back results: $(get BACK_RESULTS)"
+printf '%s' "$(get BACK_RESULTS)" | grep -q "^1 frames 0$" && ok "...and its own results" || bad "back results: $(get BACK_RESULTS)"
+[ "$(get BACK_ROOT)" = "'/tmp/base/1BL8_20260910-120000-abc123'" ] && ok "...and its own folder" || bad "back root $(get BACK_ROOT)"
 
 [ "$(get M2_CPOINT)" = "'9 9 9'" ] && ok "the other memory is unchanged by the visit" || bad "m2 cpoint $(get M2_CPOINT)"
 printf '%s' "$(get M2_RESULTS)" | grep -q "^1 frames 5$" && ok "...including its results" || bad "m2 results: $(get M2_RESULTS)"
+[ "$(get M2_ROOT)" = "'/tmp/base/1BL8_20260910-130000-def456'" ] && ok "...and its folder" || bad "m2 root $(get M2_ROOT)"
 
 [ "$(get SYNC_N)" = "1" ] && ok "sync reached the other memory" || bad "sync n=$(get SYNC_N)"
 [ "$(get SYNC_COLOR)" = "red" ] && ok "sync copies the display colour" || bad "sync colour $(get SYNC_COLOR)"
 [ "$(get SYNC_DISPLAY)" = "30" ] && ok "...and the dot density" || bad "sync display $(get SYNC_DISPLAY)"
-[ "$(get SYNC_CPOINT_UNCHANGED)" = "'1 2 3'" ] && ok "sync does NOT touch run geometry" || bad "sync changed cpoint to $(get SYNC_CPOINT_UNCHANGED)"
-
-W1=$(get WD1); W2=$(get WD2)
-# The binding guarantee is asserted in test_gui_smoke.sh (MEMROOT), which
-# exercises resolve_output_root - the function the run path actually calls.
-[ -n "$W1" ] && [ "$W1" != "$W2" ] && ok "the work-dir helper reports a different directory per memory ($W1 vs $W2)" || bad "work dirs collide: '$W1' '$W2'"
-
-SIP=$(get SHARED_IN_PARAMS)
-[ "${SIP%% *}" = "0" ] && ok "no shared setting is stored per memory (sampling/mesher/engine cannot be mixed)" || bad "shared keys leaked into a memory: $SIP"
-[ "$(get STALE_BEFORE)" = "" ] && ok "results match the settings they were produced under" || bad "stale before: $(get STALE_BEFORE)"
-printf '%s' "$(get STALE_AFTER)" | grep -q "1" && ok "changing the sampling marks stored results stale" || bad "stale after: '$(get STALE_AFTER)'"
-[ "$(get STALE_RESTORED)" = "" ] && ok "...and putting it back clears the flag" || bad "stale restored: $(get STALE_RESTORED)"
+[ "$(get SYNC_CPOINT_UNCHANGED)" = "'1 2 3'" ] && ok "sync does not touch run geometry" || bad "sync changed cpoint to $(get SYNC_CPOINT_UNCHANGED)"
 
 [ "$(get AFTER_DEL)" = "2" ] && ok "a memory can be deleted" || bad "after delete: $(get AFTER_DEL)"
-[ "$(get AFTER_DEL2)" = "2" ] && ok "the LAST memory cannot be deleted" || bad "after deleting the last: $(get AFTER_DEL2)"
+[ "$(get AFTER_DEL2)" = "2" ] && ok "the last memory cannot be deleted" || bad "after deleting the last: $(get AFTER_DEL2)"
 
 echo "memory-slots: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || { echo "--- raw ---"; printf '%s\n' "$OUT" | head -25; exit 1; }

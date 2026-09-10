@@ -103,6 +103,10 @@ catch {file delete $::VMDPathFinder::config_file}
 
 ::VMDPathFinder::show_gui
 update
+# A background error from stub data must not open Tk's modal error dialog and
+# stall the harness; it is printed and the section goes on.
+proc ::bgerror {msg} { puts "    (background error: [string range $msg 0 100])" }
+interp bgerror {} ::bgerror
 
 # ---- helpers for review scripts --------------------------------------------
 proc walk {w} { set out [list $w]; foreach c [winfo children $w] { lappend out {*}[walk $c] }; return $out }
@@ -259,7 +263,7 @@ puts "GEARSAME wrote=[info exists ::VMDPathFinder::tunnel_gear_cid(7,material)] 
 unset -nocomplain ::VMDPathFinder::_gear_open_cid
 set ::VMDPathFinder::state(status) ""
 catch {::VMDPathFinder::_tunnel_gear_click_cid 99} err
-puts "GEARABSENT status='[string range $::VMDPathFinder::state(status) 0 40]' [expr {[string match {*absent from the displayed frame*} $::VMDPathFinder::state(status)] ? {OK} : "BAD $err"}]"
+puts "GEARABSENT status='[string range $::VMDPathFinder::state(status) 0 40]' [expr {[string match {*not in any analysed frame*} $::VMDPathFinder::state(status)] ? {OK} : "BAD $err"}]"
 
 # 3. nan option fields fall back instead of throwing
 set ::VMDPathFinder::state(conn_pore_margin) nan
@@ -400,18 +404,11 @@ lassign [resolve_output_root 0] r2 t2
 _mem_slot_clicked 1
 lassign [resolve_output_root 0] r1 t1
 puts "MEMROOT m1=$r1 m2=$r2\
-    [expr {$r1 ne $r2 && [file tail $r2] eq {mem_2} && [file dirname $r2] eq $r1 ? {OK} : {BAD}}]"
-# 9. a DRAW-ONLY change must not mark anything stale - it would be telling the
-#    user to re-run analyses that are perfectly current
-_mem_mark_fresh
-set state(display_mode) dots
-set a [_mem_stale_ids]
-set state(display_mode) triangulated
-set state(sample) 0.9
-set b [_mem_stale_ids]
-set state(sample) 0.25
-puts "MEMSTALE draw='$a' compute='$b'\
-    [expr {$a eq {} && $b ne {} ? {OK} : {BAD}}]"
+    [expr {$r1 ne $r2 && [file dirname $r2] eq [file dirname $r1] && [file dirname $r1] eq [file normalize $state(work_dir)] ? {OK} : {BAD}}]"
+# 9. each memory keeps its own folder across a switch
+_mem_slot_clicked 2
+lassign [resolve_output_root 0] r2b t2b
+puts "MEMROOT2 same=[expr {$r2b eq $r2}] [expr {$r2b eq $r2 ? {OK} : {BAD}}]"
 # 10. Sync really redraws: press the button for real, with two memories holding
 #     different colours, and check the other memory's stored colour followed
 _mem_slot_clicked 2

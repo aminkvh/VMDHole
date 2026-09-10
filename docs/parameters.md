@@ -105,6 +105,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Solid | off | Draw cavities opaque instead of transparent (MOLE's *Solid cavities*) |
 | Spheres | off | Draw the clearance spheres instead of a surface over them (CAVER Analyst's *Locked Probes*) |
 | Cavity tracking cutoff | 6 Å | Maximum distance to a track's running mean centre; mobile or neighbouring pockets can be misassigned |
+
 ### Route clustering and display
 
 | Parameter | Default | Definition |
@@ -218,7 +219,7 @@ is a steric comparison, not a free-energy calculation.
 |---|---:|---|
 | Output directory | automatic | Root for persistent frame directories and manifest |
 | Save results | on | Keep results instead of using temporary storage |
-| Overwrite | on | Replace prior stored frames after GUI confirmation |
+| Overwrite | on | Tunnel runs: replace prior stored frames after confirmation. Pore runs always write a new folder |
 | Keep visualization | on | Retain generated VMD molecules/representations |
 | Keep input PDB | off | Preserve exact per-frame coordinates submitted to an engine |
 | Prebuild surfaces | off | Generate surfaces before they are displayed |

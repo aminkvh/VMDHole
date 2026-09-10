@@ -2,20 +2,24 @@
 
 ## Result directories
 
-With **Save results** enabled, VMDPathFinder creates a saved run with per-frame data
-and a manifest. Use **File → Load Saved Analysis…** to restore it; do not rearrange files
-inside the saved run.
+Every pore run gets its own folder, `<structure>_<date>-<time>-<hash>`, under
+`hole_output_<structure>` beside the structure file (or under the chosen work
+directory; under the temp directory when **Save results** is off). It holds the
+per-frame data, `run_<id>.txt` with the settings, and a manifest that records
+the structure's atom count and radius of gyration. Use **File → Load Saved
+Analysis…** on a run folder to restore that run, or on `hole_output_<structure>`
+to restore every run in it as a memory each. A run loaded onto a different
+structure is flagged before anything is drawn. Do not rearrange files inside a
+run folder.
 
 | Setting | Effect |
 |---|---|
 | Save results | Persist outputs; otherwise use temporary storage |
-| Overwrite | Recalculate requested frames after confirmation |
+| Overwrite | Tunnel runs: recalculate requested frames after confirmation (pore runs never overwrite - each gets a new folder) |
 | Keep input PDB | Preserve coordinates used for the calculation |
 | Keep visualization | Retain generated VMD objects when results are reset or replaced |
 
-Use a new output directory for a scientifically different parameter set. An
-overwrite confirmation protects files; it does not determine whether two runs
-are comparable.
+Two runs are comparable only if their settings say so: read `run_<id>.txt`.
 
 ## Persistent configuration
 

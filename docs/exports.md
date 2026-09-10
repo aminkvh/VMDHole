@@ -26,15 +26,12 @@ authoritative statement of columns and units for that export.
 
 ## Save Package
 
-**File > Save Package** first asks which of the seven plot tabs (Pore Profile,
-Over Time, Trends, Mean Profile, Histogram, Hydration, Ion & Water) to include -
-a tab without data cannot be ticked - then where to write the folder, and
-writes the CSV and figure of each ticked tab, so a whole analysis can be
-handed on in one piece. It runs the same exporters the per-tab Export menus
-run, so the files are identical to the ones those buttons write. It does not
-reach the plugin's other exports - bottleneck residues, unrolled pore-wall
-layers, tunnel lining, per-opening tables, cavity CSVs - which stay on their
-own dialogs.
+Choose **File > Save Package**, select the plot tabs to include, then choose
+the destination folder. Only tabs with data can be selected. Each selected tab
+exports its CSV and figure.
+
+Export bottleneck residues, unrolled pore-wall layers, tunnel lining, opening
+tables, and cavity CSVs separately from their own dialogs.
 
 The folder also contains:
 
@@ -49,19 +46,21 @@ run. Record additional settings from the [minimum reporting set](parameters.md#m
 
 ## Run identity
 
-Pore runs receive a timestamp and a short settings hash, recorded in
-`run_<id>.txt` and the Log. This label is not a checksum of the input coordinates.
-Export filenames use separate suffixes (`_run2`, `_run3`, ...) when runs share
-an output folder. Use a separate folder for each analysis to keep figures,
-data, and settings together.
+Pore runs receive a timestamp and a short settings hash; the run's folder is
+named after them and `run_<id>.txt` and the Log record them. The hash covers
+the settings, not the coordinates; the manifest records the structure's atom
+count and radius of gyration.
 
 ## Connolly openings
 
 With **Color** set to `pore_lobes`, each region gear exports the pore or one
 lateral opening. The header gear exports all regions. The all-frame table
 includes occurrence, dot count, neck, extension, axial position, and azimuth.
+Axial position and azimuth describe the tracked opening's average location;
+they are repeated across its present frames, not measured separately in each row.
 An opening absent from a frame has `present=0` and blank measurement cells.
-A neck equal to the run's end radius means the route into the opening is wider than the search looks (`open`).
+A neck capped at **ENDRAD** corresponds to `open` in the table: the calculated
+clearance reaches or exceeds that limit, so the value is a lower bound.
 
 ## Filenames
 

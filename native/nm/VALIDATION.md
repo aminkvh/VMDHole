@@ -5,7 +5,7 @@ against the HOLE run stored beside it, with that run's own cards:
 cpoint `-2.4354 -0.9136 3.8850`, cvect `0.0166 0.0289 0.9994`,
 sample 0.25, endrad 15.0, `simple.rad`.
 
-## nm_search — as accurate as HOLE is with itself, the search step 5x faster
+## nm_search: search timing and radius agreement
 
 Per frame, 18,677 atoms. Whole run through the plugin's 15-worker pool on the
 50-frame benchmark trajectory: 0.98x (`paper/benchmarks/results/endtoend.csv`,

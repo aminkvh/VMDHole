@@ -77,11 +77,13 @@ disk use. A larger cache reduces rebuilding but increases memory use.
 
 ## Multiple pore analyses
 
-In Spherical mode, use **Memory** to keep several pore analyses visible at
-once. **+** starts a new slot; select a numbered slot to restore its settings
-and results. **Sync** copies the active slot's colour, material, and dot density
-to the others. **×** removes the active slot and its surface, not its saved
-files. A red slot needs recalculation with the current search settings.
+In pore mode, use **Memory** to keep several runs visible at once. Each memory
+is one run: its settings, its results and its own folder. **+** starts a new
+memory (the next Run makes its folder); select a numbered memory to restore
+its settings and results. **Sync** copies the active memory's colour, material,
+and dot density to the others. **×** removes the active memory and its surface,
+not its folder. Runs made with different methods can sit side by side; hover a
+memory to see its method and folder.
 
 ## Mean Profile curves
 

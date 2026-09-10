@@ -19,7 +19,7 @@ stage, and output path there.
 | Centreline enters an external groove | Use an explicit two-point vector and a more specific atom selection |
 | Profile shifts across frames | Make the molecule whole, align the trajectory, and consider endpoint stabilization |
 | Unexpected differences between reruns | Confirm the same seed, executable, atom order, radius file, method, and parameters; a blank seed resolves to `1` |
-| Old result would be replaced | Use a new output directory or cancel the overwrite confirmation |
+| Old result would be replaced | Pore runs never replace one: each run gets its own folder. Tunnel runs ask before overwriting; cancel to keep the old one |
 
 ## Surface problems
 
