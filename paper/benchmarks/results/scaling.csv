@@ -8,14 +8,7 @@
 # load_at_start: 3.82 4.15 3.88
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
 # bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_660453/simple.rad
-# What is swept: the PLUGIN's own job pool (state(parallel_jobs)), not an xargs
-#   replay of pre-extracted inputs. Deliverable is 'calc' (a parsed radius profile
-#   per frame), which includes extracting each frame's PDB from the trajectory -
-#   work the shell-parallel control in endtoend.csv never does.
-# OpenMP is pinned to ONE thread per worker (hole_accel=off), so this is the pool
-#   alone. That pinning turns out not to matter here and the check is recorded:
-#   at jobs=1, OMP_NUM_THREADS=8 gave 8.882 s and OMP_NUM_THREADS=1 gave 8.905 s
-#   (0.3%). Only HOLE's CONNOLLY path is threaded; circular mode ignores OpenMP.
+# sweep of the plugin's own job pool; deliverable calc (a profile per frame, PDB extracted from the trajectory); one OpenMP thread per worker
 jobs,repeat,seconds,frames_per_s,speedup_vs_1job
 1,1,6.4679,7.7305,
 1,2,6.4691,7.7291,

@@ -7,11 +7,7 @@
 # repeats: 3 (median reported).  OMP_NUM_THREADS=8
 # bin: stock hole d3f1014638aad983
 # bin: accel hole 62e6b6ba9b090023
-# F4 (hcapen_fast.f) caches the atom shortlist between nearby capsule probes.
-#   The gain is SIZE-DEPENDENT: more atoms and more probes mean more reuse. This
-#   is a SMALL channel, so treat 3.15x as a lower bound, not a headline.
-# A speedup is only meaningful if both builds produced the same pore, so the
-#   .sph md5 and the radius-table row count are recorded and must match.
+# F4 = hcapen_fast.f; .sph md5 and radius-table row count must match
 build,median_s,speedup_vs_stock,sph_md5,radius_rows
 stock,2.456,1.00,8fee4ca59403402251f9e2583f7f1ee4,795
 accel,0.781,3.14,8fee4ca59403402251f9e2583f7f1ee4,795

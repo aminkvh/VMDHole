@@ -13,24 +13,8 @@
 # bin: sph_process sha256:77eb281c30b12392 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sph_process
 # bin: sos_triangle sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/sos_triangle
 # bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_660453/simple.rad
-# 1BL8 (KcsA), single structure, PROTEIN ATOMS ONLY - the same subset the
-#   plugin's default 'protein' selection feeds HOLE. The 3 K+ ions are
-#   excluded because no shipped .rad file defines a vdW radius for K, and
-#   HOLE reports that as ***ERROR*** while still exiting 0. Timing the raw
-#   file would also not be comparable to what the plugin actually runs.
-# cpoint/cvect are the values the committed case-study run recorded in its
-#   own manifest.
-# builds: stock    = HOLE 2.2 source, UNPATCHED, built at -O2
-#   NOT 'as distributed': HOLE's Makefile sets no Fortran optimisation
-#   flag, so the shipped binaries are -O0 and a plain -O2 rebuild alone is
-#   2.0-2.9x faster (results/o2_rebuild.csv). Comparing against an -O2
-#   stock is the CONSERVATIVE choice: it isolates the Fortran patches and
-#   OpenMP work instead of crediting them with the compiler flag.
-#         accel_1t = ours, ONE OpenMP thread -> the algorithmic changes alone
-#         accel_nt = ours, OpenMP enabled     -> adds parallelism
-# raseed 1 makes HOLE's Monte Carlo deterministic. bench_pipeline.sh refuses to
-#   print any ratio unless the .sph files are byte-identical across builds AND
-#   the triangle counts match, so a 'speedup' cannot be a build doing less work.
+# 1BL8 (KcsA) protein atoms, raseed 1, cpoint/cvect from the committed case-study run
+# builds: stock = HOLE 2.2 source unpatched, built at -O2; accel_1t = ours, one OpenMP thread; accel_nt = ours, OpenMP on. A ratio is printed only where the .sph files are byte-identical and the triangle counts match
 method,build,hole_s,sph_process_s,sos_triangle_s,total_s,triangles
 circular,stock,0.0521,0.0137,0.7615,0.8273,8746
 circular,accel_1t,0.0531,0.0145,0.0899,0.1575,8746

@@ -223,9 +223,6 @@ from these exact CSVs; the stage's own agreement check passed (`FIG_RESULT
 PASS`, see `fig_performance_provenance.txt`). `docs/images/
 performance_summary.png` is a copy of the PNG.
 
-The plugin's own Nelder-Mead search and marching-cubes mesher are the
-`vmdpathfinder_nm`, `vmdpathfinder_csg` and `vmdpathfinder_nm_csg` rows of
-`endtoend.csv` above, measured by the same stage as every other row: at the
-15-worker pool the search is 0.98x the accelerated HOLE search and the mesher
-1.26-1.28x the accelerated `sph_process` + `sos_triangle` path. They are not
-speed claims - the pool is I/O-bound there - and are left out of Figure S2.
+Nelder-Mead search and marching-cubes mesher, 15-worker pool (`endtoend.csv`):
+search 0.98x the accelerated HOLE search; mesher 1.28x the accelerated
+`sph_process` + `sos_triangle` path; both 1.26x. Not in Figure S2.

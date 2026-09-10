@@ -15,23 +15,8 @@
 # bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_751005/simple.rad
 # system: vmdpathfinder/sim_1.dcd  160772 atoms x 50 frames
 # params: select=protein cpoint=-0.8,0.9,32.0 cvect=0,0,1 sample=0.25 endrad=15.0 ignore=HOH,WAT,TIP,SOL dotden=15
-# DELIVERABLE 'calc'    = a parsed radius profile on disk for every frame.
-#   Asymmetry, in the BASELINE's favour: VMDPathFinder's clock also includes parsing
-#   HOLE's table into a TSV; the bare shell loop and mdahole2 are not charged for it.
-# DELIVERABLE 'surface' = the above PLUS renderable surface geometry for every
-#   frame. It does NOT include loading that geometry into VMD's graphics context.
-#   mdahole2 writes ONE monolithic .vmd file, VMDPathFinder and the shell loop write one
-#   file per frame; both satisfy the deliverable, and the difference is reported.
-# 'bare_hole_parallel' is a CONTROL for 'is the speedup just parallelism?'. It is an
-#   upper bound on a shell-parallel baseline: xargs does no scheduling, no per-frame
-#   extraction from the trajectory, and no result bookkeeping.
-# 'vmdpathfinder_stock' is the CONTROL for binary asymmetry: same plugin, HOLE's own
-#   unmodified binaries. accel-vs-stock on that pair isolates the binary work.
-# 'vmdpathfinder_accel_pdb' is the SAME accel binary as 'vmdpathfinder_accel', with
-#   state(keep_input_pdb) forced on so _hole_fast_coord_available returns 0 -
-#   same Fortran, same OpenMP, same everything, only the per-frame coordinate
-#   path differs (packed binary record vs a PDB written every frame). This pair
-#   isolates the tsatr_fast.f / _write_hole_coord_bin win specifically.
+# calc = a parsed radius profile per frame (the plugin's time includes parsing HOLE's table); surface = calc plus surface geometry per frame
+# bare_hole_parallel = xargs -P15 over pre-extracted inputs; vmdpathfinder_stock = the plugin with HOLE's unmodified binaries; vmdpathfinder_accel_pdb = accelerated binaries writing a PDB per frame instead of the packed record
 tool_deliverable,tool,binaries,jobs,repeat,seconds,frames_per_s,frames
 calc,bare_hole_serial,stock,1,1,6.1611,8.1154,50
 calc,bare_hole_serial,stock,1,2,6.1346,8.1505,50

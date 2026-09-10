@@ -7,7 +7,7 @@
 # bin: mole2.exe sha256:e6ff8019fb6bd942 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/paper/benchmarks/real_mole_build/mole2.exe
 # bin: mole_tunnel_engine sha256:bdd87761de2f5923 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/mole_tunnel_engine
 # same explicit single-origin + search parameters on both sides; tetrahedra/tunnel counts must match to trust the ratio
-# 1ERI is a protein-DNA complex (EcoRI endonuclease-DNA), a genuinely different structure class from the two enzymes
+# 1ERI is a protein-DNA complex (EcoRI endonuclease-DNA)
 structure,tetrahedra_mole2,tetrahedra_ours,tunnels_mole2,tunnels_ours,repeats,loadavg,mole2_median_s,ours_median_s,speedup
 1BL8,18394,18380,4,4,3,3.63,0.3813,0.0250,15.24
 1MXT_noHET,45044,45031,5,5,3,3.63,0.6124,0.0581,10.55

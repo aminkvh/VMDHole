@@ -5,8 +5,8 @@
 # loadavg_at_start: 4.30 3.32 3.29 3/3161 667583
 # engine: /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast --tunnel-cluster
 # bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
-# metric: Adjusted Rand Index between CAVER's own cluster labels and tunnel_cluster_c's output, at each of our own thresholds (VMDPathFinder's distance metric - symmetric mean nearest-point - is not the same definition as CAVER's, so thresholds are not directly comparable 1:1; swept instead of hand-picked).
-# note: time_s at this pool size (83-145 pathways) is process-startup-dominated jitter, not a scaling signal - see tunnel_clustering_scaling.csv for that.
+# metric: Adjusted Rand Index between CAVER's cluster labels and ours, swept over our thresholds (the two distance definitions differ, so thresholds do not map 1:1)
+# time_s: whole-process wall time
 # ground truth: same guided_example trajectory, CAVER's own tutorial step 3 (clustering_threshold 2.0, BEFORE the tutorial's own 'step 4: adjusting clustering'), RAW/unfiltered -> 10 clusters / 145 tunnels, same-cluster same-frame duplicates present (the harder case). Coordinates + CAVER's own per-tunnel cluster label read verbatim from CAVER's analysis/tunnel_profiles.csv.
 threshold,time_s,our_clusters,ARI_vs_CAVER
 1.0,0.018356,23,0.710871

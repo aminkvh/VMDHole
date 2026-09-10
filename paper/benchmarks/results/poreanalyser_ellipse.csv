@@ -8,30 +8,9 @@
 # load_at_start: 2.61 2.99 3.68
 # bin: hole sha256:8217abc8bab1e0d7 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/build/hole
 # bin: simple.rad sha256:d09b6e01434d7f76 /tmp/vmdpathfinder_repro_rad_615409/simple.rad
-# PoreAnalyser scipy UNKNOWN / numpy 1.26.4  <- load-bearing for the major axis
+# PoreAnalyser scipy UNKNOWN / numpy 1.26.4
 # structure: 1BL8 (KcsA), frame 0, raseed 1, PROTEIN ATOMS ONLY
-#   (the plugin's default 'protein' selection; 1BL8's 3 K+ ions have no
-#   vdW radius in any shipped .rad file - see stage_pipeline_1bl8).
-# ⚠️ QUOTE THE *_3d ROWS. They pair the two tools by nearest 3D slice
-#   centre - both tables carry one, from the same .sph - so NOTHING is
-#   fitted and the registration residual is reported separately as
-#   pairing_distance_3d instead of being charged to the semi-axes.
-#   The *_scalar_offset rows are the older registration, kept only
-#   because earlier drafts quoted them. A single offset along z cannot
-#   absorb a ROTATION, and 1BL8's pore axis (cvect 0.3620 -0.0041
-#   0.9322) is 21.2 deg off lab z, so those rows carry mis-registration
-#   on top of any real disagreement. The gap between the two pairings
-#   IS that mis-registration - neither tool changed between them.
-# PoreAnalyser scipy version  <- load-bearing for the major axis
-# method: PoreAnalyser was run on VMDPathFinder's OWN .sph, so both tools fit the
-#   same HOLE channel. The single fitted quantity is a constant axis offset,
-#   recovered from PoreAnalyser's b vs our HOLE radius (a quantity not under
-#   test) and then frozen: delta = 25.45 A, join residual median
-#   0.1915 A over 192 slices.
-# PRIMARY rows are the *_3d ones: paired by nearest 3D slice centre,
-#   ZERO fitted parameters. The scalar-offset rows are kept beside them
-#   because they are what earlier drafts quoted - the difference between
-#   the two IS the mis-registration, not a change in either tool.
+# both tools fit the same .sph. *_3d rows pair slices by nearest 3D centre (no fitted parameter; residual = pairing_distance_3d); *_scalar_offset rows use one axis offset (delta 25.45 A, join residual median 0.1915 A over 192 slices)
 quantity,n_slices,median_A,p95_A,max_A,pct_within_0.5A
 minor_axis_b_3d,192,0.0000,0.1500,0.2100,100
 major_axis_a_3d,192,0.2535,3.2782,8.4475,66

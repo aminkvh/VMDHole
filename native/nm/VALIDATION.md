@@ -1,19 +1,15 @@
 # Validation status of the ported tools
 
-Everything here is measured on the author's own Nav trajectory
-(`traj_per/`, 18,677 protein atoms) against the HOLE run already stored in
-`traj_per/hole_output_step5_assembly/`, using that run's own cards:
+Measured on a Nav channel trajectory (18,677 protein atoms, 10 frames)
+against the HOLE run stored beside it, with that run's own cards:
 cpoint `-2.4354 -0.9136 3.8850`, cvect `0.0166 0.0289 0.9994`,
 sample 0.25, endrad 15.0, `simple.rad`.
 
-## nm_search — as accurate as HOLE is with itself; the search kernel 5x faster
+## nm_search — as accurate as HOLE is with itself, the search step 5x faster
 
-Scope of the 5x: the search step alone, on the author's Nav trajectory, which
-is not a benchmark fixture. It is not a benchmark-suite number. In the
-plugin's 15-worker pool on the 50-frame benchmark trajectory the whole
-calc deliverable is 0.98x the accelerated HOLE search
-(`paper/benchmarks/results/endtoend.csv`, row `vmdpathfinder_nm`): the pool is
-I/O-bound there and the search step is not what limits it.
+Per frame, 18,677 atoms. Whole run through the plugin's 15-worker pool on the
+50-frame benchmark trajectory: 0.98x (`paper/benchmarks/results/endtoend.csv`,
+row `vmdpathfinder_nm`).
 
 | | HOLE | nm_search |
 |---|---:|---:|

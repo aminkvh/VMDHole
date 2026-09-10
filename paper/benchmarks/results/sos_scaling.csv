@@ -9,15 +9,7 @@
 # bin: sph_process sha256:eea2d679f7292d53 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/stock_build/hole2/exe/sph_process
 # bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
 # bin: sos_triangle.c sha256:7a31826487b31cf3 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/upstream/sos_triangle.c
-# Upstream is built from its OWN source with ONLY MAX_COORD raised to the
-#   fork's ceiling, so both binaries are asked for the same surface and this
-#   is an equal-CAPABILITY speed measurement. It is NOT a comparison against
-#   upstream as shipped: at these densities the 30000-coordinate original
-#   emits zero triangles, which is a capability difference and must be
-#   reported as a separate claim, never folded into this ratio.
-# 'identical' is byte-identity of the two .plot files. Every row must read
-#   'yes' with a non-zero triangle count, else the ratio is timing one or
-#   both builds doing nothing - asserted below, not left to the reader.
+# upstream = HOLE 2 sos_triangle built from its own source with MAX_COORD raised to the fork's; identical = byte-identical .plot output
 dotden,triangles,upstream_ms,fast_ms,speedup,identical
 10,2810,105.5,30.9,3.4,yes
 15,6390,464.2,50.5,9.2,yes

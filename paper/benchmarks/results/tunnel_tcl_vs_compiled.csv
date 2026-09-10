@@ -7,8 +7,6 @@
 # tcl: _tunnel_search_mole_tcl (the plugin's own pure-Tcl MOLE fallback), through the real plugin call path (source vmdpathfinder.tcl, real state array, real _tunnel_cfg), one untimed warmup excluded (proc-compile cost, no equivalent on the compiled side)
 # compiled: mole_tunnel_engine (hole_speedup/), same structure/origin/parameters - median_s column copied from tunnel_vs_mole2.csv (same run, same fixtures)
 # same explicit origin as tunnel_vs_mole2.csv (1BL8: 73.853 26.536 26.594; 1MXT: 20.4632 0.4374 17.4692); tunnel/tetrahedra counts already verified matching in tunnel_vs_mole2.csv
-# NOTE: rerun manually (not wired into reproduce.sh - no stage calls this script). mole_tunnel_engine changed this
-#   week (hole_speedup/mole_tunnel.c, manifest patch mole_atoms_bin/fast-atoms-read), so the compiled side moved too.
 structure,tcl_median_s,compiled_median_s,speedup
 1BL8,4.490517,0.0259,173.4
 1MXT_noHET,15.226569,0.0658,231.4

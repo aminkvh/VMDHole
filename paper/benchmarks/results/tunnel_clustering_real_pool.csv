@@ -7,16 +7,7 @@
 # loadavg_at_start: 5.19 4.53 4.05  allow_noisy: 1
 # load_at_start: 5.19 4.53 4.05
 # bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
-# pool: REAL 50-frame trajectory tunnel search output (fixtures/tunnel50_frozen/,
-#   out.dat only - frozen from vmdpathfinder/tunnel_output_step5_assembly.hmr, which
-#   is a live dev-scratch dir and NOT reproducible on its own), loaded via the
-#   plugin's own import_tunnel_results_from_folder. Tunnel SEARCH is excluded;
-#   only the clustering stage (tunnel_cluster_crossframe) is timed.
-# compiled: normal code path (tunnel_cluster_c, sos_triangle_fast --tunnel-cluster)
-# tcl_fallback: sos_triangle_has_feature stubbed to force the SAME plugin code
-#   path a binary lacking this feature would take (the real UPGMA fallback in
-#   tunnel_cluster_crossframe), not a reimplementation.
-# cluster_size_multisets_match: both paths must agree on the FULL sorted list of
-#   cluster sizes, not just the count, before a speedup is trusted.
+# pool: the 50-frame trajectory tunnel output (fixtures/tunnel50_frozen); only the clustering stage is timed
+# compiled = sos_triangle_fast --tunnel-cluster; tcl_fallback = the plugin's UPGMA path; cluster_size_multisets_match = both paths give the same cluster sizes
 pool_pathways,compiled_s,compiled_nclusters,tcl_s,tcl_nclusters,cluster_size_multisets_match,speedup
 1837,0.774182,394,18.01559,394,yes,23.270484201389337

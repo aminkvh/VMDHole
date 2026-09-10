@@ -6,7 +6,6 @@
 # engine: /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast --tunnel-cluster, threshold=3.0 maxdev=0.0 (plain average-link, CAVER's own convention)
 # bin: sos_triangle_fast sha256:dd1bb0bf240c5238 /media/amin/10TB_2/WORK/vmd_hold_plugin_DEV/native/sos_triangle_fast
 # pools: 4 real 1BL8 tunnel centerlines (fixtures/tunnel_clustering/), replicated with small rigid jitter (gen_pool.py) to realistic per-pathway point density (~100 pts/pathway, matching the in-source n=1837 profiling case at ~104 pts/pathway)
-# reference points: docs/user-guide.md's OLD pure-Tcl numbers (10->0.9s, 20->3.3s, all 60->84s); source comment at n=1837 (3.2s kernel + 10.5s Tcl marshalling = ~13.7s total); the REAL 50-frame-trajectory before/after in tunnel_clustering_real_pool.csv is the stronger claim - this sweep establishes the SCALING SHAPE across pool sizes
 pathways,points,repeats,loadavg,median_s,clusters_found
 10,1020,3,3.69,0.0162,8
 60,6210,3,3.69,0.0237,10
