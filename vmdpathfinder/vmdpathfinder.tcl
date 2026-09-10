@@ -25740,6 +25740,28 @@ proc ::VMDPathFinder::_run_axis_manifest {which} {
     variable _run_axis_cp; variable _run_axis_cv
     set lit [string trim $state($which)]
     if {[normalize_triplet_value $lit] ne {}} { return $lit }
+    # A SELECTION (e.g. "resid 45 and name CA"), not a literal triplet.
+    # normalize_triplet_value rightly refuses it - it is not three numbers -
+    # but that meant this proc treated a selection-form CPOINT as blank and
+    # fell through to the AUTO-GUESSED value, so a run's manifest and
+    # parameter file recorded no trace of the selection actually used, only
+    # for a CPOINT typed as x y z. Resolve it to its centre of geometry
+    # instead, and keep the selection text so the run can be repeated.
+    if {$lit ne "" && $which eq "cpoint"} {
+        set _molid ""; catch {set _molid [resolve_molid_or -1]}
+        set _frame 0
+        catch {
+            variable result_frames
+            if {[llength $result_frames]} { set _frame [lindex $result_frames 0] }
+        }
+        if {$_molid ne "" && $_molid >= 0} {
+            set _pt [_point_now $lit $_molid $_frame]
+            if {[llength $_pt] == 3} {
+                return "$lit = [format_triplet $_pt]"
+            }
+        }
+        return $lit
+    }
     set g [expr {$which eq "cpoint" \
         ? [expr {[info exists _run_axis_cp] ? $_run_axis_cp : ""}] \
         : [expr {[info exists _run_axis_cv] ? $_run_axis_cv : ""}]}]
@@ -41674,11 +41696,13 @@ proc ::VMDPathFinder::run_analysis {} {
 
         lassign [resolve_output_root $molid] root_dir is_temporary
         set state(last_root_dir) $root_dir
-        # Stamp the run. The parameter file is named by the id, so a later run
-        # writes a new one beside it rather than over it, and the Log carries a
-        # one-line summary of what was asked for.
+        # Stamp the run. The Log gets its one-line summary now; the parameter
+        # FILE is written further down, after _run_axis_init resolves a blank
+        # CPOINT/CVECT - writing it here instead recorded a blank axis field
+        # (or literally the PREVIOUS run's guess, since _run_axis_cp/_run_axis_cv
+        # are namespace variables that persist between runs) for any run that
+        # leaves either field blank.
         set state(run_id) [_run_id $molid $state(selection)]
-        catch {_write_run_parameters $root_dir $state(run_id) $molid $state(selection) $frames}
         catch {_log_run_summary $state(run_id) $molid $state(selection) $frames}
         # Prime the import dialog so "File > Import" after a run immediately
         # shows the correct folder without the user having to browse.
@@ -41728,6 +41752,10 @@ proc ::VMDPathFinder::run_analysis {} {
         # see _run_axis_init for why per-frame guessing silently mixes channels.
         # Must run before the manifest below, which records the axis actually used.
         catch {_run_axis_init $molid [lindex $frames 0] $seltext}
+        # The parameter file is named by the run id, so a later run writes a
+        # new one beside it rather than over it. Written HERE, after the axis
+        # is resolved, not at the top of this proc - see the comment there.
+        catch {_write_run_parameters $root_dir $state(run_id) $molid $state(selection) $frames}
 
         # ---- Phase 1: prepare inputs (main thread; uses VMD atomselect) ----
         # Ephemeral files (PDB, hole.inp, run.sh, the big hole_out.txt) go to a

@@ -5077,6 +5077,23 @@ foreach {_mk _mcol} {bott bottleneck_radius_A len length_A vol volume_A3} {
 }
 set ::VMDPathFinder::state(tunnel_trend_metric) bott
 
+# _run_axis_manifest recorded NOTHING for a CPOINT given as a selection - it
+# only recognised a literal "x y z" triplet, so a selection-form CPOINT (or
+# CVECT) reported as blank in both run_<id>.txt and the older manifest file,
+# with no trace of what the run actually searched from.
+chk "_run_axis_manifest resolves a selection-form CPOINT, not just a literal one" \
+    [expr {[string first {_point_now $lit} [info body ::VMDPathFinder::_run_axis_manifest]] >= 0}] 1
+
+# The parameter file must be written AFTER _run_axis_init resolves a blank
+# CPOINT/CVECT - _run_axis_cp/_run_axis_cv are namespace variables that
+# persist between runs, so writing it earlier recorded either a blank axis
+# or literally the PREVIOUS run's guess.
+set _rabody [info body ::VMDPathFinder::run_analysis]
+set _axis_init_at [string first {_run_axis_init $molid} $_rabody]
+set _write_params_at [string first {_write_run_parameters $root_dir} $_rabody]
+chk "run_analysis writes the parameter file after resolving the axis, not before" \
+    [expr {$_axis_init_at >= 0 && $_write_params_at >= 0 && $_write_params_at > $_axis_init_at}] 1
+
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
