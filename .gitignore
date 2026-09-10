@@ -230,3 +230,6 @@ vmdpathfinder/tests/fixtures/9HNR.pdb
 native/nm/nm_search
 native/nm/mesh_csg
 native/conn_lobes
+
+# scratch recordings made while debugging smoothing; never repository content
+/smooth.gif

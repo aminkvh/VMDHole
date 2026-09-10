@@ -1605,10 +1605,13 @@ proc ::VMDPathFinder::_frame_progress_line {text} {
     # backslash, newline and indent all become literal characters in the
     # regexp, so the branch that followed one required leading whitespace and
     # could never match a trimmed line.
-    set _re {^(frame [0-9]|processing frame|building surface|loading surface}
-    append _re {|rendering frame|surface [0-9]+ of|smoothing frame|pre-building}
-    append _re {|analys(ing|ed) frame)}
-    return [regexp -nocase $_re [string trim $text]]
+    # Progress lines all end in an ellipsis and name a frame or a count of
+    # frames/surfaces - "Loading surface for frame 7...", "HOLE: 3 / 100
+    # frame(s)...", "Hydration: binning frame 4 / 20 ...". Summaries and
+    # warnings do not end that way, so the shape is the rule, not a word list.
+    set t [string trim $text]
+    if {![regexp {(\.\.\.|\u2026)$} $t]} { return 0 }
+    return [regexp -nocase {frame|surface|triangulat|render|smooth|mesh|prim|bak|scan|read|pars} $t]
 }
 
 proc ::VMDPathFinder::_log_status_line {name1 name2 op} {
@@ -2920,21 +2923,6 @@ Stricter than Passage, which counts ions that merely entered."
     # Abort button lives on the options row BELOW the transport controls (created +
     # shown/hidden there - see the options row build and _show_abort_button), so it
     # sits UNDER the playback buttons rather than inline among them.
-    # Smoothing sits with the frame controls because that is what it averages
-    # over. -side right packs outermost-first, so this lands to the RIGHT of >|.
-    label   $w.bottom.transport.sm_l -text "Smooth"
-    spinbox $w.bottom.transport.sm -width 3 -from 0 -to 99 -increment 1 -justify right \
-        -textvariable ::VMDPathFinder::state(smooth_window_disp) \
-        -command ::VMDPathFinder::_smooth_spin_changed
-    # Remembered so the 500 ms VMD-side poll can tell it has focus and skip
-    # overwriting it mid-edit - see _smooth_watch_tick.
-    variable _sm_spin_path
-    set _sm_spin_path $w.bottom.transport.sm
-    bind $w.bottom.transport.sm <Return>   ::VMDPathFinder::_smooth_spin_changed
-    bind $w.bottom.transport.sm <KP_Enter> ::VMDPathFinder::_smooth_spin_changed
-    bind $w.bottom.transport.sm <FocusOut> ::VMDPathFinder::_smooth_spin_changed
-    pack $w.bottom.transport.sm    -side right -padx {1 0}
-    pack $w.bottom.transport.sm_l  -side right -padx {8 2}
     pack $w.bottom.transport.last  -side right -padx {1 0}
     pack $w.bottom.transport.next  -side right -padx 1
     pack $w.bottom.transport.slider -side left -fill x -expand 1 -padx {0 4}
@@ -2945,10 +2933,7 @@ Stricter than Passage, which counts ions that merely entered."
     add_tooltip $w.bottom.transport.next  "Step forward one frame."
     add_tooltip $w.bottom.transport.last  "Jump to the last frame."
     add_tooltip $w.bottom.transport.fnum  "Type a frame number and press Enter to jump there."
-    add_tooltip $w.bottom.transport.sm    "Average over this many frames either side. 0 is off.\
-        Sets VMD's own trajectory smoothing on every representation of the molecule, and the\
-        plugin's frame averaging of the surface, so the two always match. Changing it in\
-        Graphics > Representations updates this box too."
+
 
     # Options row: frame-list toggle. Playback speed is VMD's own (the play
     # button drives VMD's animate engine), so there is no separate speed control.
@@ -2957,6 +2942,24 @@ Stricter than Passage, which counts ions that merely entered."
         -command ::VMDPathFinder::toggle_frame_list
     pack $w.bottom.options.toggle -side left -padx {0 12}
     add_tooltip $w.bottom.options.toggle "Show/hide the list of every analyzed frame and its minimum radius."
+    # Smoothing sits under the frame buttons, at the right edge of this row.
+    label   $w.bottom.options.sm_l -text "Smooth"
+    spinbox $w.bottom.options.sm -width 3 -from 0 -to 99 -increment 1 -justify right \
+        -textvariable ::VMDPathFinder::state(smooth_window_disp) \
+        -command ::VMDPathFinder::_smooth_spin_changed
+    # Remembered so the 500 ms VMD-side poll can tell it has focus and skip
+    # overwriting it mid-edit - see _smooth_watch_tick.
+    variable _sm_spin_path
+    set _sm_spin_path $w.bottom.options.sm
+    foreach _ev {<Return> <KP_Enter> <FocusOut>} {
+        bind $w.bottom.options.sm $_ev ::VMDPathFinder::_smooth_spin_changed
+    }
+    pack $w.bottom.options.sm   -side right -padx {1 0}
+    pack $w.bottom.options.sm_l -side right -padx {8 2}
+    add_tooltip $w.bottom.options.sm "Average over this many frames either side. 0 is off.\
+        Sets VMD's own trajectory smoothing on every representation of the molecule, and the\
+        plugin's frame averaging of the surface, so the two always match. Changing it in\
+        Graphics > Representations updates this box too."
 
     # Abort button: created here but NOT packed - _begin_calc/_end_calc show/hide it
     # (via _show_abort_button) so it only appears while a calculation runs. It sits
@@ -3461,28 +3464,6 @@ proc ::VMDPathFinder::_tunnel_gear_is_default_cid {cid} {
     if {[info exists tunnel_gear_cid($cid,wire)] && $tunnel_gear_cid($cid,wire) ne ""} { return 0 }
     if {[info exists tunnel_gear_cid($cid,colormode)] && $tunnel_gear_cid($cid,colormode) ne ""} { return 0 }
     return 1
-}
-
-proc ::VMDPathFinder::_tunnel_effective_repr_cid {cid} {
-    # Cluster-native counterpart of _tunnel_effective_repr {i} - needed by the
-    # Mean Profile tube (build_and_show_tunnel_mean_surface), which has no
-    # frame/rank of its own to resolve _tunnel_effective_repr through.
-    variable state
-    variable tunnel_gear_cid
-    if {[info exists tunnel_gear_cid($cid,wire)] && $tunnel_gear_cid($cid,wire) ne ""} {
-        switch -- $tunnel_gear_cid($cid,wire) {
-            centerline { return centerline }
-            1          { return wire }
-            0          { return iso }
-        }
-    }
-    if {[info exists state(tunnel_display_mode)]} {
-        switch -- $state(tunnel_display_mode) {
-            centerline { return centerline }
-            wire       { return wire }
-        }
-    }
-    return iso
 }
 
 proc ::VMDPathFinder::_tunnel_effective_material_cid {cid} {
@@ -6633,7 +6614,7 @@ proc ::VMDPathFinder::_color_menu {mb var values cmd {width 0}} {
     # the menu is sized and posted first and the postcommand reconfigures
     # afterwards, so the FIRST open lands with the previous layout and only the
     # second looks right - the "does not happen on the second try" symptom.
-    menubutton $mb -textvariable $var -menu $mb.m -relief raised -indicatoron 1
+    menubutton $mb -textvariable $var -menu $mb.m -relief raised -indicatoron 1 -anchor w
     if {$width > 0} { $mb configure -width $width }
     menu $mb.m -tearoff 0
     foreach v $values {
@@ -18450,30 +18431,56 @@ proc ::VMDPathFinder::_surface_smooth_rho {} { return 2.0 }
 # every window frame's cloud is built once per dot density (kept next to its
 # sphere file) and the centre's dots are averaged against them in place.
 proc ::VMDPathFinder::_capsule_sos_input {sph color} {
-    # The .sph and the colour flag the sos path must use for this run, as
-    # {sph color}. Off capsule it hands back what it was given.
-    #
-    # Under capsule TWO things change together, and doing only one of them is
-    # what produced the "capsule renders a stub" bug more than once:
-    #
-    #   * the KEPT .sph. The raw file also holds HOLE's escaped search attempts
-    #     (resSeq -888), which mesh as blobs tens of A wide.
-    #   * NO -colour. sph_process's colour mode marks end-cap points with colour
-    #     -1, which sos_triangle uses to cut sharp ends on a spherical pore. On
-    #     capsule records nearly the whole surface lands in that band, so it is
-    #     clipped away. Measured on one frame from the same kept .sph: with
-    #     -colour 1596 triangles spanning 22.8 A, without it 10035 spanning
-    #     148.7 A - the second matching what marching cubes draws (148.66 A).
-    #
-    # What is lost is HOLE's own radius banding on the dots. The plugin
-    # recolours the mesh itself, so property colouring is unaffected.
+    # The .sph the sos path must use for this run, as {sph color}. Off capsule
+    # it hands back what it was given. Under capsule it is the KEPT .sph: the
+    # raw file also holds HOLE's escaped search attempts (resSeq -888), which
+    # mesh as blobs tens of A wide. Colour banding stays on; the header that
+    # made it clip the surface is repaired afterwards by _capsule_sos_fix.
     if {![_run_uses_card capsule]} { return [list $sph $color] }
-    return [list [_capsule_sph_kept $sph] 0]
+    return [list [_capsule_sph_kept $sph] $color]
+}
+
+proc ::VMDPathFinder::_capsule_sos_fix {sos} {
+    # In-process form of _capsule_sos_fix_cmd. No-op off capsule.
+    if {![_run_uses_card capsule] || ![file exists $sos]} { return }
+    if {[catch {open $sos r} fh]} { return }
+    set out {}
+    while {[gets $fh line] >= 0} {
+        lappend out [expr {[_capsule_sos_is_borrowed_header $line] ? [_capsule_band3_header] : $line}]
+    }
+    close $fh
+    if {![catch {open $sos w} fh]} { puts $fh [join $out "\n"]; close $fh }
+}
+
+proc ::VMDPathFinder::_capsule_sos_is_borrowed_header {line} {
+    # sph_process's capsule pass writes the third radius band under the
+    # end-cap header {1 -1 -1 -1 0 0 0}. That header means "clip here" to
+    # sos_triangle, which then drops the whole band - most of a capsule.
+    set f [regexp -all -inline {\S+} $line]
+    if {[llength $f] != 7} { return 0 }
+    foreach v $f { if {![string is double -strict $v]} { return 0 } }
+    lassign $f a b c d
+    return [expr {$a == 1 && $b == -1 && $c == -1 && $d == -1}]
+}
+
+proc ::VMDPathFinder::_capsule_band3_header {} {
+    # The header the third band gets on a spherical file: colour 18.
+    return [format "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f" 1 2 -55 18 0 0 0]
+}
+
+proc ::VMDPathFinder::_capsule_sos_fix_cmd {sos} {
+    # Shell form for the pooled builders: rewrite the borrowed header in place.
+    # "" off capsule, so callers can append it unconditionally.
+    if {![_run_uses_card capsule]} { return "" }
+    set awk {awk 'NF==7 && $1+0==1 && $2+0==-1 && $3+0==-1 && $4+0==-1 {printf "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f\n",1,2,-55,18,0,0,0; next} {print}'}
+    set q [shell_quote $sos]
+    return " && $awk $q > $q.fix && mv -f $q.fix $q"
 }
 
 proc ::VMDPathFinder::_legacy_sos {sph sos color dd with} {
     variable state
     if {[catch {run_sph_process $sph $sos $color $dd}]} { return 0 }
+    _capsule_sos_fix $sos
     if {![llength $with]} { return 1 }
     set ddn [expr {$dd ne "" ? $dd : $state(dot_density)}]
     set wsos {}
@@ -18481,6 +18488,7 @@ proc ::VMDPathFinder::_legacy_sos {sph sos color dd with} {
         set ws "[file rootname $w]_dd${ddn}.sos"
         if {![file exists $ws] || [file mtime $ws] < [file mtime $w]} {
             if {[catch {run_sph_process $w $ws $color $dd}]} continue
+            _capsule_sos_fix $ws
         }
         if {[file exists $ws] && [file size $ws] > 0} { lappend wsos $ws }
     }
@@ -18569,7 +18577,7 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
     set tri [expr {$form eq "dots" && [fast_available points]
         ? "[shell_quote $state(sos_triangle_exec)] -s --points < [shell_quote $sos] > [shell_quote $plot]"
         : [_sos_triangle_cmd $sos $plot]}]
-    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1"
+    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1[_capsule_sos_fix_cmd $sos]"
     if {[llength $with]} {
         # window clouds are shared between neighbouring frames' jobs: written
         # to a private name and renamed into place, so two workers cannot
@@ -18578,7 +18586,7 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
         foreach w $with {
             set ws "[file rootname $w]_dd${dd}.sos"
             set tmp "$ws.tmp[expr {int(rand()*1e9)}]"
-            append chain " && { \[ -s [shell_quote $ws] \] || { [_sph_process_cmd $dd $cflag $w $tmp] > /dev/null 2>&1 && mv -f [shell_quote $tmp] [shell_quote $ws]; }; }"
+            append chain " && { \[ -s [shell_quote $ws] \] || { [_sph_process_cmd $dd $cflag $w $tmp] > /dev/null 2>&1[_capsule_sos_fix_cmd $tmp] && mv -f [shell_quote $tmp] [shell_quote $ws]; }; }"
             lappend wsos $ws
         }
         set sm "[file rootname $sos]_sm.sos"
@@ -18874,12 +18882,10 @@ proc ::VMDPathFinder::_conn_classify_native {in_sph cvect_s cpoint_s margin {bas
             set a  [lindex $fields 1]
             set nn [lindex $fields 2]
             set ef [lindex $fields 3]
-            set ka [lindex $fields 4]
-            set kb [lindex $fields 5]
-            if {$ka eq "-"} { set ka "" }
+            set kb [lindex $fields 4]
             if {$kb eq "-"} { set kb "" }
-            set idx [lrange $fields 6 end]
-            lappend lobes [list $z $a $nn $idx $ef $ka $kb]
+            set idx [lrange $fields 5 end]
+            lappend lobes [list $z $a $nn $idx $ef {} $kb]
         }
         set marked [dict create]
         if {$i < [llength $lines] && [lindex [lindex $lines $i] 0] eq "MARKED"} {
@@ -20345,13 +20351,6 @@ proc ::VMDPathFinder::_cavity_set_prop {prop} {
     set state(cavity_prop) $prop
     set state(cavity_prop_disp) [_tunnel_prop_label_short $prop]
     _tunnel_cavity_toggle
-}
-
-proc ::VMDPathFinder::_cavity_show_all {on} {
-    variable tunnel_cavity_shown
-    foreach t [_cavity_tracks] { set tunnel_cavity_shown([dict get $t tid]) $on }
-    _tunnel_cavity_toggle
-    _cavity_refresh
 }
 
 proc ::VMDPathFinder::_cavity_use_as_start {frame id} {
@@ -24163,96 +24162,56 @@ proc ::VMDPathFinder::_about_make_tab {nb name} {
 
 proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "VMDPathFinder $version\n" h1
-    $t insert end "VMDPathFinder analyzes pores and tunnels in structures or trajectories loaded in VMD. Use Pore for an axial channel profile and Tunnel for routes from a buried site to the molecular surface.\n\n"
-
     $t insert end "Start here\n" h2
-    $t insert end "1. Choose Pore or Tunnel.  2. Choose the molecule, frames, and atom selection.  3. Define the pore axis or tunnel origin, or use the automatic option.  4. Run the analysis, inspect the linked plots and 3D view, then export the data or figure.\n\n"
+    $t insert end "Choose Pore for an axial channel profile or Tunnel for routes from a buried site to the molecular surface. Select the molecule, frames, and wall atoms; define the pore axis or tunnel origin; run, inspect the 3D path, and export.\n\n"
 
-    $t insert end "Trajectory preparation\n" h2
-    $t insert end "Prepare trajectory coordinates before analysis. If frames need structural superposition, use Align trajectory. Tunnel mode enables it by default and applies the alignment to the loaded VMD frames.\n\n"
+    $t insert end "Prepare the structure\n" h2
+    $t insert end "Make periodic molecules whole before analysis. Align trajectory fits the loaded VMD frames and is on by default in Tunnel mode; disable it if frames are already aligned. Include cofactors, ligands, lipids, or solvent when they should obstruct the search. Check that the radius file covers all selected atoms.\n\n"
 
-    $t insert end "Setting up a run\n" h2
-    $t insert end "Molecule and Frames selects the coordinates to analyse. Selection defines the atoms forming the wall. Include cofactors, ligands, lipids, or solvent only when they belong in the geometric model.\n\n"
-    $t insert end "For Pore, set CPOINT and CVECT if needed, or leave them blank for automatic detection. Enable Show cues in the HOLE parameters gear to check the point and direction. Choose Spherical for the standard profile, Connolly for a solvent-accessible surface, or Capsule for a slit-like cross-section.\n\n"
+    $t insert end "Pore setup\n" h2
+    $t insert end "Check CPOINT inside the pore and CVECT along it. Use the point/vector dialogs to enter coordinates, use selections, pick atoms, or adjust the proposed axis. Enable Show cues in the HOLE parameters gear to inspect the point and direction. Stabilize and Track can follow a moving pore; alignment does not unwrap periodic coordinates.\n\n"
 
-    $t insert end "The 3D pore surface\n" h2
-    $t insert end "After a run, choose a surface, wireframe, dots, or centreline representation. Color it by radius, a plain color, or a physicochemical property.\n\n"
+    $t insert end "Pore geometry and search\n" h2
+    $t insert end "Spherical reports the largest non-overlapping probe radius. Connolly reports an equivalent-area radius for the accessible cross-section; Capsule represents elongated cross-sections. The Search picker offers Monte Carlo (HOLE) or deterministic Nelder-Mead; Capsule uses HOLE. Searches can find different local passages, so compare centrelines before treating their results as interchangeable.\n\n"
 
-    $t insert end "Property coloring\n" h2
-    $t insert end "Property coloring covers hydrophobicity, lipophilicity, charge, polarity, MOLE tunnel properties, hydration, and free energy. Pore facing limits residue properties to side chains that point into the pore.\n\n"
+    $t insert end "Surface and property controls\n" h2
+    $t insert end "Choose Centerline, Dots, Wireframe, or Isosurface. Ellipse fit in Pore Profile offers a solid surface or point cloud for Spherical analyses. Color by radius, a flat color, or a property. Property choices include hydrophobicity, lipophilicity, charge, polarity, MOLE tunnel properties, and available water-derived fields. Pore-facing only filters eligible residue properties, not atom-level Kapcha-Rossky or water-derived fields.\n\n"
 
-    $t insert end "The analysis tabs\n" h2
-    $t insert end "Pore Profile   " mono
-    $t insert end "radius vs. channel position for the current frame - the core HOLE plot. An optional Ellipse fit overlays a slit-aware cross-section, and Passability tabulates, per ion, whether the bare or hydrated ion clears the constriction, plus an estimated conductance.\n"
-    $t insert end "Over Time      " mono
-    $t insert end "a frame x position heatmap of radius or a property across the trajectory - watch a gate open and close.\n"
-    $t insert end "Trends         " mono
-    $t insert end "one scalar per frame (min radius, pore volume, conductance, electrostatic potential ...) versus time.\n"
-    $t insert end "Mean Profile   " mono
-    $t insert end "the radius profile averaged over all frames, with a spread envelope; can be revolved into an average 3D tube.\n"
-    $t insert end "Histogram      " mono
-    $t insert end "radius binned by position along the channel, pooled over the selected frames - NOT a distribution of per-frame minimum radii.\n"
-    $t insert end "Hydration      " mono
-    $t insert end "from an explicit-water trajectory, the water density and free energy G(z) = -kT ln(rho/rho_bulk) along the axis. High G(z) means water is depleted (a dry, hydrophobic gate); low or negative means water is enriched. rho_bulk is MEASURED from your own trajectory (reported in the VMD console), not assumed, so it reflects your water model and conditions; if the system has too little free water to measure, the plugin says so and falls back to 0.0334 A^-3.\n"
-    $t insert end "Ion & Water    " mono
-    $t insert end "a time-averaged ion number-density map along the pore, the ion flow field, and measured ion crossings (with a conductance if you supply a voltage). Needs a trajectory containing ions. Species lists each ion type plus Water (one oxygen per molecule, the Hydration tab's water selection); All is the ion types together, never water. Views: Occupancy %, Passage (one line per molecule that entered; constriction crossings coloured by direction, red up / blue down, drawn on top) and Count vs frame (molecules inside the pore per frame).\n\n"
+    $t insert end "Connolly lateral openings\n" h2
+    $t insert end "After a Connolly run, choose pore_lat to separate lateral extensions from the central pore, or pore_lobes to track individual openings. The region table reports Seen, neck clearance, extension, and axial/angular position. Use a row gear to color, annotate, or export one region; the header gear controls all regions and the size, Seen, and matching filters. Margin determines which surface regions count as lateral. Unrolled > Connolly reach maps the surface's radial extent. These openings are parts of the pore surface, not separately searched MOLE tunnels; cross-frame tracking requires a fixed CPOINT and CVECT.\n\n"
 
-    $t insert end "Channel shape beyond a circle\n" h2
-    $t insert end "HOLE's radius assumes a circular cross-section, but real pores are often slit-like. The Ellipse fit and asymmetry tools fit the largest ellipse that fits each pore slice, giving a truer cross-section plus a slit-aware conductance and volume.\n\n"
+    $t insert end "Playback and Memory\n" h2
+    $t insert end "Smooth beside playback averages neighbouring analysed pore surfaces; 0 turns it off. It also sets VMD representation smoothing. Surface colours and lining use the smoothing window, while numerical profiles remain unchanged. In Spherical mode, Memory holds several pore analyses at once: + adds a slot, a numbered slot restores its settings and results, and Sync copies its colour, material, and dot density to the other slots.\n\n"
 
-    $t insert end "Conductance, and which salt it assumes\n" h2
-    $t insert end "Where a conductance is reported, it is HOLE's own macroscopic estimate: the pore treated as a stack of thin resistors along its length, scaled by the bulk conductivity of the salt you choose. An access-resistance term at the two mouths can be added on top, which matters most for short, wide pores.\n\n"
-    $t insert end "The salt is a setting, not a fixed assumption - pick it from the gear beside the metric. The default is 150 mM NaCl at 37 C, i.e. physiological. 150 mM KCl and 1 M KCl are also offered; 1 M KCl is the condition most classic HOLE papers quote, so choose it when you want to compare against published HOLE numbers. You can also enter your own conductivity.\n\n"
-    $t insert end "One thing to know before quoting a number: 'G (ellipse)' uses the fitted ellipse rather than a circle, and is available in Spherical mode only.\n\n"
-    $t insert end "Each pore method gets its own conductance. Connolly measures a real cross-sectional area rather than an inscribed circle, so its area is larger and its conductance correspondingly higher - on gramicidin A, a few percent. Capsule likewise uses its own stadium cross-section. A conductance is therefore only comparable with another computed the same way: do not compare a Connolly number against a Spherical one, or against a published value without checking which model produced it.\n\n"
-    $t insert end "Reading dry-gate free energies\n" h2
-    $t insert end "A channel bin where NO water is ever seen is floored at a conservative statistical bound (the 'rule of three'), so a fully dewetted gate barrier is reported as a LOWER BOUND. Its true height needs enough frames sampling the wetting/dewetting transition - report such barriers as lower bounds.\n\n"
-    $t insert end "CHAP mode\n" h2
-    $t insert end "A toggle in the Hydration settings switches every tunable knob to CHAP's own published conventions, so a run can be compared against CHAP as an implementation rather than as a different set of settings. It changes what you read off the density plot in two ways: the density is drawn in raw nm^-3 (CHAP's unit) instead of rho/rho_bulk, and the dry-bin floor becomes CHAP's own - a fixed 1e-4 x bulk, or an infinite energy where CHAP would report one.\n\n"
-    $t insert end "How close is it?\n" h2
-    $t insert end "Measured against real CHAP 0.9.1 on CHAP's own example (4pirtm), same water selection, profiles registered on their radius curves. With CHAP mode ON: water density r = 0.968, free energy r = 0.972, mean absolute error 0.24 kT, and a 3.14 kT barrier against CHAP's 3.82. With CHAP mode OFF (this plugin's defaults) the SHAPE is nearly as good (r = 0.95) but the barrier reads 9.57 kT - about 2.5x CHAP's.\n\n"
-    $t insert end "That whole gap is one setting: the water-density KDE bandwidth. Holding everything else at the defaults and only switching the bandwidth to \"auto\" reproduces the CHAP-mode numbers exactly; switching only the dry-bin floor changes nothing at all on that system, because no bin there ever fully dewets. Both values are CHAP's own. 1.4 A is the bandwidth published in the CHAP paper (Klesse et al. 2019); the CHAP program itself defaults to the per-frame AMISE-optimal width and never hard-codes 1.4 anywhere in its source. The disagreement is inside CHAP, between its paper and its software - 1.4 A is not a wrong number, it simply is not the one the program produces.\n\n"
-    $t insert end "So: the bandwidth sets the barrier HEIGHT, and the shape is robust to it. Quote the bandwidth alongside any barrier you report, and use \"auto\" when the number is meant to be comparable with CHAP.\n\n"
-    $t insert end "So the SAME dry gate can quote a different barrier in the two modes, and neither is a bug: CHAP's constant asserts about 5.7 kcal/mol however many frames you ran, while the default rule-of-three bound scales with the sampling actually behind the zero.\n\n"
+    $t insert end "Pore analysis tabs\n" h2
+    $t insert end "Pore Profile shows the current frame's radius and optional property Fill, Ellipse fit, or Unrolled map. Over Time shows radius or property by position and frame; use Compute for properties or ellipse data. Mean Profile shows the binned mean and spread, with selectable mean, standard-deviation, and min/max curves and an optional revolved 3D surface. It is not a measured conformation. Trends plots a selected per-frame metric. Histogram summarizes radii in spatial bins, not a probability distribution.\n\n"
 
-    $t insert end "Settings (File > Settings)\n" h2
-    $t insert end "Advanced knobs with sensible defaults: sampling step, surface dot density, pore method, the water selection and temperature for hydration, the salt for conductance, the parallel-job count, and the HOLE / sph_process / sos_triangle executable paths.\n\n"
+    $t insert end "Hydration\n" h2
+    $t insert end "For explicit-water trajectories, set the water-oxygen selection and Compute density and water free energy, G(z) = -kT ln(rho/rho_bulk). Depletion raises this estimate but does not by itself establish a hydrophobic gate. Bulk density is measured from the trajectory, with a reported fallback of 0.0334 A^-3 when needed. CHAP mode applies CHAP-compatible settings. Report the KDE bandwidth, reference density, and energy-floor settings; bandwidth can change barrier height, and sampling-limited dry-bin barriers are lower bounds.\n\n"
 
-    $t insert end "Saving and reloading\n" h2
-    $t insert end "Tick 'Save results' to keep HOLE output on disk; File > Load Saved Analysis restores a previous run with all its data. Executable paths and settings are remembered between sessions.\n\n"
+    $t insert end "Ion & Water\n" h2
+    $t insert end "Use Occupancy %, Passage, or Count vs frame to inspect ions or water. Species > All includes ions only; Water uses one oxygen per molecule from the Hydration water selection. Passage shows molecules entering the near-pore region and is not a complete permeation count. In Pore mode, Permeation counts complete bulk-to-bulk crossings. Rates need saved-frame spacing; conductance from transferred charge also needs an applied voltage. Tunnel mode measures movement along the selected route and does not offer pore bulk-to-bulk permeation.\n\n"
 
-    $t insert end "Tunnel mode (MOLE 2)\n" h1
-    $t insert end "Tunnel mode finds candidate routes from a buried origin to the molecular surface. Use it for pockets, branches, and other pathways that do not have one fixed through-axis.\n\n"
+    $t insert end "Conductance and passability\n" h2
+    $t insert end "Geometric conductance treats the pore as resistive slices using the selected bulk conductivity, with optional access resistance. Choose a salt preset or custom conductivity in the metric gear; the default is 150 mM NaCl at 37 C. Spherical, Connolly, Capsule, and ellipse estimates use different cross-sections. Compare like methods and report the conductivity. Ellipse metrics are Spherical-only. Bare/hydrated passability is a radius comparison, not a model of dehydration, binding, or electrostatic barriers.\n\n"
 
-    $t insert end "Setting up a run\n" h2
-    $t insert end "Set Start point, use COG or COR, or select Auto-detect origins. Enable Show cues in the MOLE parameters gear to check the origin marker. The visible controls set the probe, interior threshold, minimum length, and bottleneck; the gear contains less common search and clustering settings.\n\n"
-    $t insert end "Clustering groups similar routes within a frame. Cross-frame matching separately tracks routes through a trajectory.\n\n"
+    $t insert end "Tunnel setup and tracking\n" h2
+    $t insert end "Set Start point using coordinates, a VMD selection, COG, or COR, or enable Auto-detect origins. A typed selection is re-evaluated each frame. Semicolon-separated origins or custom exits can combine selections and coordinates. Show cues is in the MOLE parameters gear. Cluster within frame merges similar candidates; cross-frame matching tracks routes by geometry. Seen is the percentage of analysed frames assigned to a route, not its probability of carrying solvent.\n\n"
 
-    $t insert end "The tunnel list\n" h2
-    $t insert end "The tunnel list has one tracked route per row. Select a row to drive the plots, use its checkbox for 3D visibility, and use its gear for a route-specific representation or color. Seen is the percentage of analysed frames assigned to that route.\n\n"
-    $t insert end "The gear icon in the list HEADER (last column) sets defaults for every tunnel: representation (Isosurface/Wireframe), and which MOLE lining property colors all of them at once - hydropathy, hydrophobicity, polarity, charge, ionizable residue count, LogP/LogD/LogS, mutability, or None for each tunnel's own flat/rank color. Setting the header Color also clears any per-tunnel color override, so it really does apply to every tunnel. Each ROW's own gear icon (same last column) can override representation/material/color for just that one tunnel afterward. The Pore Profile fill always shades the SELECTED tunnel by its effective property (its own override, else the header's); the 3D isosurface shows that same coloring only when that tunnel's own effective Color is Property rather than a flat override - the two need not agree for a tunnel with its own flat color, same as HOLE's own Fill and surface color can disagree.\n\n"
-    $t insert end "Most of these scales use a fixed theoretical range (the same convention as HOLE's own Kyte-Doolittle/Wimley-White bars), so the color means the same thing regardless of frame or how much of the structure is in view. Charge and the ionizable count are the exception: MOLE sums them over every lining residue with no averaging, so they legitimately grow with a longer or more crowded tunnel and use a data-derived range instead.\n\n"
-    $t insert end "Accurate 3D coloring (in the gear, beside the scale bar toggle) colors the isosurface by real 3D distance to each lining residue's own position, so color varies around the tube's circumference, not just along its length - the same idea as Pore mode's own 'Accurate 3D', using MOLE's own already-identified lining residues rather than recomputing them.\n\n"
-    $t insert end "Lining - the residues found at each point along the SELECTED tunnel (or every shown tunnel, with 'Show all'), with a MOLE-format export (tunnels.csv plus one CSV per tunnel, matching MOLE's own column layout) so results compare directly against MOLE's own output.\n\n"
+    $t insert end "Tunnel display and plots\n" h2
+    $t insert end "Select a route to drive the plots; its checkbox controls 3D visibility. The header gear sets shared display choices, while row gears set overrides. Accurate 3D projects properties around the surface. Lining displays and exports contacting residues. Pore Profile, Over Time, Mean Profile, Trends, and Histogram use the selected tracked route. Trends offers bottleneck radius, length, and tube volume. Over Time uses the route's property without a separate Compute step. Mean Profile averages frames where the route was found; missing routes are not zero-radius observations. Tunnel hydration and ellipse fitting are unavailable.\n\n"
 
-    $t insert end "Cross-frame identity, on a trajectory\n" h2
-    $t insert end "A tunnel's RANK within a frame is not an identity - rank 1 in one frame can be a different physical route from rank 1 in the next. So on a multi-frame run the plugin always builds a cross-frame identity, matching routes between frames by real geometric similarity; that is what the constant list's rows, its Seen column and every trajectory-wide view (Over Time, Trends, Mean Profile, Histogram) are keyed on.\n\n"
-    $t insert end "For trajectories, matching compares route geometry between frames. Align trajectory is enabled by default in Tunnel mode; turn it off only when the loaded frames are already aligned.\n\n"
+    $t insert end "Cavities\n" h2
+    $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. All pockets includes those below the initial 25% Seen filter. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
 
-    $t insert end "The analysis tabs, in Tunnel mode\n" h2
-    $t insert end "Pore Profile, Trends, Over Time, Mean Profile and Histogram are the SAME tabs HOLE mode uses, reading the currently SELECTED route instead of a HOLE run - Export on each writes tunnel-specific data (e.g. distance from the route's own bottleneck, not a fixed channel coordinate). Ion & Water also works on a route's own centreline. Ellipse fit and G (ellipse) conductance are HOLE-only (no per-slice centre to fit against) and stay disabled here.\n\n"
-    $t insert end "Over Time's \"Color by\" offers Property here as well as Radius. Which property is the one already chosen for this route in the tunnel list (its own gear override, else the header's), so the map, the 3D route and Pore Profile's Fill always show the same scale - there is no separate property picker on this row. It needs no Compute click: unlike HOLE mode, MOLE emits every frame's lining with the tunnels themselves.\n\n"
-    $t insert end "Mean Profile averages the selected route over every frame it was found in, and its IsoSurface builds a real 3D tube from those frames' own centrelines - an AVERAGE, not a measured route, which the tube's name in VMD's molecule list says outright. It can be property-colored like any other tunnel surface: the value at each point along it is that point's trajectory-mean lining property, the same numbers the Fill under the curve is drawn from.\n\n"
-    $t insert end "A column or frame with no data is drawn as \"no data\" grey rather than as a number - a frame the route is absent from is not a zero-radius frame.\n\n"
-
-    $t insert end "Switching between Pore and Tunnel\n" h2
-    $t insert end "The two modes' 3D surfaces are otherwise independent, but switching the sidebar tab now hides whichever surface belongs to the mode you are leaving and restores whichever was showing in the mode you are entering - so the viewer never has to be untangled by hand, and switching back always continues from where you left it.\n"
+    $t insert end "Settings and saved results\n" h2
+    $t insert end "File > Settings selects executable paths, acceleration, the surface mesher, grid, and parallel jobs. The HOLE and MOLE parameter gears hold search controls. Keep Save results enabled for a reloadable run; use File > Load Saved Analysis to restore it. File > Save Package collects available plot CSVs and figures, not every dialog's export or a complete settings record. Export lining, cavity, and opening tables separately. Consult the Citations tab for the methods you use.\n\n"
 }
 
 proc ::VMDPathFinder::_about_fill_citations {t version author} {
     $t insert end "Citations\n" h1
     $t insert end "The plugin and VMD are the only citations every analysis needs. Add HOLE for\n"
-    $t insert end "Pore mode (every engine and mesher in it implements HOLE's method), and any\n"
+    $t insert end "Pore mode or HOLE-derived surface processing, and any\n"
     $t insert end "other section below for a method or quantity you report.\n\n"
 
     $t insert end "Required, every analysis\n" h2
@@ -24263,14 +24222,14 @@ proc ::VMDPathFinder::_about_fill_citations {t version author} {
     $t insert end "VMD    Humphrey, W., Dalke, A. & Schulten, K. (1996). VMD: Visual Molecular\n" mono
     $t insert end "          Dynamics. J. Mol. Graph. 14, 33-38. doi:10.1016/0263-7855(96)00018-5\n\n" mono
 
-    $t insert end "Pore mode (any search engine, any mesher)\n" h2
+    $t insert end "Pore mode and HOLE surface processing\n" h2
     $t insert end "1.  " num
     $t insert end "HOLE   Smart, O.S., Neduvelil, J.G., Wang, X., Wallace, B.A. & Sansom, M.S.P.\n" mono
     $t insert end "          (1996). HOLE: a program for the analysis of the pore dimensions of\n" mono
     $t insert end "          ion channel structural models. J. Mol. Graph. 14, 354-360.\n" mono
     $t insert end "          doi:10.1016/S0263-7855(97)00009-X\n" mono
-    $t insert end "   The Nelder-Mead search and the marching-cubes mesher are this plugin's own\n" note
-    $t insert end "   reimplementations of HOLE's method; the citation is the same either way.\n\n" note
+    $t insert end "   Cite for every Pore analysis, whichever search engine or mesher is used.\n" note
+    $t insert end "   Also cite when using HOLE-derived surface processing for tunnels.\n\n" note
 
     $t insert end "Pore geometry, conductance, and passability\n" h2
     $t insert end "Cite the entry matching each reported quantity.\n" note
@@ -24912,6 +24871,13 @@ proc ::VMDPathFinder::_update_cpoint_scope_row {{parent ""}} {
         }
     }
     if {$parent eq "" || ![winfo exists $parent.scope_box]} { return }
+    # Inside the stick dialog these fields are CPOINT's; on any other page they
+    # stay hidden whatever the checkboxes say.
+    if {[string match "*.axisstick.pf" $parent] && [info exists state(axis_stick_mode)] \
+            && $state(axis_stick_mode) ne "cpoint"} {
+        catch {grid remove $parent.scope_box}
+        return
+    }
     set sb $parent.scope_box
     foreach c [winfo children $sb] { catch {pack forget $c} }
     if {[info exists state(stabilize_cpoint)] && $state(stabilize_cpoint)} {
@@ -26205,11 +26171,6 @@ proc ::VMDPathFinder::vector_labeled_atoms {} {
     return $out
 }
 
-proc ::VMDPathFinder::show_vector_dialog {} {
-    # The two-point definition lives in the stick dialog's CVECT page.
-    show_axis_stick_dialog cvect
-}
-
 proc ::VMDPathFinder::_build_vector_controls {d} {
     # CVECT from two points (coordinates, VMD selections or labelled atoms),
     # with Guess, Use Z and the per-frame endpoint modes, built into frame $d.
@@ -26560,20 +26521,6 @@ proc ::VMDPathFinder::_set_point_to_view_center {key label} {
 proc ::VMDPathFinder::use_view_center {} { _set_point_to_view_center cpoint CPOINT }
 proc ::VMDPathFinder::tunnel_use_view_center {} { _set_point_to_view_center tunnel_start "Tunnel start point" }
 
-# ---- On-screen CPOINT/CVECT control: a draggable "stick" plus step buttons --
-# Moves the point/direction in SCREEN-relative directions (up/down/left/right
-# as drawn), not fixed world axes, so dragging "up" always moves the same way
-# on screen no matter how the user has rotated the molecule. The trick: a
-# rotation matrix's ROWS are the model-space directions that the eye's own
-# right/up/toward axes point along (R is orthogonal, so the model-space
-# vector that rotates TO eye-space (1,0,0) is R^T*(1,0,0), which is R's first
-# ROW - see the comment on _view_right_up). Re-read every drag/click so a
-# rotation mid-drag is honoured immediately, not just at dialog-open time.
-proc ::VMDPathFinder::_view_toward {rx ry rz ux uy uz} {
-    # The viewing axis (toward the viewer) as right x up.
-    return [list [expr {$ry*$uz-$rz*$uy}] [expr {$rz*$ux-$rx*$uz}] [expr {$rx*$uy-$ry*$ux}]]
-}
-
 proc ::VMDPathFinder::_axis_stick_center {which} {
     # COG / COR for the point the stick is moving.
     variable state
@@ -26808,7 +26755,14 @@ proc ::VMDPathFinder::_axis_stick_sync_mode {d} {
     # Track/Stabilize, CVECT its own Stabilize/Exact pair, the tunnel start
     # point neither - so the choice sits with the point it governs.
     catch {
-        if {$m eq "cpoint"} { grid $d.pf.cp } else { grid remove $d.pf.cp }
+        if {$m eq "cpoint"} {
+            grid $d.pf.cp
+            _update_cpoint_scope_row $d.pf
+        } else {
+            # The fit/patch fields belong to CPOINT's Track/Stabilize only.
+            grid remove $d.pf.cp
+            grid remove $d.pf.scope_box
+        }
         if {$m eq "cvect"}  {
             grid $d.vec; grid $d.pt2; _cvect_sync_stab_controls $d.vec; grid remove $d.pc
             # Fill the two points in the moment the page opens, so the entries
@@ -27104,20 +27058,6 @@ proc ::VMDPathFinder::_mem_run_keys {} {
             dynamic_axis frame_spec}
 }
 
-proc ::VMDPathFinder::_mem_shared_keys {} {
-    # SHARED BY EVERY MEMORY, never stored per memory. Two pores of one
-    # structure drawn side by side have to be measured and drawn the same way,
-    # or the comparison is meaningless: one at sample 0.25 next to one at 1.0,
-    # or a marching-cubes surface next to an sos one, or a mean profile next to
-    # a live pore, invites reading a method difference as a structural one.
-    # Because these live only in state(), a mismatch is not possible to create.
-    return {sample pore_method pore_method_disp
-            search_engine search_engine_disp conn_engine conn_engine_disp
-            mesher mesher_disp csg_voxel csg_voxel_fine
-            display_mode display_mode_disp surface_smooth
-            show_mean_surface mean_display_mode mean_3d_mode}
-}
-
 proc ::VMDPathFinder::_mem_display_keys {} {
     # How a memory is DRAWN, where memories are ALLOWED to differ - five pores
     # in five colours is the point of the feature. "Sync presentation" copies
@@ -27130,7 +27070,7 @@ proc ::VMDPathFinder::_mem_display_keys {} {
 
 proc ::VMDPathFinder::_mem_stale_keys {} {
     # The shared settings that change what is COMPUTED, and so make stored
-    # results out of date. Deliberately NARROWER than _mem_shared_keys: the
+    # results out of date. Narrower than the settings a memory shares: the
     # mesher, the display mode and the smoothing are re-derived at draw time
     # from the live settings, so switching triangulated to dots redraws every
     # memory correctly and must not turn the whole row red telling the user to
@@ -27174,15 +27114,6 @@ proc ::VMDPathFinder::_mem_stale {id} {
     # exists to prevent.
     if {![dict exists $rec signature] || [dict get $rec signature] eq ""} { return 1 }
     return [expr {[dict get $rec signature] ne [_mem_shared_signature]}]
-}
-
-proc ::VMDPathFinder::_mem_stale_ids {} {
-    variable pore_memories
-    set out {}
-    foreach id [lsort -integer [dict keys $pore_memories]] {
-        if {[_mem_stale $id]} { lappend out $id }
-    }
-    return $out
 }
 
 proc ::VMDPathFinder::_mem_enabled {} {
@@ -27280,15 +27211,6 @@ proc ::VMDPathFinder::_mem_ensure_first {} {
         unset surface_mols($mk)
     }
     dict set pore_memories $id [_mem_capture]
-}
-
-proc ::VMDPathFinder::_mem_workdir_for {id base} {
-    # Where memory $id's frames live under a resolved run root. The same rule
-    # _mem_root_suffix applies, exposed for the panel and the load path.
-    if {$base eq ""} { return "" }
-    if {[regexp {^mem_[0-9]+$} [file tail $base]]} { set base [file dirname $base] }
-    if {$id == 1} { return $base }
-    return [file join $base [format "mem_%d" $id]]
 }
 
 proc ::VMDPathFinder::_mem_new {} {
@@ -27812,6 +27734,17 @@ proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
         # bracket the loop or a slot click lands mid-sync and the remaining
         # redraws go to the wrong memory.
         _begin_calc
+        # load_surface_for_frame runs a full `update`. While this loop has
+        # ANOTHER memory swapped in, a queued display apply or frame event
+        # would render into that memory with the live settings and then start
+        # the same loop again - the "sync keeps loading surfaces" report. The
+        # same two flags the playback path honours close both doors.
+        variable _frame_render_busy
+        variable _display_applying
+        set _lock_prev [list [expr {[info exists _frame_render_busy] ? $_frame_render_busy : 0}] \
+                             [expr {[info exists _display_applying] ? $_display_applying : 0}]]
+        set _frame_render_busy 1
+        set _display_applying 1
         set _syncerr [catch {
             variable results
             variable result_frames
@@ -27842,6 +27775,7 @@ proc ::VMDPathFinder::_mem_sync_presentation {{redraw 1}} {
                 if {[dict exists $src $k]} { set state($k) [dict get $src $k] }
             }
         } _serr _sopts]
+        lassign $_lock_prev _frame_render_busy _display_applying
         _end_calc
         if {$_syncerr == 1} { return -options $_sopts $_serr }
     }
@@ -33166,7 +33100,8 @@ proc ::VMDPathFinder::_pore_surface_spheres {frame {window 0}} {
     # the gather is ~180 ms (lobe split + voxel thinning). Keyed on everything
     # that changes WHICH dots are in it - the frame, the margin, and the
     # shown/persistence state folded into _conn_lobes_tag.
-    set _key "$sph|[file mtime $sph]|[_conn_margin_tag]|[_conn_lobes_tag]|[_conn_lobes_active]"
+    set _gate [expr {[info exists state(conn_pore_gate)] && $state(conn_pore_gate)}]
+    set _key "$sph|[file mtime $sph]|[_conn_margin_tag]|[_conn_lobes_tag]|[_conn_lobes_active]|$_gate"
     if {[info exists _pore_surf_memo] && [dict exists $_pore_surf_memo $_key]} {
         return [dict get $_pore_surf_memo $_key]
     }
@@ -33202,7 +33137,10 @@ proc ::VMDPathFinder::_pore_surface_spheres {frame {window 0}} {
                 foreach i [lindex $lb 3] { lappend lines [lindex $lat $i] }
             }
         }
-    } else {
+    } elseif {!$_gate} {
+        # Only the dots the surface draws. With "Hide sideways spill" on, the
+        # lateral dots are not on screen, so a residue that only touches them
+        # must not be called lining either.
         set lines [concat $lines [dict get $cls lateral]]
     }
     set _out [_thin_spheres_to_voxels $lines 1.0]
@@ -35643,7 +35581,7 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     grid $d.hdr.gg  -row 0 -column 8 -sticky w -padx {2 1}
     add_tooltip $d.hdr.all "Show or hide every region listed below."
     add_tooltip $d.hdr.s "How often each region was found, as a share of the analysed frames. Click to sort."
-    add_tooltip $d.hdr.n "Neck radius where the opening leaves the pore, in Å. Click to sort."
+    add_tooltip $d.hdr.n "Neck: narrowest clearance on the widest route from the pore centreline into the opening, in Å. open = wider than the search's end radius. Click to sort."
     add_tooltip $d.hdr.st "How far the opening stretches past the margin, in Å. Click to sort."
     add_tooltip $d.hdr.ax "Where along the channel axis the opening sits, in Å. Click to sort."
     add_tooltip $d.hdr.az "Which way round the axis it faces, in degrees. Click to sort."
@@ -35921,13 +35859,10 @@ proc ::VMDPathFinder::_refresh_conn_lobes_panel {} {
         set seentxt [format "%.0f%%" [dict get $row seen]]
         set na [dict get $row neck]
         set nb [dict get $row neckb]
-        # Both neck figures: distance from the axis, then how far past the
-        # traced wall. The second moves with Margin, the first does not.
-        set necktxt "-"
-        if {$na ne ""} {
-            set necktxt [format "%.1f" $na]
-            if {$nb ne ""} { append necktxt [format " / %.1f" $nb] }
-        }
+        # Neck, then stretch. A neck at or past the search's end radius met
+        # no wall on the way out.
+        set necktxt [expr {$na eq "" ? "-" : ($na >= [_conn_neck_open_at] ? "open" : [format "%.1f" $na])}]
+        if {$nb ne ""} { append necktxt [format " / %.1f" $nb] }
         # Escaped is off the list - it was 94-100% for every opening on a real
         # run, so it never told two of them apart. Kept on hover.
         set esc [dict get $row esc]
@@ -36193,7 +36128,7 @@ proc ::VMDPathFinder::_conn_lobe_row_panel {parent r sid label seen neck present
         add_tooltip $f.az$sid "Which way round the axis it faces, in degrees. Two openings at the same height are told apart by this."
         add_tooltip $f.gr$sid "Color, property, material and export for this region."
         add_tooltip $f.se$sid "How often this region was found, as a share of the analysed frames. Green if it is on the frame you are looking at, red if not."
-        add_tooltip $f.nk$sid "Neck radius where this opening leaves the main pore, in Å."
+        add_tooltip $f.nk$sid "Narrowest clearance on the widest route from the pore centreline into this opening, in Å, averaged over the frames it is seen in. open = wider than the search's end radius."
         add_tooltip $f.st$sid "How far this opening stretches past the margin, in Å."
         add_tooltip $f.nm$sid ""
     }
@@ -36274,14 +36209,6 @@ proc ::VMDPathFinder::_conn_site_scheme {sid} {
         return $state(conn_site_scheme,$sid)
     }
     return $state(hydro_scheme)
-}
-
-proc ::VMDPathFinder::_conn_site_scheme_pick {sid key} {
-    variable state
-    variable _conn_site_sch_disp
-    set state(conn_site_scheme,$sid) $key
-    set _conn_site_sch_disp($sid) [_conn_site_scheme_label $key]
-    on_display_setting_changed
 }
 
 proc ::VMDPathFinder::_conn_site_property_active {sid} {
@@ -36644,7 +36571,7 @@ proc ::VMDPathFinder::_conn_export_csv {sid all_frames path} {
     }
     if {![llength $want]} { return -1 }
 
-    # instance = {frame lobe_index n escaped_frac neck_a neck_b}; index it by
+    # instance = {frame lobe_index n escaped_frac neck stretch}; index it by
     # (site, frame) so a frame with no instance is simply absent.
     array set cell {}
     array set seen_frames {}
@@ -37949,8 +37876,17 @@ proc ::VMDPathFinder::_conn_classify_cached {in_sph cvect_s cpoint_s margin {bas
 }
 
 proc ::VMDPathFinder::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_s ""}} {
-    set _native [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin $basis_s]
-    if {[dict size $_native]} { return $_native }
+    # One frame's classified cloud with its lateral lobes and their necks:
+    # the native engine, or the pure-Tcl classifier when it is missing.
+    set cls [_conn_classify_native $in_sph $cvect_s $cpoint_s $margin $basis_s]
+    if {![dict size $cls]} { set cls [_conn_classify_tcl $in_sph $cvect_s $cpoint_s $margin $basis_s] }
+    if {![dict size $cls]} { return {} }
+    if {![dict exists $cls lobes]} { dict set cls lobes [_conn_split_lobes $cls] }
+    dict set cls lobes [_conn_lobe_necks $in_sph $cls $cvect_s $cpoint_s]
+    return $cls
+}
+
+proc ::VMDPathFinder::_conn_classify_tcl {in_sph cvect_s cpoint_s margin {basis_s ""}} {
     # Splits a CONNOLLY cloud into pore and lateral. A flood-fill dot is pore if
     # it sits within the traced wall radius + margin of the CENTRELINE - the real
     # curved one, read from this file's own pore spheres, not the straight axis.
@@ -38075,9 +38011,8 @@ proc ::VMDPathFinder::_conn_classify_sph {in_sph cvect_s cpoint_s margin {basis_
         # Azimuth about the axis, on a basis fixed for the whole run - see
         # _conn_axis_basis. lat_zt runs parallel to lateral. wall (the local
         # traced pore radius at this dot's axial position, already computed
-        # above for the pore/lateral test) is carried through too - it is
-        # what a lobe's neck radius is measured relative to (see
-        # _conn_frame_lobes).
+        # above for the pore/lateral test) is carried through too - the
+        # stretch figure is measured from it (see _conn_split_lobes).
         lappend lat_zt [list $t [expr {atan2($dx*$f2x + $dy*$f2y + $dz*$f2z, \
                                              $dx*$f1x + $dy*$f1y + $dz*$f1z)}] $rr $wall]
     }
@@ -38292,6 +38227,9 @@ proc ::VMDPathFinder::_conn_lobe_cache_sig {} {
     variable results
     variable result_frames
     variable state
+    # v5: the neck is nm_search's narrowest radius on the route out
+    # (_conn_lobe_necks); a v4 cache holds the exit dot's clearance instead.
+    #
     # v4: the speck cut (_conn_lobe_min_share) runs INSIDE the per-frame
     # classifier, before a lobe is even produced - so it belongs in this sig
     # exactly like margin does, and a v3 cache predates it (a run made before
@@ -38307,7 +38245,7 @@ proc ::VMDPathFinder::_conn_lobe_cache_sig {} {
     # basis (_conn_frame_lobe_basis), not just cvect/cpoint above - a v2 cache
     # predates that and would replay azimuths computed on the OLD, non-rotating
     # basis as if they were already correct.
-    set sig "v4|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)|[_conn_lobe_min_share]"
+    set sig "v5|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)|[_conn_lobe_min_share]"
     foreach f $result_frames {
         if {![dict exists $results $f sph_file]} continue
         set s [dict get $results $f sph_file]
@@ -38813,13 +38751,8 @@ proc ::VMDPathFinder::_conn_lobe_tol {} {
 }
 
 proc ::VMDPathFinder::_conn_lobe_drop_specks {lobes nlat} {
-    # Applied to a FINISHED lobes list ({zc azim n indices escaped_frac neck_a
-    # neck_b} tuples), so it reaches a lobe list built either way - the native
-    # classifier returns one pre-built (_conn_frame_lobes's own short-circuit,
-    # right below), and a filter written only into the Tcl computation further
-    # down never touched that path at all: measured at every share from 0% to
-    # 90%, the native path returned the exact same 14 lobes regardless, because
-    # this code was simply never reached.
+    # Applied to a finished lobes list ({zc azim n indices escaped_frac neck
+    # stretch} tuples), so it reaches lobes built by either engine.
     if {$nlat <= 0} { return $lobes }
     set _speck [expr {[_conn_lobe_min_share] / 100.0}]
     set out {}
@@ -38831,40 +38764,28 @@ proc ::VMDPathFinder::_conn_lobe_drop_specks {lobes nlat} {
 }
 
 proc ::VMDPathFinder::_conn_frame_lobes {cls} {
-    if {[dict exists $cls lobes]} {
-        set _nlat [expr {[dict exists $cls n_lat] ? [dict get $cls n_lat] : 0}]
-        return [_conn_lobe_drop_specks [dict get $cls lobes] $_nlat]
-    }
+    # One frame's lateral lobes from a classified cloud (_conn_classify_sph),
+    # specks dropped. Each is {zc azim n indices escaped_frac neck stretch}.
+    if {![dict exists $cls lobes]} { return {} }
+    set _nlat [expr {[dict exists $cls n_lat] ? [dict get $cls n_lat] : 0}]
+    return [_conn_lobe_drop_specks [dict get $cls lobes] $_nlat]
+}
+
+proc ::VMDPathFinder::_conn_split_lobes {cls} {
     # Split one frame's lateral dots into lobes. The cloud is ONE connected
     # component - the lobes join through the lumen they branch from - so
     # connectivity in 3D cannot separate them. On the (axial, azimuth) cylinder
     # they are disjoint patches, and that split is stable: the same lobes come
     # out at 2/3/4 A and 15/20/22 deg cells.
     #
-    # Returns a list of {zc azim n indices escaped_frac neck_a neck_b}, largest
+    # Returns a list of {zc azim n indices escaped_frac neck stretch}, largest
     # first. indices point into the classifier's `lateral` list so a lobe can
     # be rendered. escaped_frac is the share of a lobe's dots sitting in an
     # axial range where HOLE's own search escaped (see escaped_ranges,
-    # _conn_classify_sph) - high means "the fill ran into open space here",
-    # not a resolved fenestration.
-    #
-    # Neck and Stretch, both anchored at where the lobe LEAVES the main pore.
-    #
-    # The exit point is the lobe's own dot closest to the axis: every dot in a
-    # lobe is by construction outside the pore/lateral boundary, so the closest
-    # one sits in the doorway.
-    #
-    #   neck_a - the NECK RADIUS at that exit, i.e. how far the doorway sits
-    #            clear of the traced pore wall. This is the width of the
-    #            opening itself, not the distance from the axis, which would
-    #            just restate how fat the pore is there.
-    #   neck_b - STRETCH: how much further the lobe reaches beyond the margin,
-    #            i.e. from the outer edge of the margin band to the lobe's
-    #            furthest dot. "The opening is this wide and reaches this far
-    #            past it."
-    #
-    # Both are margin-relative because the margin is what defines where the pore
-    # ends and the opening begins.
+    # _conn_classify_tcl) - high means "the fill ran into open space here",
+    # not a resolved fenestration. neck is left blank here and filled by
+    # _conn_lobe_necks; stretch is how far past the margin band the lobe's
+    # furthest dot reaches.
     if {![dict exists $cls lat_zt]} { return {} }
     set zt [dict get $cls lat_zt]
     set nlat [llength $zt]
@@ -38969,8 +38890,8 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
     foreach idx $out {
         set zs 0.0; set sa 0.0; set ca 0.0
         set nesc 0
-        set neck_a {}; set neck_b {}
-        set _exit_rr {}; set _exit_wall {}; set _far_rr {}; set _far_wall {}
+        set stretch {}
+        set _far_rr {}; set _far_wall {}
         foreach i $idx {
             lassign [lindex $zt $i] t th rr wall
             set zs [expr {$zs + $t}]
@@ -38978,26 +38899,147 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
             set ca [expr {$ca + cos($th)}]
             if {[llength $esc_ranges] && [_conn_t_is_escaped $t $esc_ranges 1.5]} { incr nesc }
             if {$rr eq ""} continue
-            # Nearest dot = the exit from the pore; furthest = how far it reaches.
-            if {$_exit_rr eq "" || $rr < $_exit_rr} { set _exit_rr $rr; set _exit_wall $wall }
-            if {$_far_rr  eq "" || $rr > $_far_rr}  { set _far_rr  $rr; set _far_wall  $wall }
-        }
-        set _mg [_conn_pore_margin]
-        if {$_exit_rr ne "" && $_exit_wall ne ""} {
-            # Neck radius at the exit: clearance past the traced wall.
-            set neck_a [expr {$_exit_rr - $_exit_wall}]
-            if {$neck_a < 0} { set neck_a 0.0 }
+            # Furthest dot = how far the lobe reaches.
+            if {$_far_rr eq "" || $rr > $_far_rr} { set _far_rr $rr; set _far_wall $wall }
         }
         if {$_far_rr ne "" && $_far_wall ne ""} {
             # Stretch: how far past the MARGIN band the lobe still reaches.
-            set neck_b [expr {$_far_rr - $_far_wall - $_mg}]
-            if {$neck_b < 0} { set neck_b 0.0 }
+            set stretch [expr {$_far_rr - $_far_wall - [_conn_pore_margin]}]
+            if {$stretch < 0} { set stretch 0.0 }
         }
         set n [llength $idx]
         lappend lobes [list [expr {$zs/$n}] [expr {atan2($sa,$ca)}] $n $idx \
-            [expr {double($nesc)/$n}] $neck_a $neck_b]
+            [expr {double($nesc)/$n}] {} $stretch]
     }
     return [_conn_lobe_drop_specks [lsort -integer -decreasing -index 2 $lobes] $nlat]
+}
+
+proc ::VMDPathFinder::_conn_neck_open_at {} {
+    # The end radius the neck searches stop at. A neck at or past it met no
+    # wall on the way out.
+    variable state
+    set e [expr {[info exists state(endrad)] ? [string trim $state(endrad)] : ""}]
+    if {![_is_finite $e] || $e <= 0} { return 22.0 }
+    return $e
+}
+
+proc ::VMDPathFinder::_conn_line_xyz {line} {
+    # {x y z} from a .sph ATOM record, or {"" "" ""}.
+    set x [string trim [string range $line 30 37]]
+    set y [string trim [string range $line 38 45]]
+    set z [string trim [string range $line 46 53]]
+    foreach v {x y z} { if {![string is double -strict [set $v]]} { return [list "" "" ""] } }
+    return [list $x $y $z]
+}
+
+proc ::VMDPathFinder::_conn_nearest_t {ts t} {
+    # Index of the value closest to t in the sorted list ts.
+    set lo 0; set hi [expr {[llength $ts]-1}]
+    while {$hi - $lo > 1} {
+        set mid [expr {($lo+$hi)/2}]
+        if {[lindex $ts $mid] <= $t} { set lo $mid } else { set hi $mid }
+    }
+    return [expr {abs([lindex $ts $lo]-$t) <= abs([lindex $ts $hi]-$t) ? $lo : $hi}]
+}
+
+proc ::VMDPathFinder::_conn_lobe_neck_atoms {in_sph} {
+    # The atoms the frame was searched on, as {path temp}: the kept input file
+    # next to the cloud, else the selection written out again at that frame
+    # (temp 1, the caller deletes it). {"" 0} when neither is possible.
+    variable state
+    variable results
+    set rd [file dirname $in_sph]
+    foreach n {input_frame.pdb input_frame.vhb} {
+        if {[file exists [file join $rd $n]]} { return [list [file join $rd $n] 0] }
+    }
+    set frame ""
+    if {[info exists results]} {
+        dict for {f rec} $results {
+            if {[dict exists $rec sph_file] && [dict get $rec sph_file] eq $in_sph} { set frame $f; break }
+        }
+    }
+    if {$frame eq ""} { return [list "" 0] }
+    set p [file join [get_temp_base] "vmdpathfinder_neck_[pid]_$frame.pdb"]
+    if {[catch {
+        set sel [atomselect [string trim $state(molid)] [string trim $state(selection)] frame $frame]
+        $sel writepdb $p
+        $sel delete
+        if {[_should_fix_atom_names]} { _normalize_pdb_atom_names $p }
+    }]} { catch {file delete $p}; return [list "" 0] }
+    return [list $p 1]
+}
+
+proc ::VMDPathFinder::_conn_neck_value {r endrad} {
+    # One engine answer as the stored neck: "" when there was none, endrad
+    # ("open") when the route is wider than the search's end radius.
+    if {![string is double -strict $r] || $r <= 0} { return "" }
+    return [expr {$r >= $endrad ? double($endrad) : $r}]
+}
+
+proc ::VMDPathFinder::_conn_lobe_necks {in_sph cls cvect_s cpoint_s} {
+    # Fills each lobe's neck: the narrowest clearance on the widest route
+    # from the pore centreline to the opening's own surface dots, found by
+    # nm_search --neck against the frame's atoms. Blank when nm_search or
+    # the frame's atoms are not to hand. One engine call covers every lobe
+    # of the frame.
+    variable state
+    set lobes [dict get $cls lobes]
+    if {![llength $lobes] || ![dict exists $cls keep]} { return $lobes }
+    set exe [tool_path nm_search]
+    if {$exe eq ""} { return $lobes }
+    lassign [_axg_unit $cvect_s] ux uy uz
+    lassign $cpoint_s ox oy oz
+    set cen {}
+    foreach l [dict get $cls keep] {
+        set r [_sph_centerline_radius $l]
+        lassign [_conn_line_xyz $l] x y z
+        if {$x eq "" || ![string is double -strict $r] || $r <= 0.005} continue
+        lappend cen [list [expr {($x-$ox)*$ux+($y-$oy)*$uy+($z-$oz)*$uz}] $x $y $z $r]
+    }
+    if {[llength $cen] < 2} { return $lobes }
+    set cen [lsort -real -index 0 $cen]
+    set ts {}
+    foreach c $cen { lappend ts [lindex $c 0] }
+    lassign [_conn_lobe_neck_atoms $in_sph] atoms tmp
+    if {$atoms eq ""} { return $lobes }
+    set lat [dict get $cls lateral]
+    set endrad [_conn_neck_open_at]
+    set sf [file join [get_temp_base] "vmdpathfinder_neck_[pid].txt"]
+    set answers {}
+    if {![catch {open $sf w} fh]} {
+        foreach lb $lobes {
+            # Start on the centreline sphere the lobe's nearest dot sits on;
+            # the route must reach the lobe's outer half (the dots further
+            # from the pore wall than its median dot), so it has to pass
+            # through the opening, not just touch its rim.
+            set dots {}
+            set dmin 1e30; set kmin 0
+            foreach i [lindex $lb 3] {
+                lassign [_conn_line_xyz [lindex $lat $i]] x y z
+                if {$x eq ""} continue
+                set k [_conn_nearest_t $ts [expr {($x-$ox)*$ux+($y-$oy)*$uy+($z-$oz)*$uz}]]
+                lassign [lindex $cen $k] _ cx cy cz cr
+                set d [expr {sqrt(($x-$cx)*($x-$cx)+($y-$cy)*($y-$cy)+($z-$cz)*($z-$cz)) - $cr}]
+                lappend dots [list $d "$x $y $z"]
+                if {$d < $dmin} { set dmin $d; set kmin $k }
+            }
+            set dots [lsort -real -index 0 $dots]
+            set far [lrange $dots [expr {[llength $dots]/2}] end]
+            puts $fh "LOBE [lrange [lindex $cen $kmin] 1 3] [llength $far]"
+            foreach d $far { puts $fh [lindex $d 1] }
+        }
+        close $fh
+        set cmd [list $exe {*}[tool_args nm_search] $atoms $state(radius_file) 0 0 0 0 0 1 0.25 $endrad --neck $sf --quiet]
+        set ign [join [split [string trim $state(ignore)]] ,]
+        if {$ign ne ""} { lappend cmd --ignore $ign }
+        if {![catch {exec {*}$cmd 2>/dev/null} out]} { set answers [split [string trim $out] "\n"] }
+        catch {file delete $sf}
+    }
+    if {$tmp} { catch {file delete $atoms} }
+    if {[llength $answers] != [llength $lobes]} { return $lobes }
+    set out {}
+    foreach lb $lobes r $answers { lappend out [lreplace $lb 5 5 [_conn_neck_value $r $endrad]] }
+    return $out
 }
 
 proc ::VMDPathFinder::_ang_delta_deg {a b} {
@@ -39015,7 +39057,7 @@ proc ::VMDPathFinder::_conn_pool_lobe_sites {per_frame} {
     # makes a site mean two different openings at once.
     #
     # Returns {sites frames}: sites is a list of {zc azim nseen instances},
-    # instances being {frame lobe_index n escaped_frac neck_a neck_b}; frames
+    # instances being {frame lobe_index n escaped_frac neck stretch}; frames
     # lists the frames pooled.
     lassign [_conn_lobe_tol] tolz tola
     set sites {}
@@ -39229,56 +39271,6 @@ proc ::VMDPathFinder::_cap_ring_outliers {arrname n} {
     }
 }
 
-proc ::VMDPathFinder::_smooth_ring_field {ringvar nsect {angpass 2} {axspan 2}} {
-    # Smooth the tube's ring-radius field: angularly (circular 1-2-1 blur, a few
-    # passes) then axially (triangular moving average over +/-axspan slices).
-    # Turns the jagged per-sector boundary into the smooth pore wall the ellipse
-    # surface already gets. Operates in place on a list of {axial {r0..rN-1}}.
-    upvar 1 $ringvar ringr
-    set ns [llength $ringr]
-    if {$ns < 2} { return }
-    set R {}
-    foreach e $ringr { lappend R [lindex $e 1] }
-    for {set pass 0} {$pass < $angpass} {incr pass} {
-        set NR {}
-        foreach row $R {
-            set out {}
-            for {set k 0} {$k < $nsect} {incr k} {
-                set km [lindex $row [expr {($k-1+$nsect)%$nsect}]]
-                set kk [lindex $row $k]
-                set kp [lindex $row [expr {($k+1)%$nsect}]]
-                lappend out [expr {($km + 2.0*$kk + $kp)/4.0}]
-            }
-            lappend NR $out
-        }
-        set R $NR
-    }
-    set NR {}
-    for {set i 0} {$i < $ns} {incr i} {
-        set out {}
-        for {set k 0} {$k < $nsect} {incr k} {
-            set acc 0.0; set wsum 0.0
-            for {set d [expr {-$axspan}]} {$d <= $axspan} {incr d} {
-                set j [expr {$i+$d}]
-                if {$j < 0 || $j >= $ns} { continue }
-                set w [expr {$axspan+1-abs($d)}]
-                set acc  [expr {$acc  + $w*[lindex [lindex $R $j] $k]}]
-                set wsum [expr {$wsum + $w}]
-            }
-            if {$wsum > 0} { lappend out [expr {$acc/$wsum}] } else { lappend out [lindex [lindex $R $i] $k] }
-        }
-        lappend NR $out
-    }
-    set R $NR
-    set newring {}
-    for {set i 0} {$i < $ns} {incr i} {
-        # Replace only the radius list (element 1); keep element 0 (axial) AND any extra
-        # per-ring fields past it (e.g. the hole_def coloring radius) instead of dropping them.
-        lappend newring [lreplace [lindex $ringr $i] 1 1 [lindex $R $i]]
-    }
-    set ringr $newring
-}
-
 proc ::VMDPathFinder::_build_conn_shell_plot {sph_file out_plot cvect_s cpoint_s endrad {nsect 36} {slicew 0.5}} {
     # Build a smooth tube surface = the OUTER SHELL of a CONNOLLY point cloud, with NO
     # subsampling/sph_process: group accessible points into axial slices, take each
@@ -39353,11 +39345,9 @@ proc ::VMDPathFinder::_build_conn_shell_plot {sph_file out_plot cvect_s cpoint_s
         lappend ringr [list $ma $rl]
     }
     if {[llength $ringr] < 2} { return 0 }
-    # PASS 2 - build the tube on the axis with outward radial normals. The robust
-    # p90 + MAD cap above already remove flood-fill thorns/noise; NO further blur
-    # is applied here (removed per user feedback - even the earlier "light" 1-pass
-    # angular+axial smoothing was over-rounding narrow constrictions). If a future
-    # data set needs some smoothing back, _smooth_ring_field is still here to call.
+    # PASS 2 - build the tube on the axis with outward radial normals. The
+    # p90 + MAD cap above already removes flood-fill thorns; no further blur,
+    # which over-rounds narrow constrictions.
     set rings {}
     set ringbands {}
     foreach entry $ringr {
@@ -40292,14 +40282,14 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
         # its clipped surface was served from cache and the fixed builder never
         # ran.
         lassign [_capsule_sos_input $sph_file [expr {$cflag ne "" ? 1 : 0}]] _sos_sph _sos_col
-        set sph_cmd [_sph_process_cmd $state(dot_density) \
-                         [expr {$_sos_col ? "-colour " : ""}] $_sos_sph $sos]
+        set sph_cmd "[_sph_process_cmd $state(dot_density) \
+                         [expr {$_sos_col ? "-colour " : ""}] $_sos_sph $sos] > /dev/null 2>&1[_capsule_sos_fix_cmd $sos]"
 
         set out_file [expr {$mode eq "dots" && !$fast_dots ? $tmp : $plot}]
 
         if {$use_batch} {
             # Phase A: sph_process only (writes the .sos file)
-            lappend sph_jobs [list $frame [list |sh -c "$sph_cmd > /dev/null 2>&1"]]
+            lappend sph_jobs [list $frame [list |sh -c $sph_cmd]]
             # Phase B: sos_triangle will be batched across workers
             lappend sos_pairs [list $frame $sos $out_file]
         } else {
@@ -40308,7 +40298,7 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
             } else {
                 set tri_cmd [_sos_triangle_cmd $sos $out_file]
             }
-            set full_cmd "$sph_cmd > /dev/null 2>&1 && $tri_cmd 2>/dev/null && rm -f [shell_quote $sos] 2>/dev/null"
+            set full_cmd "$sph_cmd && $tri_cmd 2>/dev/null && rm -f [shell_quote $sos] 2>/dev/null"
             lappend combined_jobs [list $frame [list |sh -c $full_cmd]]
         }
     }
@@ -41346,7 +41336,7 @@ proc ::VMDPathFinder::_show_abort_button {show} {
         # it to paint NOW, before the (blocking) calculation begins - otherwise it
         # wouldn't appear until the first `update` deep in the compute loop (the
         # "couple-second" placement lag).
-        catch {pack $b -side right -padx 0}
+        catch {pack $b -side right -padx {0 12} -before $w.bottom.options.sm_l}
         catch {update idletasks}
     } else {
         catch {pack forget $b}
@@ -46873,7 +46863,6 @@ proc ::VMDPathFinder::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} 
     set zmin [dict get $raw zmin]; set zmax [dict get $raw zmax]; set zc [dict get $raw zc]
     set zspan [expr {$zmax-$zmin}]; if {$zspan <= 0} { return "" }
     set rmin_hole [dict get $raw rmin_hole]
-    set flux_r [expr {max(3.0,$rmin_hole+2.0)}]   ;# lumen radius for the flux gate
     set nf [dict get $raw nframes]
     # box z-length -> flip threshold: a |dz|>Lz/2 step between two per-frame min-image
     # samples is a periodic image flip (crossing +-Lz/2), not real ion motion.
@@ -46963,10 +46952,7 @@ proc ::VMDPathFinder::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} 
                         lset vrs $bi [expr {[lindex $vrs $bi]+($R-$Rp)}]
                         lset cnt $bi [expr {[lindex $cnt $bi]+1.0}]
                     }
-                    if {$R < $flux_r} {
-                        if {$zp <= $zc && $z > $zc} { incr up } \
-                        elseif {$zp >= $zc && $z < $zc} { incr down }
-                    }
+
                 }
             }
             set _pf $f; set _pz $z; set _pR $R
@@ -46990,6 +46976,11 @@ proc ::VMDPathFinder::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} 
                 }
                 set _pdf $_df; set _pdz $_dzz
             }
+            # ONE definition of a crossing for the whole tab: a sample inside the
+            # pass shell on each side of the constriction plane, consecutive up to
+            # the gap bridge. The header and the Passage view read these same
+            # counts, so they cannot disagree.
+            incr up $_tr_up; incr down $_tr_down
             lappend out_traces [dict create idx [dict get $tr idx] species [dict get $tr species] \
                 z $d_z r $d_r frame $d_f ncross_up $_tr_up ncross_down $_tr_down]
             if {$_tr_up > $_tr_down} { incr n_cross_up } elseif {$_tr_down > $_tr_up} { incr n_cross_down } \
@@ -47039,7 +47030,7 @@ proc ::VMDPathFinder::_ion_flow_aggregate {raw species r_cut nr nz {r_pass ""}} 
     set species_label [expr {$species_all ? "All" : $species}]
     set _ncount [dict get $raw nions]
     if {$species_water} { set _ncount [expr {[dict exists $raw nwater] ? [dict get $raw nwater] : 0}] }
-    return [dict create nr $nr nz $nz zmin $zmin zmax $zmax r_cut $r_cut r_pass $r_pass zc $zc flux_r $flux_r \
+    return [dict create nr $nr nz $nz zmin $zmin zmax $zmax r_cut $r_cut r_pass $r_pass zc $zc \
         dens $dens dens_vol $dens_vol occ_pct $occ_pct vr $vrs vz $vzs cnt $cnt up $up down $down net [expr {$up-$down}] \
         nions $_ncount noun [expr {$species_water ? "waters" : "ions"}] \
         count_per_frame $count_per_frame count_per_species $count_per_species \
@@ -47657,8 +47648,8 @@ proc ::VMDPathFinder::_draw_ion_flow_occupancy {} {
     set _hy [_plot_header $cv [expr {$ml+$pw/2}] $pw [list \
         [list "Occupancy + flow \u2014 $_splabel  ([dict get $d nions] [_ion_flow_noun $d],\
               [dict get $d nused] frames)" {Helvetica 10 bold} black] \
-        [list "arrows = mean displacement   \u00b7   net flux through the lumen: up $up  down\
-              $down  net $net[_ion_flow_rcut_note $d]" {Helvetica 8} "#333333"] \
+        [list [format "arrows = mean displacement   \u00b7   crossings of the constriction plane (z = %.1f \u00c5, within %.1f \u00c5 of the surface): up %d  down %d  net %d%s" \
+              [dict get $d zc] [_ion_flow_passage_shell] $up $down $net [_ion_flow_rcut_note $d]] {Helvetica 8} "#333333"] \
         [list $_wallkey {Helvetica 8} "#2b2b2b"]]]
     set mt [expr {$_hy+6}]
     set ph [expr {$H-$mt-$mb}]
@@ -53938,9 +53929,49 @@ proc ::VMDPathFinder::_pkg_capture_off {} {
     }
 }
 
+proc ::VMDPathFinder::_pkg_choose {} {
+    # Which plot tabs go into the package: a checkbox per tab, ticked when it
+    # has data and disabled when it has none. Returns the chosen keys, {} when
+    # cancelled.
+    variable w
+    variable _pkg_pick
+    set d $w.pkgchoose
+    catch {destroy $d}
+    toplevel $d
+    wm title $d "Save package"
+    catch {wm transient $d $w}
+    label $d.hdr -text "Include in the package:" -anchor w
+    pack $d.hdr -fill x -padx 10 -pady {10 4}
+    array unset _pkg_pick
+    foreach {k lbl c f} [_pkg_tabs] {
+        set has [_tab_has_data $k]
+        set _pkg_pick($k) $has
+        checkbutton $d.cb_$k -text [expr {$has ? $lbl : "$lbl (no data)"}] \
+            -variable ::VMDPathFinder::_pkg_pick($k) -anchor w
+        if {!$has} { $d.cb_$k configure -state disabled }
+        pack $d.cb_$k -fill x -padx 14
+    }
+    frame $d.b
+    button $d.b.ok -text "Save..." -width 8 -command [list set ::VMDPathFinder::_pkg_pick(done) 1]
+    button $d.b.cancel -text "Cancel" -width 8 -command [list set ::VMDPathFinder::_pkg_pick(done) 0]
+    pack $d.b.cancel $d.b.ok -side right -padx 4
+    pack $d.b -fill x -padx 10 -pady 10
+    wm protocol $d WM_DELETE_WINDOW [list set ::VMDPathFinder::_pkg_pick(done) 0]
+    set _pkg_pick(done) ""
+    catch {grab $d}
+    vwait ::VMDPathFinder::_pkg_pick(done)
+    catch {grab release $d}
+    catch {destroy $d}
+    if {$_pkg_pick(done) ne "1"} { return {} }
+    set out {}
+    foreach {k lbl c f} [_pkg_tabs] { if {$_pkg_pick($k)} { lappend out $k } }
+    return $out
+}
+
 proc ::VMDPathFinder::save_package {} {
-    # One folder holding the CSV and figure from each of the seven plot tabs
-    # that has data - see _pkg_tabs - plus the parameters that produced them.
+    # One folder holding the CSV and figure from the plot tabs the user
+    # ticks (_pkg_choose; only tabs with data can be) - see _pkg_tabs - plus
+    # the parameters that produced them.
     # It does not reach the other exports this plugin has (bottleneck
     # residues, unrolled pore-wall layers, tunnel lining, per-opening tables,
     # cavity CSVs): those stay on their own dialogs. What goes into a plot
@@ -53970,6 +54001,8 @@ proc ::VMDPathFinder::save_package {} {
             -message "Nothing to package yet - run an analysis first."
         return
     }
+    set pick [_pkg_choose]
+    if {![llength $pick]} { return }
     set parent [tk_chooseDirectory -title "Where to write the package folder" \
         -initialdir [export_initial_dir] -mustexist 1]
     if {$parent eq ""} { return }
@@ -53989,7 +54022,8 @@ proc ::VMDPathFinder::save_package {} {
     _pkg_capture_on $dir
     if {[catch {
         foreach {k lbl csv_cmd fig_cmd} [_pkg_tabs] {
-            if {![_tab_has_data $k]} { lappend skipped $lbl; continue }
+            if {![_tab_has_data $k]} { lappend skipped "$lbl (no data)"; continue }
+            if {$k ni $pick} { lappend skipped "$lbl (not ticked)"; continue }
             if {[_abort_requested]} {
                 # Say so explicitly rather than writing whatever the exporter
                 # produces from a half-computed cache and calling it included -
@@ -54047,7 +54081,7 @@ proc ::VMDPathFinder::save_package {} {
     catch {_pkg_write_readme $dir $stamp $done $skipped $_files $aborted}
     _end_calc
     set state(status) "Package written to $dir - [llength $_files] file(s)."
-    set _msg "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped (no data): [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
+    set _msg "Package written to:\n$dir\n\nIncluded: [join $done {, }]\nSkipped: [expr {[llength $skipped] ? [join $skipped {, }] : {none}}]"
     if {[llength $aborted]} { append _msg "\nStopped before: [join $aborted {, }]" }
     tk_messageBox -icon info -type ok -title "Save package" -message $_msg
 }
@@ -57127,13 +57161,9 @@ proc ::VMDPathFinder::build_and_show_tunnel_mean_surface {} {
     set _vis_mean_shown 1
     catch {_update_surface_vis_buttons}
     catch {sync_surface_view $tunnel_mean_surface_mol $draw_mol}
-    # NOT _tunnel_effective_repr_cid: that resolves the LIVE tunnel's own
-    # representation (global default or its own gear wire-override), which
-    # made the mean tube switch to wireframe/centerline whenever the live
-    # tunnel did - the two views are meant to be independent, the same way
-    # Color and Material already are below. mean_tunnel_display_mode is this
-    # tab's own setting; unset/blank keeps the tube's original default (iso)
-    # rather than mirroring the live view.
+    # This tab's own setting, not the live tunnel's representation: the two
+    # views are independent, the same way Color and Material are below.
+    # Unset/blank keeps the tube's default (iso).
     set _repr [expr {[info exists state(mean_tunnel_display_mode)] \
         && $state(mean_tunnel_display_mode) ne "" ? $state(mean_tunnel_display_mode) : "iso"}]
     set _mat  [_tunnel_effective_material_cid $cid]

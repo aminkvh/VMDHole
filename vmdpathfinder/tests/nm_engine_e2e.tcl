@@ -173,5 +173,50 @@ if {[dict size $E]} {
         chk "NM bottleneck under Connolly within 0.25 A of HOLE" [expr {$d < 0.25}] 1
     }
 }
+# --- --neck: the widest route through a wall with a round hole
+# Carbon atoms on a 1 A lattice in the plane y=0, a hole of radius 5 at the
+# origin. The route from y=-6 to the dots at y=+6 must pass the hole, so the
+# neck is the hole radius less the atom radius (1.85 in simple.rad). A second
+# block with no hole has no route at all.
+set nmx [::VMDPathFinder::tool_path nm_search]
+if {$nmx ne "" && [file readable $RAD]} {
+    set wall [file join $tmpd wall.pdb]
+    set fh [open $wall w]
+    set n 0
+    for {set x -12} {$x <= 12} {incr x} {
+        for {set z -12} {$z <= 12} {incr z} {
+            if {$x*$x + $z*$z < 25} continue
+            incr n
+            puts $fh [format "ATOM  %5d  C   ALA A%4d    %8.3f%8.3f%8.3f  1.00  0.00           C" $n $n $x 0.0 $z]
+        }
+    }
+    close $fh
+    set solid [file join $tmpd solid.pdb]
+    set fh [open $solid w]
+    set n 0
+    for {set x -12} {$x <= 12} {incr x} {
+        for {set z -12} {$z <= 12} {incr z} {
+            incr n
+            puts $fh [format "ATOM  %5d  C   ALA A%4d    %8.3f%8.3f%8.3f  1.00  0.00           C" $n $n $x 0.0 $z]
+        }
+    }
+    close $fh
+    set lobe [file join $tmpd lobe.txt]
+    set fh [open $lobe w]
+    puts $fh "LOBE 0 -6 0 3"
+    puts $fh "0 6 0"; puts $fh "1 6 0"; puts $fh "0 6 1"
+    close $fh
+    set got ""
+    catch {set got [exec $nmx {*}[::VMDPathFinder::tool_args nm_search] $wall $RAD 0 0 0 0 0 1 0.25 22 --neck $lobe --quiet]}
+    note "--neck through the hole: $got"
+    chk "--neck reports the hole's clearance (5 - 1.85, within 0.35 A)" \
+        [expr {[string is double -strict $got] && abs($got - 3.15) < 0.35}] 1
+    set got ""
+    catch {set got [exec $nmx {*}[::VMDPathFinder::tool_args nm_search] $solid $RAD 0 0 0 0 0 1 0.25 22 --neck $lobe --quiet]}
+    chk "--neck finds no route through a solid wall" $got "-"
+} else {
+    note "SKIP --neck: no nm_search binary or radius file"
+}
+
 catch {file delete -force $tmpd}
 done

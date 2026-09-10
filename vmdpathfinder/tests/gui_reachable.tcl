@@ -6180,7 +6180,7 @@ if {$ntun > 0} {
                [expr {$_fd ne "" && $_fa ne "" && $_fd != $_fa}] \
                "(desc '$_fd', asc '$_fa' - blank means the cell path moved)"
         # cavities draw on their OWN molecule, not the routes'
-        ::VMDPathFinder::_cavity_show_all 1
+        set ::VMDPathFinder::state(cavity_shown_all) 1; ::VMDPathFinder::_cavity_show_all_toggle
         update idletasks; update
         # ask the RENDER which molecule it used, rather than creating one here
         # and hoping the two agree
@@ -6191,7 +6191,7 @@ if {$ntun > 0} {
         report "cavities draw on their own track, not the routes'" \
                [expr {$_cm ne "" && $_cm != $_tm && $_cg > 0}] \
                "(cavity mol $_cm with $_cg primitives, route mol $_tm)"
-        ::VMDPathFinder::_cavity_show_all 0
+        set ::VMDPathFinder::state(cavity_shown_all) 0; ::VMDPathFinder::_cavity_show_all_toggle
         update idletasks; update
         report "Hide all clears the cavity track" \
                [expr {$_cm eq "" || [llength [graphics $_cm list]] == 0}] ""
@@ -6276,7 +6276,7 @@ if {$ntun > 0} {
                [expr {$_cgeo && [llength [lsort -unique $_colB]] > [llength [lsort -unique $_colA]]}] \
                "(why='[expr {[info exists ::VMDPathFinder::_cavity_color_why] ? $::VMDPathFinder::_cavity_color_why : {unset}}]' hydro3d=$_h3d prop=$::VMDPathFinder::state(cavity_prop) rank=$_rank exists=[file exists $_cplot] geometry=$_cgeo; flat [llength [lsort -unique $_colA]] colours, by-property [llength [lsort -unique $_colB]])"
         set ::VMDPathFinder::state(cavity_prop) none
-        ::VMDPathFinder::_cavity_show_all 0
+        set ::VMDPathFinder::state(cavity_shown_all) 0; ::VMDPathFinder::_cavity_show_all_toggle
         set ::VMDPathFinder::state(tunnel_start) $_saved_start
         catch {destroy $w.tuncav}
     }

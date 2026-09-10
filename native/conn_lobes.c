@@ -195,7 +195,7 @@ static void axis_basis(double ux, double uy, double uz, double *f1x, double *f1y
 typedef struct { int idx; double t, az, rr, wall; } LatPt;
 typedef struct { int is_pore; LatPt lat; } Cls;   /* per-dot outcome, dot index order preserved */
 
-typedef struct { double z, a; int n; double ef, ka, kb; int has_ka, has_kb; int *members; int nmem; } Lobe;
+typedef struct { double z, a; int n; double ef, kb; int has_kb; int *members; int nmem; } Lobe;
 
 static int cmp_lobe_n_desc(const void *a, const void *b) {
     return ((const Lobe *)b)->n - ((const Lobe *)a)->n;
@@ -327,21 +327,19 @@ static void do_classify(double ux, double uy, double uz, double margin,
             int *idx = xmalloc(total * sizeof(int)); int ni = 0;
             for (int m = 0; m < mh; m++) for (int k = 0; k < celln[members[m]]; k++) idx[ni++] = cell[members[m]][k];
             double zs = 0, sa = 0, ca = 0; int nesc = 0;
-            double exit_rr = -1, exit_wall = 0, far_rr = -1, far_wall = 0; int have_exit = 0, have_far = 0;
+            double far_rr = -1, far_wall = 0; int have_far = 0;
             for (int q = 0; q < ni; q++) {
                 LatPt *p = &lat[idx[q]];
                 zs += p->t; sa += sin(p->az); ca += cos(p->az);
                 int esc = 0;
                 for (int r = 0; r < nranges; r++) if (p->t >= rlo[r]-1.5 && p->t <= rhi[r]+1.5) { esc = 1; break; }
                 if (esc) nesc++;
-                if (!have_exit || p->rr < exit_rr) { exit_rr = p->rr; exit_wall = p->wall; have_exit = 1; }
                 if (!have_far  || p->rr > far_rr)  { far_rr  = p->rr; far_wall  = p->wall; have_far  = 1; }
             }
             if (nlobes >= lobecap) { lobecap = lobecap ? lobecap*2 : 16; lobes = xrealloc(lobes, lobecap*sizeof(Lobe)); }
             Lobe *lb = &lobes[nlobes++];
             lb->z = zs / ni; lb->a = atan2(sa, ca); lb->n = ni;
             lb->ef = (double)nesc / ni;
-            lb->has_ka = have_exit; lb->ka = have_exit ? (exit_rr - exit_wall < 0 ? 0.0 : exit_rr - exit_wall) : 0.0;
             lb->has_kb = have_far;
             if (have_far) { double v = far_rr - far_wall - margin; lb->kb = v < 0 ? 0.0 : v; } else lb->kb = 0.0;
             lb->members = idx; lb->nmem = ni;
@@ -365,10 +363,7 @@ static void do_classify(double ux, double uy, double uz, double margin,
     printf("LOBE %d\n", nlobes);
     for (int i = 0; i < nlobes; i++) {
         Lobe *lb = &lobes[i];
-        printf("%.6f %.6f %d %.6f %s %s", lb->z, lb->a, lb->n, lb->ef,
-               lb->has_ka ? "" : "-", lb->has_kb ? "" : "-");
-        if (lb->has_ka) printf("%.6f", lb->ka); else printf("-");
-        printf(" ");
+        printf("%.6f %.6f %d %.6f ", lb->z, lb->a, lb->n, lb->ef);
         if (lb->has_kb) printf("%.6f", lb->kb); else printf("-");
         for (int m = 0; m < lb->nmem; m++) printf(" %d", lb->members[m]);
         printf("\n");

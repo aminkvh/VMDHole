@@ -57,8 +57,16 @@ nm_search PDB RAD cx cy cz vx vy vz SAMPLE ENDRAD [options]
   --conn PROBE GRID HOLE's Connolly pass per slice (GRID 0 = 0.7*PROBE)
   --ignore R1,R2    HOLE's IGNORE card
   --centres FILE    skip the search: "t x y z r" centres (t from CPOINT)
+  --neck FILE       no search: one neck per "LOBE sx sy sz n" block of dots
   --quiet           no slice listing on stdout
 ```
+
+`--neck` serves the Connolly openings table. Each block names a start point
+on the pore centreline and the opening's surface dots; the answer is the
+narrowest clearance on the widest route from the start to the dots, found by
+a Dijkstra ordered on clearance over a grid spanning the opening (cells are
+only evaluated as the search reaches them), then refined off-grid. `-` means
+no route.
 
 Without options it prints the slices as before. `nm_holeout.h` holds the
 emitters and the Connolly port (`concal.f`/`coarea.f`/`addend.f`, taken line

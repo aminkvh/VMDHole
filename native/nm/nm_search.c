@@ -160,9 +160,15 @@ static void build_grid(void) {
         if (ar[i] > maxr) maxr = ar[i];
     }
     gx0 = xlo - 1e-6; gy0 = ylo - 1e-6; gz0 = zlo - 1e-6;
-    nx = (int)((xhi - gx0) / cell) + 1;
-    ny = (int)((yhi - gy0) / cell) + 1;
-    nz = (int)((zhi - gz0) / cell) + 1;
+    /* a huge or sparse system must not overflow the cell count: widen the
+       cell until the grid fits (a pure speed choice, never a different answer) */
+    for (;;) {
+        nx = (int)((xhi - gx0) / cell) + 1;
+        ny = (int)((yhi - gy0) / cell) + 1;
+        nz = (int)((zhi - gz0) / cell) + 1;
+        if ((long)nx * ny * nz <= 100000000L) break;
+        cell *= 1.5;
+    }
     int ncell = nx * ny * nz;
     cellstart = calloc(ncell + 1, sizeof(int));
     cellatom = malloc(natom * sizeof(int));
@@ -472,6 +478,162 @@ static int nm_connected(double u1, double v1, double u2, double v2, double t) {
     return 1;
 }
 
+/* --neck FILE: no march. FILE holds one block per lateral opening,
+ *   LOBE sx sy sz ndots     start point, on the pore centreline
+ *   x y z                   the opening's surface dots, ndots lines
+ * and prints one line per block: the neck radius, or "-".
+ * The neck is the narrowest clearance on the widest route from the start
+ * to the dots. It is found on a grid over the opening's box by a search
+ * that always extends the widest route so far (Dijkstra on clearance),
+ * so the first cell reached beside a dot ends the widest route; clearance
+ * is only evaluated on cells the search touches. The route's narrowest
+ * cell is then refined off-grid by a short hill climb. */
+typedef struct { float r; int c; } NkItem;
+static void nk_push(NkItem **h, int *n, int *cap, float r, int c) {
+    if (*n == *cap) { *cap = *cap ? *cap * 2 : 4096; *h = realloc(*h, *cap * sizeof(NkItem)); }
+    int i = (*n)++; (*h)[i].r = r; (*h)[i].c = c;
+    while (i > 0) {
+        int p = (i - 1) / 2;
+        if ((*h)[p].r >= (*h)[i].r) break;
+        NkItem t = (*h)[p]; (*h)[p] = (*h)[i]; (*h)[i] = t; i = p;
+    }
+}
+static NkItem nk_pop(NkItem *h, int *n) {
+    NkItem top = h[0]; h[0] = h[--(*n)];
+    for (int i = 0;;) {
+        int l = 2*i + 1, r = l + 1, m = i;
+        if (l < *n && h[l].r > h[m].r) m = l;
+        if (r < *n && h[r].r > h[m].r) m = r;
+        if (m == i) break;
+        NkItem t = h[m]; h[m] = h[i]; h[i] = t; i = m;
+    }
+    return top;
+}
+static double nk_climb(double x, double y, double z, double step) {
+    /* largest clearance within one grid step of (x,y,z): axis moves with a
+       shrinking step, never further than `step` from where it began */
+    double x0 = x, y0 = y, z0 = z, lim = step * step;
+    double best = clearance(x, y, z);
+    for (int round = 0; round < 4; round++, step *= 0.5) {
+        for (int moved = 1; moved;) {
+            moved = 0;
+            for (int k = 0; k < 6; k++) {
+                double nx = x + (k == 0 ? step : k == 1 ? -step : 0);
+                double ny = y + (k == 2 ? step : k == 3 ? -step : 0);
+                double nz = z + (k == 4 ? step : k == 5 ? -step : 0);
+                if ((nx-x0)*(nx-x0) + (ny-y0)*(ny-y0) + (nz-z0)*(nz-z0) > lim) continue;
+                double v = clearance(nx, ny, nz);
+                if (v > best) { best = v; x = nx; y = ny; z = nz; moved = 1; }
+            }
+        }
+    }
+    return best;
+}
+static double nk_one(const double *s, const double *d, int nd) {
+    double lo[3] = {s[0], s[1], s[2]}, hi[3] = {s[0], s[1], s[2]};
+    for (int i = 0; i < nd; i++)
+        for (int k = 0; k < 3; k++) {
+            if (d[3*i+k] < lo[k]) lo[k] = d[3*i+k];
+            if (d[3*i+k] > hi[k]) hi[k] = d[3*i+k];
+        }
+    for (int k = 0; k < 3; k++) { lo[k] -= 2.5; hi[k] += 2.5; }
+    double h = 0.6; long n[3], tot;
+    for (;;) {
+        tot = 1;
+        for (int k = 0; k < 3; k++) { n[k] = (long)((hi[k] - lo[k]) / h) + 1; tot *= n[k]; }
+        if (tot <= 400000 || h >= 1.5) break;
+        h *= 1.2;
+    }
+    int N = (int)tot, nx = (int)n[0], ny = (int)n[1], nxy = nx * (int)n[1], nz = (int)n[2];
+    float *cr = malloc(N * sizeof(float)), *best = malloc(N * sizeof(float));
+    int *bott = malloc(N * sizeof(int));
+    char *tg = calloc(N, 1), *done = calloc(N, 1);
+    for (int i = 0; i < N; i++) { cr[i] = -1e9f; best[i] = -1e30f; }
+    int reach = (int)(2.0 / h) + 1;
+    for (int i = 0; i < nd; i++) {
+        int cx = (int)((d[3*i] - lo[0]) / h), cy = (int)((d[3*i+1] - lo[1]) / h), cz = (int)((d[3*i+2] - lo[2]) / h);
+        for (int dz = -reach; dz <= reach; dz++) for (int dy = -reach; dy <= reach; dy++) for (int dx = -reach; dx <= reach; dx++) {
+            int x = cx + dx, y = cy + dy, z = cz + dz;
+            if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) continue;
+            double ex = lo[0] + x*h - d[3*i], ey = lo[1] + y*h - d[3*i+1], ez = lo[2] + z*h - d[3*i+2];
+            if (ex*ex + ey*ey + ez*ez <= 4.0) tg[x + y*nx + z*nxy] = 1;
+        }
+    }
+    /* start: the best-clearance cell around the start point */
+    int sc = -1; float sr = -1e30f;
+    int sx = (int)((s[0] - lo[0]) / h), sy = (int)((s[1] - lo[1]) / h), sz = (int)((s[2] - lo[2]) / h);
+    for (int dz = -1; dz <= 1; dz++) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        int x = sx + dx, y = sy + dy, z = sz + dz;
+        if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) continue;
+        int ci = x + y*nx + z*nxy;
+        cr[ci] = (float)clearance(lo[0] + x*h, lo[1] + y*h, lo[2] + z*h);
+        if (cr[ci] > sr) { sr = cr[ci]; sc = ci; }
+    }
+    double ans = -1;
+    if (sc >= 0 && sr > 0) {
+        NkItem *heap = NULL; int nh = 0, cap = 0;
+        best[sc] = sr; bott[sc] = sc;
+        nk_push(&heap, &nh, &cap, sr, sc);
+        while (nh) {
+            NkItem it = nk_pop(heap, &nh);
+            int c = it.c;
+            if (done[c]) continue;
+            done[c] = 1;
+            if (tg[c]) {
+                int b = bott[c];
+                ans = nk_climb(lo[0] + (b % nx)*h, lo[1] + ((b / nx) % ny)*h, lo[2] + (b / nxy)*h, h);
+                if (ans < best[c]) ans = best[c];
+                break;
+            }
+            int x = c % nx, y = (c / nx) % ny, z = c / nxy;
+            for (int dz = -1; dz <= 1; dz++) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                int qx = x + dx, qy = y + dy, qz = z + dz;
+                if ((!dx && !dy && !dz) || qx < 0 || qy < 0 || qz < 0 || qx >= nx || qy >= ny || qz >= nz) continue;
+                int q = qx + qy*nx + qz*nxy;
+                if (done[q]) continue;
+                if (cr[q] < -1e8f) cr[q] = (float)clearance(lo[0] + qx*h, lo[1] + qy*h, lo[2] + qz*h);
+                if (cr[q] <= 0) continue;
+                float v = tg[q] ? best[c] : (cr[q] < best[c] ? cr[q] : best[c]);
+                if (v > best[q]) {
+                    best[q] = v;
+                    bott[q] = (tg[q] || cr[q] >= best[c]) ? bott[c] : q;
+                    nk_push(&heap, &nh, &cap, v, q);
+                }
+            }
+        }
+        free(heap);
+    }
+    free(cr); free(best); free(bott); free(tg); free(done);
+    return ans;
+}
+static int nm_neck(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { fprintf(stderr, "cannot read %s\n", path); return 0; }
+    int nl = 0, cap = 0; double (*st)[3] = NULL; double **dots = NULL; int *nd = NULL;
+    double sx, sy, sz; int n;
+    while (fscanf(f, " LOBE %lf %lf %lf %d", &sx, &sy, &sz, &n) == 4) {
+        if (nl == cap) {
+            cap = cap ? cap * 2 : 16;
+            st = realloc(st, cap * sizeof(*st)); dots = realloc(dots, cap * sizeof(*dots)); nd = realloc(nd, cap * sizeof(*nd));
+        }
+        st[nl][0] = sx; st[nl][1] = sy; st[nl][2] = sz; nd[nl] = n;
+        dots[nl] = malloc((n > 0 ? n : 1) * 3 * sizeof(double));
+        for (int i = 0; i < n; i++)
+            if (fscanf(f, "%lf %lf %lf", &dots[nl][3*i], &dots[nl][3*i+1], &dots[nl][3*i+2]) != 3) { fclose(f); return 0; }
+        nl++;
+    }
+    fclose(f);
+    double *ans = malloc((nl > 0 ? nl : 1) * sizeof(double));
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int i = 0; i < nl; i++) ans[i] = nd[i] > 0 ? nk_one(st[i], dots[i], nd[i]) : -1;
+    for (int i = 0; i < nl; i++) {
+        if (ans[i] > 0) printf("%.3f\n", ans[i]); else printf("-\n");
+        free(dots[i]);
+    }
+    free(st); free(dots); free(nd); free(ans);
+    return 1;
+}
+
 static void nm_march(double sample, double endrad, double clipstop) {
     double _t0 = now_ms();
     nm_cap = clipstop + 2.0;
@@ -724,6 +886,7 @@ static void usage(const char *a0) {
         "  --conn PROBE GRID Connolly pass (GRID 0 = 0.7*PROBE), needs --sph/--tsv\n"
         "  --ignore R1,R2    drop residues by name before the search (HOLE IGNORE)\n"
         "  --centres FILE    skip the search, take 't x y z r' centres from FILE\n"
+        "  --neck FILE       no search: neck of each lateral opening in FILE\n"
         "  --quiet           no slice listing on stdout\n", a0);
 }
 
@@ -735,13 +898,14 @@ int main(int argc, char **argv)
 {
     if (argc < 11) { usage(argv[0]); return 2; }
     nm_set_wait_policy(argv);
-    const char *sph = NULL, *tsv = NULL, *ignore = NULL, *centres = NULL;
+    const char *sph = NULL, *tsv = NULL, *ignore = NULL, *centres = NULL, *neck = NULL;
     double probe = 0, grid = 0; int conn = 0, quiet = 0;
     for (int a = 11; a < argc; a++) {
         if (!strcmp(argv[a], "--sph") && a + 1 < argc) sph = argv[++a];
         else if (!strcmp(argv[a], "--tsv") && a + 1 < argc) tsv = argv[++a];
         else if (!strcmp(argv[a], "--ignore") && a + 1 < argc) ignore = argv[++a];
         else if (!strcmp(argv[a], "--centres") && a + 1 < argc) centres = argv[++a];
+        else if (!strcmp(argv[a], "--neck") && a + 1 < argc) neck = argv[++a];
         else if (!strcmp(argv[a], "--conn") && a + 2 < argc) { conn = 1; probe = atof(argv[++a]); grid = atof(argv[++a]); }
         else if (!strcmp(argv[a], "--quiet")) quiet = 1;
         else { usage(argv[0]); return 2; }
@@ -762,6 +926,7 @@ int main(int argc, char **argv)
     nm_setup_frame(cp, cv);
     build_grid();
     double t2 = now_ms();
+    if (neck) return nm_neck(neck) ? 0 : 1;
     if (centres) { if (!ho_load_centres(centres)) return 1; }
     else nm_march(sample, endrad, endrad);
     double t3 = now_ms();

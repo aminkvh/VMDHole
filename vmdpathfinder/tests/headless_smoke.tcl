@@ -3152,7 +3152,7 @@ for {set _i 0} {$_i < 200} {incr _i} {
 for {set _i 0} {$_i < 200} {incr _i} {
     lappend _lzt [list [expr {-5.0 + ($_i % 10)}] [expr {3.0 + 0.1 * (($_i % 7) - 3) * 0.1}]]
 }
-set _fl [::VMDPathFinder::_conn_frame_lobes [dict create lat_zt $_lzt]]
+set _fl [::VMDPathFinder::_conn_split_lobes [dict create lat_zt $_lzt]]
 chk "two clouds a half-turn apart are two lobes" [llength $_fl] 2
 
 # The identity trap: single-link agglomeration walks two lobes of ONE frame into
@@ -3213,7 +3213,7 @@ for {set _i 0} {$_i < 20} {incr _i} {
     lappend _elzt [list 20.0 [expr {3.0 + 0.01*$_i}]]
 }
 set _ecls [dict create lat_zt $_elzt escaped_ranges {{4.0 6.0}}]
-set _elobes [::VMDPathFinder::_conn_frame_lobes $_ecls]
+set _elobes [::VMDPathFinder::_conn_split_lobes $_ecls]
 chk "two lobes, one entirely inside an escaped range, one not" [llength $_elobes] 2
 foreach _lb $_elobes {
     lassign $_lb _ezc _eaz _en _eidx _eef
@@ -3657,12 +3657,10 @@ array unset ::VMDPathFinder::state
 array set ::VMDPathFinder::state $_sv_state2
 file delete -force $_lpdir
 
-# --- Neck radius (both A: real geometry, and B: margin-relative) ----------------
-# A synthetic lat_zt (bypasses .sph parsing entirely - see the comment near line
-# 34 on why a real run directory is never a fixture): 25 dots, one connected
-# cluster (t spans 2.0-6.8, all in adjacent 3.0-wide z-cells, same azimuth bin),
-# wall a constant 3.0, all at rr=6.0 except ONE deliberately at rr=5.3 - the
-# unambiguous minimum, i.e. the lobe's real point of closest approach.
+# --- Lobe neck and stretch ------------------------------------------------
+# The split leaves the neck blank (nm_search fills it) and reports stretch: how
+# far the furthest dot reaches past the margin band. Synthetic lat_zt: 25 dots,
+# one cluster, wall a constant 3.0, rr 6.0 except one at 5.3.
 set _zt {}
 for {set _i 0} {$_i < 25} {incr _i} {
     set _t [expr {2.0 + 0.2*$_i}]
@@ -3670,31 +3668,34 @@ for {set _i 0} {$_i < 25} {incr _i} {
     lappend _zt [list $_t 0.05 $_rr 3.0]
 }
 set _synthcls [dict create lat_zt $_zt n_lat [llength $_zt] escaped_ranges {}]
-set _necklobes [::VMDPathFinder::_conn_frame_lobes $_synthcls]
-chk "one lobe found in the synthetic cluster" [llength $_necklobes] 1
-lassign [lindex $_necklobes 0] _nz _na _nn _nidx _nef _neck_a _neck_b
-# NECK is now the clearance where the opening LEAVES the pore (exit dot's
-# distance past the traced wall), and the second number is STRETCH - how far the
-# furthest dot reaches beyond the margin band. Synthetic lobe: wall a constant
-# 3.0, exit dot at rr=5.3, furthest at rr=6.0, margin 2.0.
-#   neck  = 5.3 - 3.0 = 2.3
-#   str   = 6.0 - 3.0 - 2.0 = 1.0
 set _sv_mg [expr {[info exists ::VMDPathFinder::state(conn_pore_margin)] ? $::VMDPathFinder::state(conn_pore_margin) : 2.0}]
 set ::VMDPathFinder::state(conn_pore_margin) 2.0
-set _necklobes [::VMDPathFinder::_conn_frame_lobes $_synthcls]
-lassign [lindex $_necklobes 0] _nz _na _nn _nidx _nef _neck_a _neck_b
-chk "neck is the clearance past the wall at the lobe's EXIT (5.3-3.0)" \
-    [format %.1f $_neck_a] 2.3
-chk "stretch is the furthest dot beyond the margin band (6.0-3.0-2.0)" \
-    [format %.1f $_neck_b] 1.0
-# Stretch moves with Margin; neck does not - that is the whole point of the pair.
+set _necklobes [::VMDPathFinder::_conn_split_lobes $_synthcls]
+chk "one lobe found in the synthetic cluster" [llength $_necklobes] 1
+lassign [lindex $_necklobes 0] _nz _na _nn _nidx _nef _neck _stretch
+chk "the split leaves the neck for the route search" $_neck ""
+chk "stretch is the furthest dot beyond the margin band (6.0-3.0-2.0)" [format %.1f $_stretch] 1.0
 set ::VMDPathFinder::state(conn_pore_margin) 1.0
-lassign [lindex [::VMDPathFinder::_conn_frame_lobes $_synthcls] 0] _z2 _a2 _n2 _i2 _e2 _neck_a2 _neck_b2
-chk "neck is margin-independent" [format %.1f $_neck_a2] 2.3
-chk "...while stretch tracks the margin (6.0-3.0-1.0)" [format %.1f $_neck_b2] 2.0
+chk "...and tracks the margin (6.0-3.0-1.0)" \
+    [format %.1f [lindex [lindex [::VMDPathFinder::_conn_split_lobes $_synthcls] 0] 6]] 2.0
 set ::VMDPathFinder::state(conn_pore_margin) $_sv_mg
+chk "_conn_frame_lobes reads the lobes the classifier stored" \
+    [llength [::VMDPathFinder::_conn_frame_lobes [dict create lobes $_necklobes n_lat 25]]] 1
+chk "...and has nothing to say for a cloud without them" \
+    [::VMDPathFinder::_conn_frame_lobes [dict create lat_zt $_zt]] ""
+# The engine's answer becomes the stored neck: blank when it had none, the
+# end radius when the route is wider than the search looks ("open").
+chk "a fitted neck is stored as it is" [::VMDPathFinder::_conn_neck_value 1.72 22.0] 1.72
+chk "a route wider than the end radius reads open (= endrad)" [::VMDPathFinder::_conn_neck_value 31.5 22.0] 22.0
+chk "no answer leaves the neck blank" [list [::VMDPathFinder::_conn_neck_value - 22.0] [::VMDPathFinder::_conn_neck_value "" 22.0] [::VMDPathFinder::_conn_neck_value -1 22.0]] {{} {} {}}
+chk "_conn_nearest_t picks the closest sorted position" \
+    [list [::VMDPathFinder::_conn_nearest_t {0 1 2 3} 2.4] [::VMDPathFinder::_conn_nearest_t {0 1 2 3} -5] [::VMDPathFinder::_conn_nearest_t {0 1 2 3} 9]] {2 0 3}
+chk "_conn_lobe_necks hands the lobes back untouched without a centreline" \
+    [::VMDPathFinder::_conn_lobe_necks /nonexistent.sph [dict create lobes $_necklobes lateral {}] {0 0 1} {0 0 0}] $_necklobes
+chk "the neck cell reads open at the search's end radius" \
+    [expr {[string first {? "open" :} [info body ::VMDPathFinder::_refresh_conn_lobes_panel]] >= 0}] 1
 
-# _conn_pool_lobe_sites must carry neck_a/neck_b through its instance tuples.
+# _conn_pool_lobe_sites must carry neck/stretch through its instance tuples.
 # Named nka/nkb rather than na/nb deliberately - this proc already has azimuth-
 # mean locals called na/nb; checked by sabotage that reusing those names does
 # NOT actually corrupt anything (lassign refreshes them before the later
@@ -3713,7 +3714,7 @@ lassign $_site0 _sz _sa _sn _sinst
 chk "...preserving azimuth 0.0 (not corrupted by a neck-radius variable name collision)" \
     [format %.4f $_sa] 0.0000
 set _i1 [lindex $_sinst 0]; set _i2 [lindex $_sinst 1]
-chk "...and both instances carry their own neck_a/neck_b through unmodified" \
+chk "...and both instances carry their own neck/stretch through unmodified" \
     [list [lindex $_i1 4] [lindex $_i1 5] [lindex $_i2 4] [lindex $_i2 5]] {5.0 2.0 7.0 4.0}
 
 # --- Changing the pore method resets EVERY tab's property picker ----------------
@@ -3798,7 +3799,7 @@ set ::VMDPathFinder::state(extra_cards) $_sv_ec6
 # sitting dead centre in the pore mouth, well beyond the last traced sphere,
 # measured as far off-centre and got classified as lateral spill. That is why
 # the pore mesh lost its ends. The distance must be purely RADIAL.
-set _cb [info body ::VMDPathFinder::_conn_classify_sph]
+set _cb [info body ::VMDPathFinder::_conn_classify_tcl]
 chk "the classifier strips the axial component before measuring distance" \
     [expr {[string first {set _axc [expr {$dx*$ux + $dy*$uy + $dz*$uz}]} $_cb] >= 0}] 1
 chk "...and no longer takes a raw 3-D distance to the clamped centre" \
@@ -4968,6 +4969,11 @@ chk "the package's parameter file uses the analysed frame list, not frame_spec" 
 # package before reaching it or when nothing was actually written.
 chk "save_package refuses a re-entrant call" \
     [expr {[string first {_pkg_running} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+# The user picks the tabs first; an unticked tab is skipped and says so.
+chk "save_package asks which tabs to include before choosing a folder" \
+    [expr {[string first {_pkg_choose} [info body ::VMDPathFinder::save_package]] < [string first {tk_chooseDirectory} [info body ::VMDPathFinder::save_package]]}] 1
+chk "...and skips a tab that was not ticked" \
+    [expr {[string first {(not ticked)} [info body ::VMDPathFinder::save_package]] >= 0}] 1
 chk "save_package checks the abort flag inside its export loop" \
     [expr {[string first {_abort_requested} [info body ::VMDPathFinder::save_package]] >= 0}] 1
 chk "save_package only counts a tab as Included when a file actually landed" \
@@ -5177,12 +5183,17 @@ chk "_conn_classify_cached promotes a cache hit (unset then re-set), not a no-op
 # The log's per-frame filter matched a braced pattern with a backslash line
 # continuation, which Tcl does NOT honour inside braces - the continuation
 # became literal characters and broke the branch that followed it.
-foreach _t {"Building surface for frame 3" "surface 3 of 10" "smoothing frame 2" \
-            "analysing frame 5" "Loading surface for frame 7"} {
-    chk "log filter matches: $_t" [::VMDPathFinder::_frame_progress_line $_t] 1
+# The rule is the SHAPE of a progress line - it ends in an ellipsis and names a
+# frame or surface - not a word list, which missed most of them.
+foreach _t {"Building surface for frame 3..." "Loading surface for frame 7..." \
+            "HOLE: 3 / 100 frame(s) (8 parallel)..." "Hydration: binning frame 4 / 20 ..." \
+            "Preparing surface 2 / 9 for batch\u2026" "Rendering frame 12..."} {
+    chk "log filter hides: $_t" [::VMDPathFinder::_frame_progress_line $_t] 1
 }
-chk "log filter does not match a run summary" \
-    [::VMDPathFinder::_frame_progress_line "Run 20260909-120000 - 10 frame(s), sel protein"] 0
+foreach _t {"Run 20260909-120000 - 10 frame(s), sel protein" "Loaded triangulated surface for frame 3." \
+            "Surface pre-build complete for 10 frame(s)." "Mean surface: no centreline"} {
+    chk "log filter keeps: $_t" [::VMDPathFinder::_frame_progress_line $_t] 0
+}
 
 chk "the mesher serves capsule runs" \
     [expr {[string first {capsule} [info body ::VMDPathFinder::_csg_can_mesh]] >= 0}] 1
@@ -5198,11 +5209,20 @@ foreach _p {surface_mesh surface_mesh_cmd prebuild_surfaces_parallel} {
 }
 set _sv_pm2 $::VMDPathFinder::state(pore_method)
 set ::VMDPathFinder::state(pore_method) capsule
-# -colour is the half that clipped the surface away, so that is what is
-# asserted. The .sph half cannot be checked on a made-up path: _capsule_sph_kept
-# hands the original file back when it has no slices to keep.
-chk "...which under capsule drops -colour" \
-    [lindex [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] 1] 0
+# Colour banding is KEPT under capsule; what clipped the surface was one
+# header, repaired after sph_process by _capsule_sos_fix. The .sph half cannot
+# be checked on a made-up path: _capsule_sph_kept hands the original file back
+# when it has no slices to keep.
+chk "...which under capsule keeps -colour" \
+    [lindex [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] 1] 1
+chk "...and recognises the borrowed end-cap header sph_process gives the third band" \
+    [::VMDPathFinder::_capsule_sos_is_borrowed_header "     1.00000    -1.00000    -1.00000    -1.00000     0.00000     0.00000     0.00000"] 1
+chk "...but not a real band header" \
+    [::VMDPathFinder::_capsule_sos_is_borrowed_header "     1.00000     7.00000   -55.00000    17.00000     0.00000     0.00000     0.00000"] 0
+foreach _p {_legacy_sos surface_mesh_cmd prebuild_surfaces_parallel} {
+    chk "$_p repairs the capsule header after sph_process" \
+        [expr {[string first {_capsule_sos_fix} [info body ::VMDPathFinder::$_p]] >= 0}] 1
+}
 chk "...and routes the .sph through the kept-slices filter" \
     [expr {[string first {_capsule_sph_kept} \
         [info body ::VMDPathFinder::_capsule_sos_input]] >= 0}] 1
