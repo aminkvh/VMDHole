@@ -1601,10 +1601,14 @@ proc ::VMDPathFinder::_frame_progress_line {text} {
     # Is this one of the line-per-frame progress messages? Matched here, where
     # every status line already passes through, rather than at the dozens of
     # places that write one.
-    return [regexp -nocase \
-        {^(frame [0-9]|processing frame|building surface|loading surface|rendering frame|\
-           surface [0-9]+ of|smoothing frame|pre-building|analys(ing|ed) frame)} \
-        [string trim $text]]
+    # ONE line. A braced pattern does not honour a backslash continuation - the
+    # backslash, newline and indent all become literal characters in the
+    # regexp, so the branch that followed one required leading whitespace and
+    # could never match a trimmed line.
+    set _re {^(frame [0-9]|processing frame|building surface|loading surface}
+    append _re {|rendering frame|surface [0-9]+ of|smoothing frame|pre-building}
+    append _re {|analys(ing|ed) frame)}
+    return [regexp -nocase $_re [string trim $text]]
 }
 
 proc ::VMDPathFinder::_log_status_line {name1 name2 op} {
@@ -53461,12 +53465,21 @@ proc ::VMDPathFinder::_export_figure_eps {canvas filename {hide_tags {}}} {
     # Temporarily hide any live indicator overlays (e.g. the heatmap scrubber)
     # so they don't appear in the exported figure.
     foreach tag $hide_tags { catch {$canvas itemconfigure $tag -state hidden} }
+    # A canvas whose tab has never been shown reports 1x1, and `postscript`
+    # succeeds on it - writing a valid EPS with a one-pixel BoundingBox and no
+    # error to notice. Every drawing routine in this file already refuses a
+    # width of 1; this is the one place that did not.
+    set _cw [winfo width $canvas]; set _ch [winfo height $canvas]
+    if {$_cw <= 1 || $_ch <= 1} {
+        foreach tag $hide_tags { catch {$canvas itemconfigure $tag -state normal} }
+        tk_messageBox -icon info -type ok -parent $w -title "Export EPS" \
+            -message "This plot has not been drawn yet - open its tab once, then export."
+        return
+    }
     set err ""
     catch {
         $canvas postscript -colormode color -file $filename \
-            -x 0 -y 0 \
-            -width  [winfo width  $canvas] \
-            -height [winfo height $canvas]
+            -x 0 -y 0 -width $_cw -height $_ch
     } err
     foreach tag $hide_tags { catch {$canvas itemconfigure $tag -state normal} }
     if {$err ne ""} {
@@ -53696,26 +53709,42 @@ proc ::VMDPathFinder::save_package {} {
         return
     }
     set done {}; set skipped {}
+    set nb $w.plotframe.nb
+    set _prev_tab ""
+    catch {set _prev_tab [$nb select]}
     _begin_calc
     _pkg_capture_on $dir
     if {[catch {
         foreach {k lbl csv_cmd fig_cmd} [_pkg_tabs] {
             if {![_tab_has_data $k]} { lappend skipped $lbl; continue }
             set state(status) "Packaging: $lbl..."
+            # SHOW the tab before exporting it. Every plot here is drawn only
+            # while its own tab is on screen, so a tab never visited had a 1x1
+            # canvas - which the EPS exporter used to write as a valid,
+            # one-pixel, blank figure with no error to notice (see
+            # _export_figure_eps's own guard, added alongside this).
+            catch {$nb select $nb.$k}
+            catch {update idletasks}
+            catch {redraw_visible_analysis_tab}
             catch {update idletasks}
             catch {uplevel #0 $csv_cmd}
             catch {uplevel #0 $fig_cmd}
             lappend done $lbl
         }
     } _perr]} { }
+    catch {if {$_prev_tab ne ""} { $nb select $_prev_tab }}
     _pkg_capture_off
     # The parameters that produced all of it, beside it.
     set _files {}
     foreach f $_pkg_written { if {[file exists $f]} { lappend _files [file tail $f] } }
     catch {
-        set _mol [resolve_molid_or -1]
-        set _frames [expr {[info exists state(frame_spec)] ? $state(frame_spec) : ""}]
-        _write_run_parameters $dir $stamp $_mol $state(selection) $_frames
+        # The analysed frames, not state(frame_spec). _write_run_parameters
+        # reports [llength $frames], and "all" is one word - so the spec made
+        # every package claim it covered a single frame.
+        variable result_frames
+        variable tunnel_result_frames
+        set _frames [expr {[analysis_mode] eq "tunnel" ? $tunnel_result_frames : $result_frames}]
+        _write_run_parameters $dir $stamp [resolve_molid_or -1] $state(selection) $_frames
     }
     _pkg_write_readme $dir $stamp $done $skipped $_files
     _end_calc

@@ -4942,6 +4942,36 @@ chk "the package restores tk_getSaveFile and tk_messageBox" \
 chk "...and save_package always calls the teardown" \
     [expr {[string first {_pkg_capture_off} [info body ::VMDPathFinder::save_package]] >= 0}] 1
 
+# A tab never visited has a 1x1 canvas (ttk only sizes the SELECTED page), and
+# `postscript` on a 1x1 canvas used to succeed silently - a valid, blank,
+# one-pixel EPS with no error. Both halves of the fix are asserted: the
+# exporter refuses a too-small canvas, and the package selects each tab
+# before exporting it rather than trusting whatever was on screen when the
+# user opened the dialog.
+chk "the EPS exporter refuses a canvas that was never shown" \
+    [expr {[string first {$_cw <= 1} [info body ::VMDPathFinder::_export_figure_eps]] >= 0}] 1
+chk "the package selects each tab before exporting its figure" \
+    [expr {[string first {$nb select $nb.$k} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+chk "...and restores whichever tab was showing when it is done" \
+    [expr {[string first {$nb select $_prev_tab} [info body ::VMDPathFinder::save_package]] >= 0}] 1
+
+# The parameter file must report the ANALYSED frames, not the frame_spec text -
+# "all" is one word, and _write_run_parameters reports [llength $frames].
+chk "the package's parameter file uses the analysed frame list, not frame_spec" \
+    [expr {[string first {_write_run_parameters $dir $stamp [resolve_molid_or -1] $state(selection) $_frames} \
+        [info body ::VMDPathFinder::save_package]] >= 0
+        && [string first {$state(frame_spec)} [info body ::VMDPathFinder::save_package]] < 0}] 1
+
+# The log's per-frame filter matched a braced pattern with a backslash line
+# continuation, which Tcl does NOT honour inside braces - the continuation
+# became literal characters and broke the branch that followed it.
+foreach _t {"Building surface for frame 3" "surface 3 of 10" "smoothing frame 2" \
+            "analysing frame 5" "Loading surface for frame 7"} {
+    chk "log filter matches: $_t" [::VMDPathFinder::_frame_progress_line $_t] 1
+}
+chk "log filter does not match a run summary" \
+    [::VMDPathFinder::_frame_progress_line "Run 20260909-120000 - 10 frame(s), sel protein"] 0
+
 chk "the mesher serves capsule runs" \
     [expr {[string first {capsule} [info body ::VMDPathFinder::_csg_can_mesh]] >= 0}] 1
 
