@@ -24,26 +24,6 @@ Additional exports include summary metrics, bottleneck residues, unrolled
 pore-wall layers, and tunnel lining data. Inspect the CSV header: it is the
 authoritative statement of columns and units for that export.
 
-## Save Package
-
-Choose **File > Save Package**, select the plot tabs to include, then choose
-the destination folder. Only tabs with data can be selected. Each selected tab
-exports its CSV and figure.
-
-Export bottleneck residues, unrolled pore-wall layers, tunnel lining, opening
-tables, and cavity CSVs separately from their own dialogs.
-
-The folder also contains:
-
-| File | Contents |
-|---|---|
-| `run_<id>.txt` | selection, frame summary, pore axis, and pore calculation settings; not a complete record of tunnel or downstream-analysis settings |
-| `README.txt` | which tabs were included, which were skipped, and the file list |
-
-Check `README.txt` and the files before sharing the package, especially after
-an interrupted export. Save Package is an export bundle, not a reloadable saved
-run. Record additional settings from the [minimum reporting set](parameters.md#minimum-reporting-set).
-
 ## Run identity
 
 Pore runs receive a timestamp and a short settings hash; the run's folder is

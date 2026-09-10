@@ -107,10 +107,9 @@ part of validating a candidate pathway.
 
 ## Keeping the result
 
-**File > Save Package** collects available plot CSVs and figures into one
-folder. Export lining, cavity, and lateral-opening tables from their own
-dialogs. To reload the analysis later, also keep **Save results** enabled. See
-[Export and import](exports.md).
+Each plot tab's **Export** menu writes its CSV and figure; lining, cavity, and
+lateral-opening tables export from their own dialogs. To reload the analysis
+later, keep **Save results** enabled. See [Export and import](exports.md).
 
 ## Next steps
 

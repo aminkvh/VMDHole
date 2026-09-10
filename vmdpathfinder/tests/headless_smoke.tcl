@@ -4922,61 +4922,6 @@ chk "...and reach the CSV too" \
 chk "no private capsule tube remains" \
     [expr {[llength [info procs ::VMDPathFinder::_build_capsule_stadium*]] == 0 \
         && [llength [info procs ::VMDPathFinder::_capsule_slice_property]] == 0}] 1
-# Save Package must call the SAME exporters the buttons do, or the package and
-# the buttons can drift apart. Asserted on the table those pairs come from.
-set _pkgt [::VMDPathFinder::_pkg_tabs]
-chk "the package covers every plot tab that has an Export menu" \
-    [expr {[llength $_pkgt] / 4}] 7
-chk "...and names the real exporter procs" \
-    [expr {[lsearch -exact $_pkgt ::VMDPathFinder::export_profile_csv] >= 0
-        && [lsearch -exact $_pkgt ::VMDPathFinder::export_ion_flow_csv] >= 0}] 1
-# The capture proxies must always be taken back down: leaving them in place
-# would silently redirect every later Save/Export in the session to the package
-# folder, or swallow every message box.
-chk "the package restores tk_getSaveFile and tk_messageBox" \
-    [expr {[string first {rename ::_vpf_real_getsave ::tk_getSaveFile} \
-              [info body ::VMDPathFinder::_pkg_capture_off]] >= 0
-        && [string first {rename ::_vpf_real_msgbox ::tk_messageBox} \
-              [info body ::VMDPathFinder::_pkg_capture_off]] >= 0}] 1
-chk "...and save_package always calls the teardown" \
-    [expr {[string first {_pkg_capture_off} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-
-# A tab never visited has a 1x1 canvas (ttk only sizes the SELECTED page), and
-# `postscript` on a 1x1 canvas used to succeed silently - a valid, blank,
-# one-pixel EPS with no error. Both halves of the fix are asserted: the
-# exporter refuses a too-small canvas, and the package selects each tab
-# before exporting it rather than trusting whatever was on screen when the
-# user opened the dialog.
-chk "the EPS exporter refuses a canvas that was never shown" \
-    [expr {[string first {$_cw <= 1} [info body ::VMDPathFinder::_export_figure_eps]] >= 0}] 1
-chk "the package selects each tab before exporting its figure" \
-    [expr {[string first {$nb select $nb.$k} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-chk "...and restores whichever tab was showing when it is done" \
-    [expr {[string first {$nb select $_prev_tab} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-
-# The parameter file must report the ANALYSED frames, not the frame_spec text -
-# "all" is one word, and _write_run_parameters reports [llength $frames].
-chk "the package's parameter file uses the analysed frame list, not frame_spec" \
-    [expr {[string first {_write_run_parameters $dir $stamp [resolve_molid_or -1] $state(selection) $_frames} \
-        [info body ::VMDPathFinder::save_package]] >= 0
-        && [string first {$state(frame_spec)} [info body ::VMDPathFinder::save_package]] < 0}] 1
-
-# save_package must not be re-entrant (it proxies the GLOBAL tk_getSaveFile/
-# tk_messageBox; a nested call's teardown would strip the outer call's
-# capture), and it must not mark a tab Included when Abort stopped the
-# package before reaching it or when nothing was actually written.
-chk "save_package refuses a re-entrant call" \
-    [expr {[string first {_pkg_running} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-# The user picks the tabs first; an unticked tab is skipped and says so.
-chk "save_package asks which tabs to include before choosing a folder" \
-    [expr {[string first {_pkg_choose} [info body ::VMDPathFinder::save_package]] < [string first {tk_chooseDirectory} [info body ::VMDPathFinder::save_package]]}] 1
-chk "...and skips a tab that was not ticked" \
-    [expr {[string first {(not ticked)} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-chk "save_package checks the abort flag inside its export loop" \
-    [expr {[string first {_abort_requested} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-chk "save_package only counts a tab as Included when a file actually landed" \
-    [expr {[string first {llength $_pkg_written} [info body ::VMDPathFinder::save_package]] >= 0}] 1
-
 # The Connolly ion-occupancy memo must key on the same discriminators
 # _conn_site_table's own cache does (tolz/tola) - without them, changing the
 # opening-match tolerance re-pooled the site table but left this memo
@@ -5133,13 +5078,6 @@ chk "_conn_ionflow_spheres_fast checks the cache/native directly, not _conn_clas
         && [string first {_conn_classify_native} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] >= 0}] 1
 chk "...and only caches a result it confirmed came from native" \
     [expr {[string first {_conn_classify_cache_store} [info body ::VMDPathFinder::_conn_ionflow_spheres_fast]] >= 0}] 1
-
-# save_package's README write is not individually guarded - open() failing
-# is caught inside _pkg_write_readme, but a puts() failing mid-write is not,
-# and an uncaught throw there would skip _end_calc, leaking _calc_depth
-# (Abort stuck visible, every later calculation refusing to start) forever.
-chk "save_package's readme write cannot skip _end_calc on a mid-write failure" \
-    [expr {[string first "catch \{_pkg_write_readme" [info body ::VMDPathFinder::save_package]] >= 0}] 1
 
 # Dots is meshed by marching cubes whenever _csg_can_mesh allows it (the SAME
 # gate surface_mesh_tag itself uses for the file it writes), regardless of
