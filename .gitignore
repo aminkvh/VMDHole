@@ -166,7 +166,6 @@ paper/benchmarks/real_mole_build/*.dll
 # `git ls-files` by packaging/make_zip.sh - see that script's own header for
 # why there is no checked-in copy any more.
 packaging/vmdpathfinder.zip
-packaging/vmdhole.zip
 packaging/build/
 
 # --- Publication hygiene (2026-08-24): internal development material that
