@@ -2833,6 +2833,8 @@ and counts crossings of the constriction. PBC-safe."
         -variable ::VMDPathFinder::state(ion_flow_view) -command ::VMDPathFinder::_on_ion_flow_view_changed
     $fb.vwm.m add radiobutton -label "Count vs frame" -value count \
         -variable ::VMDPathFinder::state(ion_flow_view) -command ::VMDPathFinder::_on_ion_flow_view_changed
+    $fb.vwm.m add radiobutton -label "Openings" -value openings \
+        -variable ::VMDPathFinder::state(ion_flow_view) -command ::VMDPathFinder::_on_ion_flow_view_changed
     # Passage "Show" picker, offered for Water only (tens of thousands of
     # molecules enter; the ions are few enough to always draw in full):
     # Crossings = only molecules that crossed the constriction, Entered =
@@ -2850,7 +2852,7 @@ and counts crossings of the constriction. PBC-safe."
     # per slice, so at the narrowest point it reads systematically wider than
     # Mean Profile's bottleneck-anchored minimum (measured 0.18-0.26 A on a
     # 394-cluster fixture) - so it moved here rather than being dropped.
-    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore; a molecule that crossed the constriction is coloured by direction and drawn on top.\nCount vs frame: how many are inside the pore at each frame.\n\nThe pore-wall curve r(z) is a trajectory MEAN per slice, not bottleneck-anchored like Mean Profile, so it reads slightly wider at the narrowest point."
+    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore; a molecule that crossed the constriction is coloured by direction and drawn on top.\nCount vs frame: how many are inside the pore at each frame.\nOpenings: how much of the traffic went through each lateral opening (Connolly only).\n\nThe pore-wall curve r(z) is a trajectory MEAN per slice, not bottleneck-anchored like Mean Profile, so it reads slightly wider at the narrowest point."
     menubutton $fb.spm -textvariable ::VMDPathFinder::state(ion_flow_species_disp) \
         -menu $fb.spm.m -relief raised -indicatoron 1 -width 6
     menu $fb.spm.m -tearoff 0
@@ -24267,7 +24269,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "For explicit-water trajectories, set the water-oxygen selection and Compute density and water free energy, G(z) = -kT ln(rho/rho_bulk). Depletion raises this estimate but does not by itself establish a hydrophobic gate. Bulk density is measured from the trajectory, with a reported fallback of 0.0334 A^-3 when needed. CHAP mode applies CHAP-compatible settings. Report the KDE bandwidth, reference density, and energy-floor settings; bandwidth can change barrier height, and sampling-limited dry-bin barriers are lower bounds.\n\n"
 
     $t insert end "Ion & Water\n" h2
-    $t insert end "Use Occupancy %, Passage, or Count vs frame to inspect ions or water. Species > All includes ions only; Water uses one oxygen per molecule from the Hydration water selection. Passage shows molecules entering the near-pore region and is not a complete permeation count. In Pore mode, Permeation counts complete bulk-to-bulk crossings. Rates need saved-frame spacing; conductance from transferred charge also needs an applied voltage. Tunnel mode measures movement along the selected route and does not offer pore bulk-to-bulk permeation.\n\n"
+    $t insert end "Use Occupancy %, Passage, Count vs frame, or Openings to inspect ions or water. Species > All includes ions only; Water uses one oxygen per molecule from the Hydration water selection. Passage shows molecules entering the near-pore region and is not a complete permeation count. In Pore mode, Permeation counts complete bulk-to-bulk crossings. Rates need saved-frame spacing; conductance from transferred charge also needs an applied voltage. Tunnel mode measures movement along the selected route and does not offer pore bulk-to-bulk permeation.\n\n"
 
     $t insert end "Conductance and passability\n" h2
     $t insert end "Geometric conductance treats the pore as resistive slices using the selected bulk conductivity, with optional access resistance. Choose a salt preset or custom conductivity in the metric gear; the default is 150 mM NaCl at 37 C. Spherical, Connolly, Capsule, and ellipse estimates use different cross-sections. Compare like methods and report the conductivity. Ellipse metrics are Spherical-only. Bare/hydrated passability is a radius comparison, not a model of dehydration, binding, or electrostatic barriers.\n\n"
@@ -35639,7 +35641,7 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     label $d.hdr.io -text "Ions \u2003" -font {Helvetica 8 bold} -anchor w
     label $d.hdr.gg -text "\u2699" -font {Helvetica 9} -cursor hand2
     bind $d.hdr.gg <Button-1> {::VMDPathFinder::show_conn_lobes_global_gear}
-    add_tooltip $d.hdr.io "Ion-frames the Ion Flow scan found inside each opening, summed over ALL analysed frames - every frame is classified separately and each ion is attributed using its own frame's geometry. Hover a number for the species breakdown, the mean length of a visit in consecutive frames, and how many visits moved 3 A or more radially (radial travel, not a verified passage). Reads \"-\" until you run an Ion Flow scan."
+    add_tooltip $d.hdr.io "How many times an ion was found inside this opening, counting each frame separately. An ion that stays for 5 frames counts 5.\n\nHover a number for which ions they were, how long a visit lasts, and how many visits also moved 3 A or more outward.\n\nReads \"-\" until you run an Ion & Water scan."
     add_tooltip $d.hdr.gg "Color, property, material, matching, reset and export for ALL regions."
     grid $d.hdr.all -row 0 -column 0 -sticky w -padx 1
     grid $d.hdr.t   -row 0 -column 1 -sticky w -padx 2
@@ -35651,11 +35653,11 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     grid $d.hdr.io  -row 0 -column 7 -sticky w -padx 2
     grid $d.hdr.gg  -row 0 -column 8 -sticky w -padx {2 1}
     add_tooltip $d.hdr.all "Show or hide every region listed below."
-    add_tooltip $d.hdr.s "How often each region was found, as a share of the analysed frames. Click to sort."
-    add_tooltip $d.hdr.n "Neck: narrowest clearance on the widest route from the pore centreline into the opening, in Å. open = wider than the search's end radius. Click to sort."
-    add_tooltip $d.hdr.st "How far the opening stretches past the margin, in Å. Click to sort."
+    add_tooltip $d.hdr.s "In what share of the analysed frames this opening was found. 100% means it is always there. Click to sort."
+    add_tooltip $d.hdr.n "The narrowest point on the way from the pore into this opening, in Å - the widest ball that could pass. \"open\" means nothing narrower than the end radius blocks it. Click to sort."
+    add_tooltip $d.hdr.st "How far the opening reaches out past the pore wall, in Å. Click to sort."
     add_tooltip $d.hdr.ax "Where along the channel axis the opening sits, in Å. Click to sort."
-    add_tooltip $d.hdr.az "Which way round the axis it faces, in degrees. Click to sort."
+    add_tooltip $d.hdr.az "Which way round the channel it faces, in degrees. Two openings on opposite sides are 180 apart. Click to sort."
     pack $d.hdr -anchor w -fill x
     # No panel-wide Property picker: both the color MODE and, when that mode is
     # Property, WHICH property, are chosen on the region's own row.
@@ -36864,13 +36866,16 @@ proc ::VMDPathFinder::_conn_cell_key {t th zcell nth} {
     return "[expr {int(floor($t/$zcell))}],$ti"
 }
 
-proc ::VMDPathFinder::_conn_sample_site {c2s cmin key r} {
-    # The opening a sample sits in: its cell must be one of the opening's,
-    # and it must be as far from the axis as the opening's nearest dot there
-    # (less 0.5 A) - closer in, it is in the lumen behind the opening. "" for
-    # none.
+proc ::VMDPathFinder::_conn_sample_site {c2s cmin cmax key r} {
+    # The opening a sample sits in. Its cell must be one of the opening's, and
+    # it must lie between the opening's nearest and furthest dot there, give
+    # or take the occupancy shell: closer in it is in the lumen behind the
+    # opening, further out it has left into bulk. Without the outer bound an
+    # ion 32 A away in the same direction still counted (measured on the Nav
+    # channel). "" for none.
     if {![dict exists $c2s $key]} { return "" }
-    if {[dict exists $cmin $key] && $r ne "" && $r < [dict get $cmin $key] - 0.5} { return "" }
+    if {$r ne "" && [dict exists $cmin $key] && $r < [dict get $cmin $key] - 0.5} { return "" }
+    if {$r ne "" && [dict exists $cmax $key] && $r > [dict get $cmax $key] + [_ion_flow_shell_value]} { return "" }
     return [dict get $c2s $key]
 }
 
@@ -36942,6 +36947,7 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         set lat [dict get $cls lateral]
         set c2s [dict create]
         set cmin [dict create]
+        set cmax [dict create]
         set li -1
         foreach L $lobes {
             incr li
@@ -36958,9 +36964,10 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
                 dict set c2s $key $sid
                 set rr [expr {sqrt($qx*$qx+$qy*$qy+$qz*$qz)}]
                 if {![dict exists $cmin $key] || $rr < [dict get $cmin $key]} { dict set cmin $key $rr }
+                if {![dict exists $cmax $key] || $rr > [dict get $cmax $key]} { dict set cmax $key $rr }
             }
         }
-        if {[dict size $c2s]} { dict set permap $fr [list $c2s $cmin $dth] }
+        if {[dict size $c2s]} { dict set permap $fr [list $c2s $cmin $dth $cmax] }
     }
     if {![dict size $permap]} { return {} }
 
@@ -36978,8 +36985,8 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         foreach t $zs th $azs f $fs rr $rs {
             set site ""
             if {$th ne "" && $t ne "" && [dict exists $permap $f]} {
-                lassign [dict get $permap $f] c2s cmin dth
-                set site [_conn_sample_site $c2s $cmin \
+                lassign [dict get $permap $f] c2s cmin dth cmax
+                set site [_conn_sample_site $c2s $cmin $cmax \
                     [_conn_cell_key $t [expr {$th - $dth}] $zcell $nth] $rr]
             }
             if {$site eq ""} {
@@ -43781,6 +43788,7 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
     set pi 3.14159265358979
     set F 0.0
     set _sub 0
+    set _subF 0.0
     foreach row $crows {
         lassign $row coord rad re
         set r ""
@@ -43789,6 +43797,7 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
         } elseif {[string is double -strict $rad] && $rad > 0} {
             set r $rad
             incr _sub
+            set _subF [expr {$_subF + $samp / ($pi * $r * $r)}]
         }
         if {$r eq ""} { continue }
         set F [expr {$F + $samp / ($pi * $r * $r)}]
@@ -43796,8 +43805,18 @@ proc ::VMDPathFinder::_conn_F_from_rows {crows} {
     if {$F <= 0} { return "" }
     variable _conn_F_substituted
     set _conn_F_substituted [list $_sub $n]
+    # Once per run, with the size of the effect. It used to print for every
+    # frame, and a line that says "hybrid" without saying how much is one the
+    # reader cannot act on: on the Nav channel it is the last slice at the
+    # mouth, 0.03% of F.
     if {$_sub > 0} {
-        catch {vmdcon -warn "VMDPathFinder: Connolly conductance factor used the SPHERICAL radius on $_sub of $n slices (no usable Requiv there) - the figure is a hybrid, not pure Connolly."}
+        variable _conn_F_sub_said
+        set _msg [format "VMDPathFinder: Connolly conductance factor used the spherical radius on %d of %d slices (no Connolly cross-section there); they are %.2f%% of F." \
+            $_sub $n [expr {100.0*$_subF/$F}]]
+        if {![info exists _conn_F_sub_said] || $_conn_F_sub_said ne $_msg} {
+            set _conn_F_sub_said $_msg
+            catch {vmdcon -warn $_msg}
+        }
     }
     return $F
 }
@@ -47810,9 +47829,10 @@ proc ::VMDPathFinder::_on_ion_flow_view_changed {} {
     # no recompute (and no re-filter) needed, same as _on_hydration_view_changed.
     variable state
     set state(ion_flow_view_disp) [switch -- $state(ion_flow_view) {
-        passage { expr {"Passage"} }
-        count   { expr {"Count vs frame"} }
-        default { expr {"Occupancy %"} }
+        passage  { expr {"Passage"} }
+        count    { expr {"Count vs frame"} }
+        openings { expr {"Openings"} }
+        default  { expr {"Occupancy %"} }
     }]
     catch {_ion_flow_sync_bar_vis}
     draw_ion_flow_tab
@@ -48040,9 +48060,90 @@ proc ::VMDPathFinder::draw_ion_flow_tab {} {
         _draw_ion_passage_view
     } elseif {$_v eq "count"} {
         _draw_ion_count_view
+    } elseif {$_v eq "openings"} {
+        _draw_ion_flow_openings
     } else {
         _draw_ion_flow_occupancy
     }
+}
+
+proc ::VMDPathFinder::_draw_ion_flow_openings {} {
+    # One row per lateral opening: how much of the ion and water traffic the
+    # scan found inside it. Connolly only - there are no openings otherwise.
+    variable w
+    variable state
+    set cv $w.plotframe.nb.ionflow.cv
+    $cv delete all
+    set W [winfo width $cv]; set H [winfo height $cv]
+    if {$W < 80 || $H < 80} { return }
+    if {$state(pore_method) ne "connolly"} {
+        $cv create text [expr {$W/2}] [expr {$H/2}] -anchor c -width [expr {$W-40}] \
+            -justify center -font {Helvetica 10} \
+            -text "Openings are found by the Connolly method.\nRun with Method = Connolly to fill this view."
+        return
+    }
+    set table [_conn_site_table]
+    if {![dict size $table] || [dict get $table status] ne "ok"} {
+        $cv create text [expr {$W/2}] [expr {$H/2}] -anchor c -width [expr {$W-40}] \
+            -justify center -font {Helvetica 10} \
+            -text "No openings yet. [_conn_site_status_note [expr {[dict size $table] ? [dict get $table status] : {empty}}]]"
+        return
+    }
+    set occ [_conn_opening_occupancy]
+    if {![dict size $occ]} {
+        $cv create text [expr {$W/2}] [expr {$H/2}] -anchor c -width [expr {$W-40}] \
+            -justify center -font {Helvetica 10} \
+            -text "Run an Ion & Water scan to fill this view."
+        return
+    }
+    set nf [llength [dict get $table frames]]
+    set cols {70 150 235 320 405 490 575}
+    set y 18
+    foreach {x t} [list 24 "Opening" [lindex $cols 0] "Seen" [lindex $cols 1] "Ion frames" \
+                        [lindex $cols 2] "Water frames" [lindex $cols 3] "Ion visit" \
+                        [lindex $cols 4] "Water visit" [lindex $cols 5] "Crossings" \
+                        [lindex $cols 6] "Species"] {
+        $cv create text $x $y -anchor w -font {Helvetica 9 bold} -text $t
+    }
+    incr y 6
+    $cv create line 20 $y [expr {$W-20}] $y -fill "#b0b0b0"
+    incr y 14
+    set sid 0
+    set any 0
+    foreach st [dict get $table sites] {
+        incr sid
+        if {![_conn_site_persistent $table $sid]} continue
+        if {$y > $H-16} break
+        set any 1
+        set e [expr {[dict exists $occ $sid] ? [dict get $occ $sid] : {}}]
+        set ions  [expr {[dict size $e] ? [dict get $e ions] : 0}]
+        set wat   [expr {[dict size $e] ? [dict get $e waters] : 0}]
+        set dw    [expr {[dict size $e] ? [dict get $e dwell] : 0.0}]
+        set wdw   [expr {[dict size $e] ? [dict get $e wdwell] : 0.0}]
+        set cr    [expr {[dict size $e] ? [dict get $e cross] : 0}]
+        set sps {}
+        if {[dict size $e]} {
+            dict for {_sp _n} [dict get $e species] { lappend sps "$_sp $_n" }
+        }
+        set seen [format "%.0f%%" [expr {100.0*[lindex $st 2]/($nf > 0 ? $nf : 1)}]]
+        foreach {x t} [list 24 "OP$sid" [lindex $cols 0] $seen [lindex $cols 1] $ions \
+                            [lindex $cols 2] $wat [lindex $cols 3] [format "%.1f" $dw] \
+                            [lindex $cols 4] [format "%.1f" $wdw] [lindex $cols 5] $cr \
+                            [lindex $cols 6] [join $sps ", "]] {
+            $cv create text $x $y -anchor w -font {Helvetica 9} -text $t
+        }
+        incr y 16
+    }
+    if {!$any} {
+        $cv create text [expr {$W/2}] [expr {$H/2}] -anchor c -font {Helvetica 10} \
+            -text "No opening is listed at the current Seen filter."
+        return
+    }
+    incr y 8
+    $cv create text 24 $y -anchor w -font {Helvetica 8} -fill gray40 -width [expr {$W-48}] \
+        -text "Counted over the $nf analysed frames. An ion or water counts for a frame when\
+it sits inside that opening in that frame. Visit = how many frames in a row it stays.\
+Crossings = visits that also moved 3 A or more away from the axis."
 }
 
 proc ::VMDPathFinder::_ionflow_xy {R z rcut zmin zspan ml mt pw ph swap flipz} {

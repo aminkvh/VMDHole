@@ -3688,9 +3688,12 @@ chk "no answer leaves the neck blank" [list [::VMDPathFinder::_conn_neck_value -
 # the opening's nearest dot there - a lumen ion in the same sector does not.
 set _c2s [dict create "3,5" 2]
 set _cmin [dict create "3,5" 9.0]
-chk "a sample out in the opening is attributed to it" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,5" 10.2] 2
-chk "...a lumen sample in the same sector is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,5" 4.0] ""
-chk "...and a sample in another cell is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin "3,6" 10.2] ""
+set _cmax [dict create "3,5" 14.0]
+chk "a sample out in the opening is attributed to it" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin $_cmax "3,5" 10.2] 2
+chk "...a lumen sample in the same sector is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin $_cmax "3,5" 4.0] ""
+chk "...and a sample in another cell is not" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin $_cmax "3,6" 10.2] ""
+chk "...nor one that has left through it into bulk" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin $_cmax "3,5" 32.0] ""
+chk "...while one just outside the last dot still counts" [::VMDPathFinder::_conn_sample_site $_c2s $_cmin $_cmax "3,5" 16.0] 2
 chk "cell keys follow the lobe grid (azimuth wraps)" \
     [list [::VMDPathFinder::_conn_cell_key 7.9 0.0 3.0 24] [::VMDPathFinder::_conn_cell_key -0.1 3.14159 3.0 24]] {2,12 -1,23}
 chk "_conn_nearest_t picks the closest sorted position" \
