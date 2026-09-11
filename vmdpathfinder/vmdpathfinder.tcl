@@ -38464,7 +38464,11 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         # to (the serial fallback path, run in-process, read it correctly -
         # this only showed up on the 8-plus-frame runs that take the fast path).
         set ::VMDPathFinder::state(conn_lobe_minshare) [lindex $_spec 1]
-        set _out [lindex $_spec 2]
+        # The neck search needs the same three the main process uses.
+        set ::VMDPathFinder::state(endrad) [lindex $_spec 2]
+        set ::VMDPathFinder::state(radius_file) [lindex $_spec 3]
+        set ::VMDPathFinder::state(ignore) [lindex $_spec 4]
+        set _out [lindex $_spec 5]
         set _oh [open $_out w]
         # Each frame carries its OWN axis: a tracked run moves CPOINT per frame,
         # and one shared snapshot would classify every frame but the first
@@ -38473,13 +38477,10 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         # empty one) - a worker has no `results`/manifest of its own to derive
         # one from, so the main process resolves it before the job file is
         # written (see the frame_axis/basis job-file build above).
-        foreach _line [lrange $_spec 3 end] {
-            set _f [lindex $_line 0]
-            set _cv [lrange $_line 1 3]
-            set _cp [lrange $_line 4 6]
-            set _basis [lrange $_line 7 12]
-            set _sph [lrange $_line 13 end]
+        foreach _line [lrange $_spec 6 end] {
+            lassign $_line _f _cv _cp _basis _sph _atoms
             if {![file exists $_sph]} continue
+            set ::VMDPathFinder::_conn_lobe_atoms $_atoms
             set _cls [::VMDPathFinder::_conn_classify_sph $_sph $_cv $_cp $_mg $_basis]
             if {![dict size $_cls]} { puts $_oh "N $_f"; continue }
             puts $_oh "C $_f"
@@ -38507,13 +38508,19 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
         if {[catch {set jh [open $jf w]}]} { catch {file delete -force $tmp}; return "" }
         puts $jh [_conn_pore_margin]
         puts $jh [_conn_lobe_min_share]
+        puts $jh $state(endrad)
+        puts $jh $state(radius_file)
+        puts $jh $state(ignore)
         puts $jh $of
         set i 0
         foreach f $frames {
             if {$i % $nw == $w} {
                 if {[dict exists $results $f sph_file]} {
                     lassign [_conn_frame_axis $f] _jcv _jcp _jbasis
-                    puts $jh "$f $_jcv $_jcp $_jbasis [dict get $results $f sph_file]"
+                    # The frame's coordinates, from RAM: without them a worker
+                    # has no atoms and every neck comes back blank.
+                    set _atoms [_conn_frame_coords $f [file join $tmp "frame_$f"]]
+                    puts $jh [list $f $_jcv $_jcp $_jbasis [dict get $results $f sph_file] $_atoms]
                 }
             }
             incr i
@@ -39035,14 +39042,48 @@ proc ::VMDPathFinder::_conn_nearest_t {ts t} {
     return [expr {abs([lindex $ts $lo]-$t) <= abs([lindex $ts $hi]-$t) ? $lo : $hi}]
 }
 
-proc ::VMDPathFinder::_conn_lobe_neck_atoms {in_sph} {
-    # The atoms the frame was searched on, as {path temp}: the kept input file
-    # next to the cloud, else the selection written out again at that frame
-    # (temp 1, the caller deletes it). {"" 0} when neither is possible.
+proc ::VMDPathFinder::_conn_frame_coords {frame path} {
+    # Write one frame's coordinates for an engine, straight from the loaded
+    # molecule: the packed record the engines read, two milliseconds a frame.
+    # The atom identity (names, residues) is built once per selection and
+    # reused; a selection the packed record cannot describe falls back to a
+    # PDB. Returns the path written, or "".
     variable state
+    variable _conn_coord_ident
+    if {[catch {set sel [atomselect [string trim $state(molid)] [string trim $state(selection)] frame $frame]}]} { return "" }
+    set key "[string trim $state(molid)]|[string trim $state(selection)]|[$sel num]"
+    if {![info exists _conn_coord_ident] || [lindex $_conn_coord_ident 0] ne $key} {
+        set tmp [file join [get_temp_base] "vmdpathfinder_ident_[pid].pdb"]
+        set pair [_hole_coord_identity $sel $tmp]
+        catch {file delete $tmp}
+        set _conn_coord_ident [list $key $pair]
+    }
+    set pair [lindex $_conn_coord_ident 1]
+    set rc [catch {
+        if {[llength $pair] == 2} {
+            set path "[file rootname $path].vhb"
+            _write_hole_coord_bin $sel $path [lindex $pair 0] [lindex $pair 1]
+        } else {
+            set path "[file rootname $path].pdb"
+            $sel writepdb $path
+            if {[_should_fix_atom_names]} { _normalize_pdb_atom_names $path }
+        }
+    }]
+    $sel delete
+    if {$rc} { catch {file delete $path}; return "" }
+    return $path
+}
+
+proc ::VMDPathFinder::_conn_lobe_neck_atoms {in_sph} {
+    # The atoms the neck search runs against, as {path delete_after}. A
+    # worker is handed the path; the main process writes the frame from RAM.
     variable results
+    variable _conn_lobe_atoms
+    if {[info exists _conn_lobe_atoms] && $_conn_lobe_atoms ne "" && [file exists $_conn_lobe_atoms]} {
+        return [list $_conn_lobe_atoms 0]
+    }
     set rd [file dirname $in_sph]
-    foreach n {input_frame.pdb input_frame.vhb} {
+    foreach n {input_frame.vhb input_frame.pdb} {
         if {[file exists [file join $rd $n]]} { return [list [file join $rd $n] 0] }
     }
     set frame ""
@@ -39052,13 +39093,8 @@ proc ::VMDPathFinder::_conn_lobe_neck_atoms {in_sph} {
         }
     }
     if {$frame eq ""} { return [list "" 0] }
-    set p [file join [get_temp_base] "vmdpathfinder_neck_[pid]_$frame.pdb"]
-    if {[catch {
-        set sel [atomselect [string trim $state(molid)] [string trim $state(selection)] frame $frame]
-        $sel writepdb $p
-        $sel delete
-        if {[_should_fix_atom_names]} { _normalize_pdb_atom_names $p }
-    }]} { catch {file delete $p}; return [list "" 0] }
+    set p [_conn_frame_coords $frame [file join [get_temp_base] "vmdpathfinder_neck_[pid]_$frame"]]
+    if {$p eq ""} { return [list "" 0] }
     return [list $p 1]
 }
 

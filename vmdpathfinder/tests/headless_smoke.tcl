@@ -5366,6 +5366,17 @@ chk "...on a missing worker output" \
 chk "...and on abort" \
     [expr {[string first {if {[_abort_requested]}} $_clp] >= 0}] 1
 set _cst2 [info body ::VMDPathFinder::_conn_site_table]
+# Each worker is handed the frame's coordinates, written from RAM as the
+# packed record, so it can run the neck search; without them every neck it
+# returned was blank and the main process redid the pass serially.
+chk "workers are handed each frame's coordinates" \
+    [expr {[string first {_conn_frame_coords $f} $_clp] >= 0 \
+        && [string first {_conn_lobe_atoms $_atoms} $_clp] >= 0}] 1
+chk "...and the neck settings" \
+    [expr {[string first {state(endrad) [lindex $_spec 2]} $_clp] >= 0 \
+        && [string first {state(radius_file)} $_clp] >= 0}] 1
+chk "the neck atoms come from the handed path first" \
+    [expr {[string first {_conn_lobe_atoms} [info body ::VMDPathFinder::_conn_lobe_neck_atoms]] >= 0}] 1
 chk "the site table tries the pool before the serial loop" \
     [expr {[string first {_conn_lobes_parallel $_elig_frames} $_cst2] >= 0}] 1
 chk "...and skips the serial loop when the pool answered" \
