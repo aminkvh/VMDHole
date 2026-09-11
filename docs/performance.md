@@ -19,6 +19,19 @@ each benchmark.
 | Tunnel search, compiled engine | the plugin's Tcl fallback | 173x to 231x |
 | Cross-frame tunnel clustering, 1837 pathways | the plugin's Tcl fallback | 23x |
 
+Choosing between the two surface builders, on one Connolly frame of a 197k-atom
+channel (45,000 dots):
+
+| Builder | Time | Triangles |
+|---|---|---|
+| Marching cubes, grid 1.4/0.7 Å | 0.24 s | 44,000 |
+| `sph_process` + `sos_triangle`, dot density 15 | 1.10 s | 103,000 |
+
+The marching-cubes mesher threads across cores (1.37 s on one core, 0.24 s on
+eight) and is the default. Under `sos_triangle`, playback draws every 4th
+triangle by default: drawing all of them costs 475 ms a frame against 94 ms,
+and the frame at rest is always full detail. The mesher needs no such setting.
+
 HOLE comparisons use locally rebuilt `-O2` binaries. Surface-generation timings
 exclude interactive display. The Nelder-Mead 5x result measures the search
 step, not a complete run; the separate 50-frame benchmark showed no overall
