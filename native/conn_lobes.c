@@ -201,6 +201,121 @@ static int cmp_lobe_n_desc(const void *a, const void *b) {
     return ((const Lobe *)b)->n - ((const Lobe *)a)->n;
 }
 
+/* Raise the occupancy threshold until a component falls apart. Two mouths on
+   different sides are often joined by a thin collar of dots hugging the wall,
+   and plain flood fill walks through it (Nav frame 39: one lobe held mouths
+   75 deg apart). Writes a piece id per member cell and returns the piece
+   count; 1 means nothing separated it. */
+static int lobe_split_weak(const int *members, int mh, const int *celln,
+                           int nth, int nz, int cond,
+                           int *piece, int *scratch, int *bfsq)
+{
+    int total = 0, i, j;
+    for (i = 0; i < mh; i++) { piece[i] = 0; total += celln[members[i]]; }
+    if (mh < 4 || total <= 0) return 1;
+    /* scratch maps a cell id to its index in members[], -1 elsewhere */
+    for (i = 0; i < mh; i++) scratch[members[i]] = i;
+    int nlev = 0, levels[16];
+    {
+        int *c = xmalloc((size_t)mh * sizeof(int));
+        int nc = 0;
+        for (i = 0; i < mh; i++) if (celln[members[i]] > cond) c[nc++] = celln[members[i]];
+        for (i = 1; i < nc; i++) { int v = c[i], b = i - 1; while (b >= 0 && c[b] > v) { c[b+1] = c[b]; b--; } c[b+1] = v; }
+        int step = nc > 12 ? nc / 12 : 1;
+        for (i = 0; i < nc && nlev < 16; i += step)
+            if (nlev == 0 || levels[nlev-1] != c[i]) levels[nlev++] = c[i];
+        free(c);
+    }
+    int *lab = xmalloc((size_t)mh * sizeof(int));
+    int result = 1;
+    for (int L = 0; L < nlev && result == 1; L++) {
+        int t = levels[L], ncore = 0;
+        for (i = 0; i < mh; i++) { lab[i] = -1; if (celln[members[i]] >= t) ncore++; }
+        if (ncore < 2) break;
+        int np = 0;
+        for (i = 0; i < mh; i++) {
+            if (lab[i] >= 0 || celln[members[i]] < t) continue;
+            int qh = 0, qt = 0;
+            lab[i] = np; bfsq[qt++] = i;
+            while (qh < qt) {
+                int m = bfsq[qh++], czi = members[m] / nth, cti = members[m] % nth;
+                for (int dz = -1; dz <= 1; dz++) for (int dt = -1; dt <= 1; dt++) {
+                    int nzi = czi + dz; if (nzi < 0 || nzi >= nz) continue;
+                    int nb = nzi * nth + ((cti + dt) % nth + nth) % nth;
+                    int mi = scratch[nb];
+                    if (mi < 0 || lab[mi] >= 0 || celln[nb] < t) continue;
+                    lab[mi] = np; bfsq[qt++] = mi;
+                }
+            }
+            np++;
+        }
+        if (np < 2) continue;
+        /* both halves must be substantial, or this is a speck coming loose */
+        int *dots = xmalloc((size_t)np * sizeof(int));
+        int *keepp = xmalloc((size_t)np * sizeof(int));
+        for (j = 0; j < np; j++) dots[j] = 0;
+        for (i = 0; i < mh; i++) if (lab[i] >= 0) dots[lab[i]] += celln[members[i]];
+        int nbig = 0, floor_ = (int)ceil(total * 0.15);
+        for (j = 0; j < np; j++) { keepp[j] = dots[j] >= floor_ ? nbig++ : -1; }
+        /* Only a split ACROSS the channel is two mouths. Two pieces stacked
+           along the axis at the same angle are one funnel widening, so each
+           kept pair must sit at least 30 deg apart (the pooling tolerance)
+           and share axial ground. */
+        if (nbig >= 2) {
+            double *sa = xmalloc((size_t)nbig * sizeof(double));
+            double *ca = xmalloc((size_t)nbig * sizeof(double));
+            int *zlo = xmalloc((size_t)nbig * sizeof(int));
+            int *zhi = xmalloc((size_t)nbig * sizeof(int));
+            for (j = 0; j < nbig; j++) { sa[j] = ca[j] = 0.0; zlo[j] = INT_MAX; zhi[j] = INT_MIN; }
+            for (i = 0; i < mh; i++) {
+                if (lab[i] < 0 || keepp[lab[i]] < 0) continue;
+                int b = keepp[lab[i]], w = celln[members[i]];
+                double th = ((members[i] % nth) + 0.5) / nth * 2*M_PI - M_PI;
+                sa[b] += w * sin(th); ca[b] += w * cos(th);
+                int zc = members[i] / nth;
+                if (zc < zlo[b]) zlo[b] = zc;
+                if (zc > zhi[b]) zhi[b] = zc;
+            }
+            int across = 0;
+            for (j = 0; j < nbig && !across; j++) for (int k = j+1; k < nbig; k++) {
+                double d = fabs(atan2(sa[j], ca[j]) - atan2(sa[k], ca[k]));
+                if (d > M_PI) d = 2*M_PI - d;
+                int ov = (zhi[j] < zhi[k] ? zhi[j] : zhi[k]) - (zlo[j] > zlo[k] ? zlo[j] : zlo[k]) + 1;
+                int span = (zhi[j]-zlo[j] < zhi[k]-zlo[k] ? zhi[j]-zlo[j] : zhi[k]-zlo[k]) + 1;
+                if (d >= 30.0*M_PI/180.0 && ov * 2 >= span) { across = 1; break; }
+            }
+            free(sa); free(ca); free(zlo); free(zhi);
+            if (!across) nbig = 0;
+        }
+        if (nbig >= 2) {
+            /* the thin cells join whichever half they touch, one ring at a time */
+            int qh = 0, qt = 0;
+            for (i = 0; i < mh; i++) {
+                int p = lab[i] >= 0 ? keepp[lab[i]] : -1;
+                piece[i] = p;
+                if (p >= 0) bfsq[qt++] = i;
+            }
+            while (qh < qt) {
+                int m = bfsq[qh++], czi = members[m] / nth, cti = members[m] % nth;
+                for (int dz = -1; dz <= 1; dz++) for (int dt = -1; dt <= 1; dt++) {
+                    int nzi = czi + dz; if (nzi < 0 || nzi >= nz) continue;
+                    int nb = nzi * nth + ((cti + dt) % nth + nth) % nth;
+                    int mi = scratch[nb];
+                    if (mi < 0 || piece[mi] >= 0) continue;
+                    piece[mi] = piece[m]; bfsq[qt++] = mi;
+                }
+            }
+            for (i = 0; i < mh; i++) if (piece[i] < 0) piece[i] = 0;
+            result = nbig;
+        }
+        free(dots); free(keepp);
+    }
+    free(lab);
+    for (i = 0; i < mh; i++) scratch[members[i]] = -1;
+    if (result == 1) for (i = 0; i < mh; i++) piece[i] = 0;
+    return result;
+}
+
 static void do_classify(double ux, double uy, double uz, double margin,
                         double f1x, double f1y, double f1z, double f2x, double f2y, double f2z) {
     int *pore_dot = xmalloc(g_ndots * sizeof(int));      /* 1 = pore, 0 = lateral */
@@ -264,6 +379,10 @@ static void do_classify(double ux, double uy, double uz, double margin,
         char *seen = xmalloc((size_t)nz * nth); memset(seen, 0, (size_t)nz * nth);
         int *queue = xmalloc((size_t)nz * nth * sizeof(int));
         int *members = xmalloc((size_t)nz * nth * sizeof(int));   /* cell ids in this component */
+        int *piece = xmalloc((size_t)nz * nth * sizeof(int));
+        int *cellmi = xmalloc((size_t)nz * nth * sizeof(int));
+        int *bfsq = xmalloc((size_t)nz * nth * sizeof(int));
+        for (int c = 0; c < nz * nth; c++) cellmi[c] = -1;
         /* A near-empty cell does NOT conduct. Measured on a real frame: the
            widest lobe held 1500 dots over 45 cells at a median of 19 per cell,
            but 10 of them held 1-3 - and dropping just those split it in two.
@@ -321,31 +440,36 @@ static void do_classify(double ux, double uy, double uz, double margin,
                     }
                 }
             }
-            int total = 0;
-            for (int m = 0; m < mh; m++) total += celln[members[m]];
-            if (total < nlat * 0.02) continue;
-            int *idx = xmalloc(total * sizeof(int)); int ni = 0;
-            for (int m = 0; m < mh; m++) for (int k = 0; k < celln[members[m]]; k++) idx[ni++] = cell[members[m]][k];
-            double zs = 0, sa = 0, ca = 0; int nesc = 0;
-            double far_rr = -1, far_wall = 0; int have_far = 0;
-            for (int q = 0; q < ni; q++) {
-                LatPt *p = &lat[idx[q]];
-                zs += p->t; sa += sin(p->az); ca += cos(p->az);
-                int esc = 0;
-                for (int r = 0; r < nranges; r++) if (p->t >= rlo[r]-1.5 && p->t <= rhi[r]+1.5) { esc = 1; break; }
-                if (esc) nesc++;
-                if (!have_far  || p->rr > far_rr)  { far_rr  = p->rr; far_wall  = p->wall; have_far  = 1; }
+            int npiece = lobe_split_weak(members, mh, celln, nth, nz, cond, piece, cellmi, bfsq);
+            for (int pc = 0; pc < npiece; pc++) {
+                int total = 0;
+                for (int m = 0; m < mh; m++) if (piece[m] == pc) total += celln[members[m]];
+                if (total < nlat * 0.02) continue;
+                int *idx = xmalloc(total * sizeof(int)); int ni = 0;
+                for (int m = 0; m < mh; m++) if (piece[m] == pc)
+                    for (int k = 0; k < celln[members[m]]; k++) idx[ni++] = cell[members[m]][k];
+                double zs = 0, sa = 0, ca = 0; int nesc = 0;
+                double far_rr = -1, far_wall = 0; int have_far = 0;
+                for (int q = 0; q < ni; q++) {
+                    LatPt *p = &lat[idx[q]];
+                    zs += p->t; sa += sin(p->az); ca += cos(p->az);
+                    int esc = 0;
+                    for (int r = 0; r < nranges; r++) if (p->t >= rlo[r]-1.5 && p->t <= rhi[r]+1.5) { esc = 1; break; }
+                    if (esc) nesc++;
+                    if (!have_far  || p->rr > far_rr)  { far_rr  = p->rr; far_wall  = p->wall; have_far  = 1; }
+                }
+                if (nlobes >= lobecap) { lobecap = lobecap ? lobecap*2 : 16; lobes = xrealloc(lobes, lobecap*sizeof(Lobe)); }
+                Lobe *lb = &lobes[nlobes++];
+                lb->z = zs / ni; lb->a = atan2(sa, ca); lb->n = ni;
+                lb->ef = (double)nesc / ni;
+                lb->has_kb = have_far;
+                if (have_far) { double v = far_rr - far_wall - margin; lb->kb = v < 0 ? 0.0 : v; } else lb->kb = 0.0;
+                lb->members = idx; lb->nmem = ni;
             }
-            if (nlobes >= lobecap) { lobecap = lobecap ? lobecap*2 : 16; lobes = xrealloc(lobes, lobecap*sizeof(Lobe)); }
-            Lobe *lb = &lobes[nlobes++];
-            lb->z = zs / ni; lb->a = atan2(sa, ca); lb->n = ni;
-            lb->ef = (double)nesc / ni;
-            lb->has_kb = have_far;
-            if (have_far) { double v = far_rr - far_wall - margin; lb->kb = v < 0 ? 0.0 : v; } else lb->kb = 0.0;
-            lb->members = idx; lb->nmem = ni;
         }
         qsort(lobes, nlobes, sizeof(Lobe), cmp_lobe_n_desc);
         free(zi); free(ti); free(seen); free(queue); free(members);
+        free(piece); free(cellmi); free(bfsq);
         for (int c = 0; c < nz*nth; c++) free(cell[c]);
         free(cell); free(cellcap); free(celln);
     }

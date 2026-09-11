@@ -38334,6 +38334,10 @@ proc ::VMDPathFinder::_conn_lobe_cache_sig {} {
     variable results
     variable result_frames
     variable state
+    # v6: a lobe joined to another only through a thin collar of wall-hugging
+    # cells is now split in two (lobe_split_weak) - two mouths on different
+    # sides came back as one opening.
+    #
     # v5: the neck is nm_search's narrowest radius on the route out
     # (_conn_lobe_necks); a v4 cache holds the exit dot's clearance instead.
     #
@@ -38352,7 +38356,7 @@ proc ::VMDPathFinder::_conn_lobe_cache_sig {} {
     # basis (_conn_frame_lobe_basis), not just cvect/cpoint above - a v2 cache
     # predates that and would replay azimuths computed on the OLD, non-rotating
     # basis as if they were already correct.
-    set sig "v5|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)|[_conn_lobe_min_share]"
+    set sig "v6|[_conn_margin_tag]|0|$state(cvect)|$state(cpoint)|[_conn_lobe_min_share]"
     foreach f $result_frames {
         if {![dict exists $results $f sph_file]} continue
         set s [dict get $results $f sph_file]
@@ -38885,6 +38889,138 @@ proc ::VMDPathFinder::_conn_frame_lobes {cls} {
     return [_conn_lobe_drop_specks [dict get $cls lobes] $_nlat]
 }
 
+proc ::VMDPathFinder::_conn_lobe_split_weak {cells occName cond nth} {
+    # Two mouths on different sides of the channel are often joined by a thin
+    # collar of dots hugging the wall between them, and the flood fill above
+    # walks straight through it: on the Nav channel frame 39 one lobe held
+    # mouths 75 deg apart. Raise the occupancy threshold until the piece falls
+    # apart; if it does, and both halves are real, keep the split and give the
+    # thin cells to whichever half they touch. Returns a list of cell lists -
+    # the input unchanged when no threshold separates it.
+    upvar 1 $occName occ
+    set ncell [llength $cells]
+    if {$ncell < 4} { return [list $cells] }
+    set total 0
+    set counts {}
+    foreach c $cells { set n [llength $occ($c)]; incr total $n; lappend counts $n }
+    set counts [lsort -integer -unique $counts]
+    if {[llength $counts] < 2} { return [list $cells] }
+    # At most a dozen levels, evenly spaced through the cell counts.
+    set levels {}
+    set nl [llength $counts]
+    set step [expr {$nl > 12 ? $nl/12 : 1}]
+    for {set i 0} {$i < $nl} {incr i $step} {
+        set t [lindex $counts $i]
+        if {$t > $cond} { lappend levels $t }
+    }
+    set _floor [expr {int(ceil($total * 0.15))}]
+    foreach t $levels {
+        array unset keep; array set keep {}
+        foreach c $cells { if {[llength $occ($c)] >= $t} { set keep($c) 1 } }
+        if {[array size keep] < 2} { break }
+        array unset seen2; array set seen2 {}
+        set pieces {}
+        foreach c [array names keep] {
+            if {[info exists seen2($c)]} continue
+            set seen2($c) 1
+            set q [list $c]; set mem {}
+            while {[llength $q]} {
+                set cc [lindex $q 0]; set q [lrange $q 1 end]
+                lappend mem $cc
+                lassign [split $cc ,] zi ti
+                for {set dz -1} {$dz <= 1} {incr dz} {
+                    for {set dt -1} {$dt <= 1} {incr dt} {
+                        set nb "[expr {$zi+$dz}],[expr {($ti+$dt+$nth) % $nth}]"
+                        if {[info exists keep($nb)] && ![info exists seen2($nb)]} {
+                            set seen2($nb) 1; lappend q $nb
+                        }
+                    }
+                }
+            }
+            lappend pieces $mem
+        }
+        if {[llength $pieces] < 2} continue
+        # Both halves must be substantial, or this is a speck coming loose.
+        set big {}
+        foreach mem $pieces {
+            set n 0
+            foreach c $mem { incr n [llength $occ($c)] }
+            if {$n >= $_floor} { lappend big $mem }
+        }
+        if {[llength $big] < 2} continue
+        # Only a split ACROSS the channel is two mouths: two pieces stacked
+        # along the axis at the same angle are one funnel widening. Each kept
+        # pair must sit at least 30 deg apart (the pooling tolerance) and
+        # share axial ground.
+        set _across 0
+        set _st {}
+        foreach mem $big {
+            set _sa 0.0; set _ca 0.0; set _zl 99999; set _zh -99999
+            foreach c $mem {
+                lassign [split $c ,] _zi _ti
+                set _w [llength $occ($c)]
+                set _th [expr {($_ti + 0.5)/double($nth)*2*acos(-1.0) - acos(-1.0)}]
+                set _sa [expr {$_sa + $_w*sin($_th)}]
+                set _ca [expr {$_ca + $_w*cos($_th)}]
+                if {$_zi < $_zl} { set _zl $_zi }
+                if {$_zi > $_zh} { set _zh $_zi }
+            }
+            lappend _st [list [expr {atan2($_sa,$_ca)}] $_zl $_zh]
+        }
+        set _nst [llength $_st]
+        for {set _i 0} {$_i < $_nst && !$_across} {incr _i} {
+            for {set _j [expr {$_i+1}]} {$_j < $_nst} {incr _j} {
+                lassign [lindex $_st $_i] _a1 _l1 _h1
+                lassign [lindex $_st $_j] _a2 _l2 _h2
+                set _d [expr {abs($_a1-$_a2)}]
+                if {$_d > acos(-1.0)} { set _d [expr {2*acos(-1.0) - $_d}] }
+                set _ov [expr {($_h1 < $_h2 ? $_h1 : $_h2) - ($_l1 > $_l2 ? $_l1 : $_l2) + 1}]
+                set _sp [expr {($_h1-$_l1 < $_h2-$_l2 ? $_h1-$_l1 : $_h2-$_l2) + 1}]
+                if {$_d >= 30.0*acos(-1.0)/180.0 && $_ov*2 >= $_sp} { set _across 1; break }
+            }
+        }
+        if {!$_across} continue
+        # Every other cell joins the piece it is nearest to, spreading outward
+        # one ring at a time so a cell always lands on the side it touches.
+        set assign [dict create]
+        set front {}
+        set pi -1
+        foreach mem $big {
+            incr pi
+            foreach c $mem { dict set assign $c $pi; lappend front $c }
+        }
+        array unset inset; array set inset {}
+        foreach c $cells { set inset($c) 1 }
+        while {[llength $front]} {
+            set next {}
+            foreach c $front {
+                lassign [split $c ,] zi ti
+                set pv [dict get $assign $c]
+                for {set dz -1} {$dz <= 1} {incr dz} {
+                    for {set dt -1} {$dt <= 1} {incr dt} {
+                        set nb "[expr {$zi+$dz}],[expr {($ti+$dt+$nth) % $nth}]"
+                        if {![info exists inset($nb)] || [dict exists $assign $nb]} continue
+                        dict set assign $nb $pv
+                        lappend next $nb
+                    }
+                }
+            }
+            set front $next
+        }
+        set out {}
+        for {set i 0} {$i < [llength $big]} {incr i} { lappend out {} }
+        foreach c $cells {
+            if {![dict exists $assign $c]} continue
+            set pv [dict get $assign $c]
+            set m [lindex $out $pv]; lappend m $c; lset out $pv $m
+        }
+        set res {}
+        foreach m $out { if {[llength $m]} { lappend res $m } }
+        if {[llength $res] >= 2} { return $res }
+    }
+    return [list $cells]
+}
+
 proc ::VMDPathFinder::_conn_split_lobes {cls} {
     # Split one frame's lateral dots into lobes. The cloud is ONE connected
     # component - the lobes join through the lumen they branch from - so
@@ -38990,6 +39126,14 @@ proc ::VMDPathFinder::_conn_split_lobes {cls} {
         }
     }
     # members -> dot indices
+    # One more pass: a piece joined only through a thin collar is two mouths.
+    set _split {}
+    foreach members $out {
+        foreach _piece [_conn_lobe_split_weak $members occ $_cond $nth] {
+            lappend _split $_piece
+        }
+    }
+    set out $_split
     set _out2 {}
     foreach members $out {
         set idx {}

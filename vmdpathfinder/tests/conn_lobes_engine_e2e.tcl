@@ -164,5 +164,73 @@ dict for {b lines} $tris_native {
 }
 chk "every surface's triangle set is BYTE-IDENTICAL to Tcl" $tri_mismatch 0
 
+# --- two mouths on different sides must not come back as one opening -------
+# A synthetic cloud: a straight pore along z, plus two side mouths 90 deg
+# apart at the same height, joined by a thin collar of dots hugging the wall.
+# Plain flood fill walks the collar and reports one lobe.
+set synth [file join $work synth.sph]
+set fh [open $synth w]
+set _n 0
+proc _sph_atom {fh resid x y z r b} {
+    puts $fh [format "ATOM  %5d  Q%s SPH S%4d    %8.3f%8.3f%8.3f%6.2f%6.2f" \
+        1 [expr {$resid < 0 ? "SS" : "SS"}] $resid $x $y $z $r $b]
+}
+# centreline spheres, radius 3, z -20..20
+for {set z -20} {$z <= 20} {incr z} { _sph_atom $fh 1 0 0 $z 3.0 1.0 }
+# pore dots on the wall of that tube
+for {set z -20} {$z <= 20} {incr z} {
+    for {set k 0} {$k < 36} {incr k} {
+        set th [expr {$k*10.0*acos(-1.0)/180.0}]
+        _sph_atom $fh -999 [expr {3.0*cos($th)}] [expr {3.0*sin($th)}] $z 1.15 0.0
+    }
+}
+# mouth A at azimuth 0, mouth B at azimuth 90 deg, both at z 0, out to r 14
+foreach {ax ay} {1.0 0.0 0.0 1.0} {
+    for {set rr 6} {$rr <= 14} {incr rr} {
+        for {set dz -2} {$dz <= 2} {incr dz} {
+            for {set s -2} {$s <= 2} {incr s} {
+                _sph_atom $fh -999 [expr {$rr*$ax - 0.6*$s*$ay}] [expr {$rr*$ay + 0.6*$s*$ax}] \
+                    [expr {0.8*$dz}] 1.15 0.0
+            }
+        }
+    }
+}
+# the collar: a sparse arc at r 6 joining them
+for {set k 1} {$k < 9} {incr k} {
+    set th [expr {$k*10.0*acos(-1.0)/180.0}]
+    for {set dz -1} {$dz <= 1} {incr dz} {
+        _sph_atom $fh -999 [expr {6.0*cos($th)}] [expr {6.0*sin($th)}] [expr {1.0*$dz}] 1.15 0.0
+    }
+}
+close $fh
+# The fallback run above swapped tool_path out; point the state key at the
+# binary this file already resolved so the check cannot inherit that.
+# The binary directly: the fallback run above swapped tool_path out.
+set _nl 0
+set _azs {}
+if {![catch {exec $exe {*}[::VMDPathFinder::tool_args conn_lobes] classify $synth 0 0 0 0 0 1 2.0} _out]} {
+    set _ls [split $_out "\n"]
+    for {set _i 0} {$_i < [llength $_ls]} {incr _i} {
+        if {![string match "LOBE *" [lindex $_ls $_i]]} continue
+        set _n [lindex [lindex $_ls $_i] 1]
+        for {set _k 1} {$_k <= $_n} {incr _k} {
+            set _f [lindex $_ls [expr {$_i+$_k}]]
+            if {[lindex $_f 2] < 50} continue
+            incr _nl
+            lappend _azs [format %.0f [expr {[lindex $_f 1]*57.29578}]]
+        }
+        break
+    }
+}
+note "synthetic two-mouth cloud: $_nl lobe(s) at azimuth [lsort -real $_azs] deg"
+chk "two mouths joined by a thin collar are two openings, not one" $_nl 2
+set _sep 0
+if {[llength $_azs] == 2} {
+    set _d [expr {abs([lindex $_azs 0] - [lindex $_azs 1])}]
+    if {$_d > 180} { set _d [expr {360 - $_d}] }
+    set _sep [expr {$_d > 60 && $_d < 120}]
+}
+chk "...about 90 degrees apart" $_sep 1
+
 catch {file delete -force $work}
 done
