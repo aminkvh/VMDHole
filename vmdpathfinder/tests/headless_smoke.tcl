@@ -5178,41 +5178,74 @@ foreach _t {"Run 20260909-120000 - 10 frame(s), sel protein" "Loaded triangulate
     chk "log filter keeps: $_t" [::VMDPathFinder::_frame_progress_line $_t] 0
 }
 
-chk "the mesher serves capsule runs" \
-    [expr {[string first {capsule} [info body ::VMDPathFinder::_csg_can_mesh]] >= 0}] 1
 
-# THREE builders feed the sos path, and under capsule all three must pick the
-# kept .sph and drop -colour. Stating that policy three times is how it got
-# fixed in two of them and left in the third: prebuild kept writing a clipped
-# stub to the SAME plot path the display path then read from cache, so the
-# fixed builder never ran. One helper, and every builder must call it.
-foreach _p {surface_mesh surface_mesh_cmd prebuild_surfaces_parallel} {
-    chk "$_p takes its capsule sos input from the one helper" \
-        [expr {[string first {_capsule_sos_input} [info body ::VMDPathFinder::$_p]] >= 0}] 1
+# The capsule surface is the stack of its slices' stadium outlines, under
+# either mesher. A union of the capsules bulged every wide slice into its
+# neighbours and lost a slit-shaped constriction.
+foreach _p {_create_plot_asset_body surface_cached_on_disk build_hydro_trinorm prebuild_surfaces_parallel} {
+    chk "$_p routes a capsule surface through the stadium stack" \
+        [expr {[string first {_capsule_stack_plot} [info body ::VMDPathFinder::$_p]] >= 0 \
+            || [string first {_capsule_stack_path} [info body ::VMDPathFinder::$_p]] >= 0}] 1
 }
-set _sv_pm2 $::VMDPathFinder::state(pore_method)
-set ::VMDPathFinder::state(pore_method) capsule
-# Colour banding is KEPT under capsule; what clipped the surface was one
-# header, repaired after sph_process by _capsule_sos_fix. The .sph half cannot
-# be checked on a made-up path: _capsule_sph_kept hands the original file back
-# when it has no slices to keep.
-chk "...which under capsule keeps -colour" \
-    [lindex [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] 1] 1
-chk "...and recognises the borrowed end-cap header sph_process gives the third band" \
-    [::VMDPathFinder::_capsule_sos_is_borrowed_header "     1.00000    -1.00000    -1.00000    -1.00000     0.00000     0.00000     0.00000"] 1
-chk "...but not a real band header" \
-    [::VMDPathFinder::_capsule_sos_is_borrowed_header "     1.00000     7.00000   -55.00000    17.00000     0.00000     0.00000     0.00000"] 0
-foreach _p {_legacy_sos surface_mesh_cmd prebuild_surfaces_parallel} {
-    chk "$_p repairs the capsule header after sph_process" \
-        [expr {[string first {_capsule_sos_fix} [info body ::VMDPathFinder::$_p]] >= 0}] 1
+set _cap_sph [file join $here fixtures capsule_1GRM.sph]
+if {[file exists $_cap_sph]} {
+    set _sv_axis [list $::VMDPathFinder::state(cpoint) $::VMDPathFinder::state(cvect)]
+    set ::VMDPathFinder::state(cpoint) {0 0 0}; set ::VMDPathFinder::state(cvect) {0 0 1}
+    set _sl [::VMDPathFinder::_capsule_stack_slices $_cap_sph {0 0 1} {0 0 0} 15]
+    set _rg [::VMDPathFinder::_capsule_stack_rings $_sl {0 0 1}]
+    chk "one ring per kept capsule slice" [expr {[llength $_rg] == [llength $_sl] && [llength $_rg] > 10}] 1
+    chk "...of 48 outline points" [llength [lindex [lindex $_rg 0] 2]] 48
+    # every outline point sits exactly R from the slice's segment: the stadium
+    set _bad 0
+    foreach _s $_sl _r $_rg {
+        lassign $_s _t x1 y1 z1 x2 y2 z2 R
+        foreach _pt [lindex $_r 2] {
+            lassign $_pt px py pz
+            set vx [expr {$x2-$x1}]; set vy [expr {$y2-$y1}]; set vz [expr {$z2-$z1}]
+            set vv [expr {$vx*$vx+$vy*$vy+$vz*$vz}]
+            set tt [expr {$vv > 1e-12 ? (($px-$x1)*$vx+($py-$y1)*$vy+($pz-$z1)*$vz)/$vv : 0.0}]
+            if {$tt < 0} { set tt 0.0 }; if {$tt > 1} { set tt 1.0 }
+            set dd [expr {sqrt(($px-$x1-$tt*$vx)**2+($py-$y1-$tt*$vy)**2+($pz-$z1-$tt*$vz)**2)}]
+            if {abs($dd-$R) > 1e-3} { incr _bad }
+        }
+    }
+    chk "...each exactly R from its slice's segment" $_bad 0
+    set _tmp [file join [::VMDPathFinder::get_temp_base] "capstack_[pid].vmd_plot"]
+    set _nr [::VMDPathFinder::_build_capsule_stack $_cap_sph $_tmp {0 0 1} {0 0 0} 15 draw]
+    chk "the stack builds a triangle plot" [expr {$_nr == [llength $_rg] && [::VMDPathFinder::surface_has_geometry $_tmp]}] 1
+    set _fh [open $_tmp r]; set _txt [read $_fh]; close $_fh
+    chk "...in the draw form the recolourers read" [expr {[regexp -all {draw trinorm} $_txt] > 1000}] 1
+    set _nd [::VMDPathFinder::_build_capsule_stack $_cap_sph $_tmp {0 0 1} {0 0 0} 15 dots]
+    set _fh [open $_tmp r]; set _txt [read $_fh]; close $_fh
+    chk "...and a dots plot with every ring point" [regexp -all {draw point} $_txt] [expr {48*[llength $_rg]}]
+    # smoothing with a copy of the same frame, ends swapped, changes nothing
+    set _sw [file join [::VMDPathFinder::get_temp_base] "capstack_sw_[pid].sph"]
+    set _fo [open $_sw w]; set _fi [open $_cap_sph r]
+    while {[gets $_fi _l] >= 0} {
+        set _nm [string range $_l 12 15]
+        if {$_nm eq " QC1"} { set _hold $_l; continue }
+        if {$_nm eq " QC2" && [info exists _hold]} {
+            puts $_fo "[string range $_l 0 11] QC1[string range $_l 16 end]"
+            puts $_fo "[string range $_hold 0 11] QC2[string range $_hold 16 end]"
+            unset _hold; continue
+        }
+        puts $_fo $_l
+    }
+    close $_fi; close $_fo
+    set _av [::VMDPathFinder::_capsule_stack_average $_sl [list $_sw] 15]
+    set _dmax 0.0
+    foreach _a $_sl _b $_av {
+        for {set _k 1} {$_k < 8} {incr _k} {
+            set _d [expr {abs([lindex $_a $_k]-[lindex $_b $_k])}]
+            if {$_d > $_dmax} { set _dmax $_d }
+        }
+    }
+    chk "smoothing against a copy with QC1/QC2 swapped leaves every slice unchanged" [expr {$_dmax < 1e-6}] 1
+    catch {file delete $_tmp $_sw}
+    lassign $_sv_axis ::VMDPathFinder::state(cpoint) ::VMDPathFinder::state(cvect)
+} else {
+    chk "capsule fixture present" 0 1
 }
-chk "...and routes the .sph through the kept-slices filter" \
-    [expr {[string first {_capsule_sph_kept} \
-        [info body ::VMDPathFinder::_capsule_sos_input]] >= 0}] 1
-set ::VMDPathFinder::state(pore_method) circular
-chk "...and off capsule it changes nothing" \
-    [::VMDPathFinder::_capsule_sos_input /tmp/x.sph 1] {/tmp/x.sph 1}
-set ::VMDPathFinder::state(pore_method) $_sv_pm2
 foreach _p {surface_mesh surface_mesh_cmd _csg_recolor _csg_sph_extent} {
     chk "$_p hands the mesher the run's axis" \
         [expr {[string first {_csg_mesh_opts} [info body ::VMDPathFinder::$_p]] >= 0}] 1

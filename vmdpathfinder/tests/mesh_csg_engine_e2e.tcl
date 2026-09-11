@@ -231,7 +231,10 @@ if {[file readable $CAP]} {
     set nd 0
     if {![catch {set fh [open $cdots r]}]} { set nd [regexp -all {draw point} [read $fh]]; close $fh }
     chk "...and its dots display" [expr {$nd > 100}] 1
-    set _sv [array get ::VMDPathFinder::state {pore_method cpoint cvect endrad}]
+    # array get takes ONE pattern: a list of names matched nothing and left
+    # the method on capsule for every check after this one.
+    set _sv {}
+    foreach _k {pore_method cpoint cvect endrad} { lappend _sv $_k $::VMDPathFinder::state($_k) }
     array set ::VMDPathFinder::state {pore_method capsule cpoint {0 0 0} cvect {0 0 1} endrad 8}
     set ext [::VMDPathFinder::_csg_sph_extent $CAP]
     array set ::VMDPathFinder::state $_sv

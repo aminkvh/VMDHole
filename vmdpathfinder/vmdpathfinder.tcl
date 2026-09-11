@@ -18482,57 +18482,9 @@ proc ::VMDPathFinder::_surface_smooth_rho {} { return 2.0 }
 # The centre frame's .sos, smoothed against its window when there is one:
 # every window frame's cloud is built once per dot density (kept next to its
 # sphere file) and the centre's dots are averaged against them in place.
-proc ::VMDPathFinder::_capsule_sos_input {sph color} {
-    # The .sph the sos path must use for this run, as {sph color}. Off capsule
-    # it hands back what it was given. Under capsule it is the KEPT .sph: the
-    # raw file also holds HOLE's escaped search attempts (resSeq -888), which
-    # mesh as blobs tens of A wide. Colour banding stays on; the header that
-    # made it clip the surface is repaired afterwards by _capsule_sos_fix.
-    if {![_run_uses_card capsule]} { return [list $sph $color] }
-    return [list [_capsule_sph_kept $sph] $color]
-}
-
-proc ::VMDPathFinder::_capsule_sos_fix {sos} {
-    # In-process form of _capsule_sos_fix_cmd. No-op off capsule.
-    if {![_run_uses_card capsule] || ![file exists $sos]} { return }
-    if {[catch {open $sos r} fh]} { return }
-    set out {}
-    while {[gets $fh line] >= 0} {
-        lappend out [expr {[_capsule_sos_is_borrowed_header $line] ? [_capsule_band3_header] : $line}]
-    }
-    close $fh
-    if {![catch {open $sos w} fh]} { puts $fh [join $out "\n"]; close $fh }
-}
-
-proc ::VMDPathFinder::_capsule_sos_is_borrowed_header {line} {
-    # sph_process's capsule pass writes the third radius band under the
-    # end-cap header {1 -1 -1 -1 0 0 0}. That header means "clip here" to
-    # sos_triangle, which then drops the whole band - most of a capsule.
-    set f [regexp -all -inline {\S+} $line]
-    if {[llength $f] != 7} { return 0 }
-    foreach v $f { if {![string is double -strict $v]} { return 0 } }
-    lassign $f a b c d
-    return [expr {$a == 1 && $b == -1 && $c == -1 && $d == -1}]
-}
-
-proc ::VMDPathFinder::_capsule_band3_header {} {
-    # The header the third band gets on a spherical file: colour 18.
-    return [format "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f" 1 2 -55 18 0 0 0]
-}
-
-proc ::VMDPathFinder::_capsule_sos_fix_cmd {sos} {
-    # Shell form for the pooled builders: rewrite the borrowed header in place.
-    # "" off capsule, so callers can append it unconditionally.
-    if {![_run_uses_card capsule]} { return "" }
-    set awk {awk 'NF==7 && $1+0==1 && $2+0==-1 && $3+0==-1 && $4+0==-1 {printf "%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f%12.5f\n",1,2,-55,18,0,0,0; next} {print}'}
-    set q [shell_quote $sos]
-    return " && $awk $q > $q.fix && mv -f $q.fix $q"
-}
-
 proc ::VMDPathFinder::_legacy_sos {sph sos color dd with} {
     variable state
     if {[catch {run_sph_process $sph $sos $color $dd}]} { return 0 }
-    _capsule_sos_fix $sos
     if {![llength $with]} { return 1 }
     set ddn [expr {$dd ne "" ? $dd : $state(dot_density)}]
     set wsos {}
@@ -18540,7 +18492,6 @@ proc ::VMDPathFinder::_legacy_sos {sph sos color dd with} {
         set ws "[file rootname $w]_dd${ddn}.sos"
         if {![file exists $ws] || [file mtime $ws] < [file mtime $w]} {
             if {[catch {run_sph_process $w $ws $color $dd}]} continue
-            _capsule_sos_fix $ws
         }
         if {[file exists $ws] && [file size $ws] > 0} { lappend wsos $ws }
     }
@@ -18580,7 +18531,6 @@ proc ::VMDPathFinder::surface_mesh {sph plot form {dotden ""} {color 1} {union 0
         catch {file delete $plot}
         catch {vmdcon -warn "VMDPathFinder: the mesher failed on [file tail $sph]; using sph_process + sos_triangle."}
     }
-    lassign [_capsule_sos_input $sph $color] sph color
     set sos [file rootname $plot].sos
     set dd $dotden
     if {![_legacy_sos $sph $sos $color $dd $with]} { catch {file delete $sos}; return 0 }
@@ -18622,14 +18572,13 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
         return "[shell_quote [tool_path mesh_csg]] [tool_args mesh_csg] [shell_quote $sph]\
             [shell_quote $plot] [_csg_voxel_spec] $flag [_csg_mesh_opts $sph] $wflag > /dev/null 2>&1"
     }
-    lassign [_capsule_sos_input $sph $color] sph color
     set sos [file rootname $plot].sos
     set dd [expr {$dotden ne "" ? $dotden : $state(dot_density)}]
     set cflag [expr {$color ? "-colour " : ""}]
     set tri [expr {$form eq "dots" && [fast_available points]
         ? "[shell_quote $state(sos_triangle_exec)] -s --points < [shell_quote $sos] > [shell_quote $plot]"
         : [_sos_triangle_cmd $sos $plot]}]
-    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1[_capsule_sos_fix_cmd $sos]"
+    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1"
     if {[llength $with]} {
         # window clouds are shared between neighbouring frames' jobs: written
         # to a private name and renamed into place, so two workers cannot
@@ -18638,7 +18587,7 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
         foreach w $with {
             set ws "[file rootname $w]_dd${dd}.sos"
             set tmp "$ws.tmp[expr {int(rand()*1e9)}]"
-            append chain " && { \[ -s [shell_quote $ws] \] || { [_sph_process_cmd $dd $cflag $w $tmp] > /dev/null 2>&1[_capsule_sos_fix_cmd $tmp] && mv -f [shell_quote $tmp] [shell_quote $ws]; }; }"
+            append chain " && { \[ -s [shell_quote $ws] \] || { [_sph_process_cmd $dd $cflag $w $tmp] > /dev/null 2>&1 && mv -f [shell_quote $tmp] [shell_quote $ws]; }; }"
             lappend wsos $ws
         }
         set sm "[file rootname $sos]_sm.sos"
@@ -34988,6 +34937,9 @@ proc ::VMDPathFinder::surface_cached_on_disk {run_dir sph_file mode} {
     # render an existing mesh) vs "Building" (re-run sph_process + sos_triangle) so
     # the status is honest - imported / previously-run frames are loaded, not
     # recomputed, when the dot density matches.
+    if {[_run_uses_card capsule] && $mode in {dots triangulated wireframe}} {
+        return [geom_cache_valid [_capsule_stack_path $run_dir [expr {$mode eq "dots" ? "dots" : "draw"}]] $sph_file]
+    }
     switch -- $mode {
         centerline { return 1 }
         dots {
@@ -39767,6 +39719,231 @@ proc ::VMDPathFinder::_build_capsule_centerlines {sph_file out_plot cvect_s cpoi
     return $n
 }
 
+proc ::VMDPathFinder::_capsule_stack_path {run_dir form} {
+    # form: draw (triangles) or dots.
+    return [file join $run_dir "hole_capsule_stack[_surface_smooth_tag]_$form.vmd_plot"]
+}
+
+proc ::VMDPathFinder::_capsule_stack_slices {sph_file cvect_s cpoint_s endrad} {
+    # The kept capsule slices in axis order, as {t x1 y1 z1 x2 y2 z2 R}.
+    set out {}
+    foreach sl [_capsule_rings $sph_file $cvect_s $cpoint_s $endrad] {
+        lappend out [concat [lindex $sl 0] [lindex $sl 2]]
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_capsule_stack_average {slices with endrad} {
+    # Smoothing: average each slice's cap centres and radius with the slice
+    # nearest along the axis in every other frame of the window (within half
+    # an Angstrom), ends matched so a pair written the other way round does
+    # not cancel.
+    set sets {}
+    foreach w $with {
+        lassign [_capsule_run_axis [file dirname $w]] cp cv
+        set r [_capsule_stack_slices $w $cv $cp $endrad]
+        if {[llength $r]} { lappend sets $r }
+    }
+    if {![llength $sets]} { return $slices }
+    set out {}
+    foreach sl $slices {
+        lassign $sl t x1 y1 z1 x2 y2 z2 R
+        set n 1
+        foreach r $sets {
+            set best ""; set bd 0.5
+            foreach o $r {
+                set d [expr {abs([lindex $o 0]-$t)}]
+                if {$d < $bd} { set bd $d; set best $o }
+            }
+            if {$best eq ""} continue
+            lassign $best _t a1 b1 c1 a2 b2 c2 R2
+            set same [expr {($a1-$x1)**2+($b1-$y1)**2+($c1-$z1)**2 + ($a2-$x2)**2+($b2-$y2)**2+($c2-$z2)**2}]
+            set swap [expr {($a2-$x1)**2+($b2-$y1)**2+($c2-$z1)**2 + ($a1-$x2)**2+($b1-$y2)**2+($c1-$z2)**2}]
+            if {$swap < $same} { lassign [list $a2 $b2 $c2 $a1 $b1 $c1] a1 b1 c1 a2 b2 c2 }
+            set x1 [expr {$x1+$a1}]; set y1 [expr {$y1+$b1}]; set z1 [expr {$z1+$c1}]
+            set x2 [expr {$x2+$a2}]; set y2 [expr {$y2+$b2}]; set z2 [expr {$z2+$c2}]
+            set R [expr {$R+$R2}]
+            incr n
+        }
+        if {$n > 1} {
+            set x1 [expr {$x1/$n}]; set y1 [expr {$y1/$n}]; set z1 [expr {$z1/$n}]
+            set x2 [expr {$x2/$n}]; set y2 [expr {$y2/$n}]; set z2 [expr {$z2/$n}]
+            set R [expr {$R/$n}]
+        }
+        lappend out [list $t $x1 $y1 $z1 $x2 $y2 $z2 $R]
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_capsule_stack_rings {slices cvect_s} {
+    # One ring of outline points per slice, in axis order: {t eff points}.
+    # The cross-section is a stadium: two half circles of radius R about the
+    # cap centres, joined by two straight edges. 16 points per half circle and
+    # 8 per edge, so point k is the same feature on every ring and the rings
+    # stack without a twist. eff is HOLE's equal-area radius, which sets the
+    # colour band.
+    set PI 3.141592653589793
+    set NARC 16; set NEDGE 8
+    lassign $cvect_s ax ay az
+    if {![string is double -strict $ax] || ![string is double -strict $ay] || ![string is double -strict $az]} { return {} }
+    set al [expr {sqrt($ax*$ax+$ay*$ay+$az*$az)}]
+    if {$al < 1e-9} { return {} }
+    set ax [expr {$ax/$al}]; set ay [expr {$ay/$al}]; set az [expr {$az/$al}]
+    set out {}
+    set pe1 ""
+    foreach sl $slices {
+        lassign $sl t x1 y1 z1 x2 y2 z2 R
+        set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
+        set L [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]
+        # e1 runs along the segment within the slice plane; e2 = axis x e1.
+        # A slice with no length (a plain sphere) keeps the previous e1.
+        set el 0.0
+        if {$L > 1e-6} {
+            set d [expr {$dx*$ax+$dy*$ay+$dz*$az}]
+            set ex [expr {$dx-$d*$ax}]; set ey [expr {$dy-$d*$ay}]; set ez [expr {$dz-$d*$az}]
+            set el [expr {sqrt($ex*$ex+$ey*$ey+$ez*$ez)}]
+        }
+        if {$el > 1e-6} {
+            set e1 [list [expr {$ex/$el}] [expr {$ey/$el}] [expr {$ez/$el}]]
+        } elseif {$pe1 ne ""} {
+            set e1 $pe1
+        } else {
+            if {abs($az) < 0.9} { set ux 0.0; set uy 0.0; set uz 1.0 } else { set ux 1.0; set uy 0.0; set uz 0.0 }
+            set d [expr {$ux*$ax+$uy*$ay+$uz*$az}]
+            set ex [expr {$ux-$d*$ax}]; set ey [expr {$uy-$d*$ay}]; set ez [expr {$uz-$d*$az}]
+            set el [expr {sqrt($ex*$ex+$ey*$ey+$ez*$ez)}]
+            set e1 [list [expr {$ex/$el}] [expr {$ey/$el}] [expr {$ez/$el}]]
+        }
+        set pe1 $e1
+        lassign $e1 e1x e1y e1z
+        set e2x [expr {$ay*$e1z-$az*$e1y}]; set e2y [expr {$az*$e1x-$ax*$e1z}]; set e2z [expr {$ax*$e1y-$ay*$e1x}]
+        set eff [expr {sqrt(($PI*$R*$R + 2.0*$R*$L)/$PI)}]
+        set pts {}
+        # half circle about QC2, facing away from QC1
+        for {set k 0} {$k < $NARC} {incr k} {
+            set th [expr {-$PI/2 + $PI*$k/($NARC-1)}]
+            set c [expr {cos($th)}]; set sn [expr {sin($th)}]
+            lappend pts [list [expr {$x2+$R*($c*$e1x+$sn*$e2x)}] [expr {$y2+$R*($c*$e1y+$sn*$e2y)}] [expr {$z2+$R*($c*$e1z+$sn*$e2z)}]]
+        }
+        # straight edge QC2 -> QC1 on the +e2 side
+        for {set k 1} {$k <= $NEDGE} {incr k} {
+            set f [expr {double($k)/($NEDGE+1)}]
+            lappend pts [list [expr {$x2-$f*$dx+$R*$e2x}] [expr {$y2-$f*$dy+$R*$e2y}] [expr {$z2-$f*$dz+$R*$e2z}]]
+        }
+        # half circle about QC1, facing away from QC2
+        for {set k 0} {$k < $NARC} {incr k} {
+            set th [expr {$PI/2 + $PI*$k/($NARC-1)}]
+            set c [expr {cos($th)}]; set sn [expr {sin($th)}]
+            lappend pts [list [expr {$x1+$R*($c*$e1x+$sn*$e2x)}] [expr {$y1+$R*($c*$e1y+$sn*$e2y)}] [expr {$z1+$R*($c*$e1z+$sn*$e2z)}]]
+        }
+        # straight edge QC1 -> QC2 on the -e2 side
+        for {set k 1} {$k <= $NEDGE} {incr k} {
+            set f [expr {double($k)/($NEDGE+1)}]
+            lappend pts [list [expr {$x1+$f*$dx-$R*$e2x}] [expr {$y1+$f*$dy-$R*$e2y}] [expr {$z1+$f*$dz-$R*$e2z}]]
+        }
+        lappend out [list $t $eff $pts]
+    }
+    return $out
+}
+
+proc ::VMDPathFinder::_capsule_stack_fmt {p} {
+    return [format "{%.3f %.3f %.3f}" [lindex $p 0] [lindex $p 1] [lindex $p 2]]
+}
+
+proc ::VMDPathFinder::_build_capsule_stack {sph_file out_plot cvect_s cpoint_s endrad form {with {}}} {
+    # The capsule surface: each slice's stadium outline, stacked on the next.
+    # form draw writes triangles with smooth normals, dots the ring points.
+    # A gap of more than three slice steps is a break in the profile and is
+    # not bridged. Returns the ring count, or 0.
+    set slices [_capsule_stack_slices $sph_file $cvect_s $cpoint_s $endrad]
+    if {[llength $slices] < 2} { return 0 }
+    if {[llength $with]} { set slices [_capsule_stack_average $slices $with $endrad] }
+    set rings [_capsule_stack_rings $slices $cvect_s]
+    set nr [llength $rings]
+    set steps {}
+    for {set i 1} {$i < $nr} {incr i} {
+        lappend steps [expr {[lindex [lindex $rings $i] 0] - [lindex [lindex $rings [expr {$i-1}]] 0]}]
+    }
+    set ss [lsort -real $steps]; set med [lindex $ss [expr {[llength $ss]/2}]]
+    set gapmax [expr {$med > 0 ? 3.0*$med : 3.0}]
+    if {[catch {set out [open $out_plot w]}]} { return 0 }
+    puts $out "draw delete all"
+    set last ""
+    if {$form eq "dots"} {
+        foreach ring $rings {
+            lassign $ring t eff pts
+            set band [_hole_radius_band $eff]
+            if {$band ne $last} { puts $out "draw color $band"; set last $band }
+            foreach p $pts { puts $out "draw point [_capsule_stack_fmt $p]" }
+        }
+        close $out
+        return $nr
+    }
+    set N [llength [lindex [lindex $rings 0] 2]]
+    # Vertex normals from the stacked mesh itself: ring tangent x axial
+    # tangent, pointed away from the ring's centre.
+    set nrm {}
+    for {set i 0} {$i < $nr} {incr i} {
+        set pts [lindex [lindex $rings $i] 2]
+        set ip [expr {$i > 0 ? $i-1 : $i}]; set in [expr {$i < $nr-1 ? $i+1 : $i}]
+        if {$ip < $i && [lindex [lindex $rings $i] 0] - [lindex [lindex $rings $ip] 0] > $gapmax} { set ip $i }
+        if {$in > $i && [lindex [lindex $rings $in] 0] - [lindex [lindex $rings $i] 0] > $gapmax} { set in $i }
+        set pp [lindex [lindex $rings $ip] 2]; set pn [lindex [lindex $rings $in] 2]
+        set cx 0.0; set cy 0.0; set cz 0.0
+        foreach p $pts { set cx [expr {$cx+[lindex $p 0]}]; set cy [expr {$cy+[lindex $p 1]}]; set cz [expr {$cz+[lindex $p 2]}] }
+        set cx [expr {$cx/$N}]; set cy [expr {$cy/$N}]; set cz [expr {$cz/$N}]
+        set rn {}
+        for {set k 0} {$k < $N} {incr k} {
+            set a [lindex $pts [expr {($k+$N-1)%$N}]]; set b [lindex $pts [expr {($k+1)%$N}]]
+            set tx [expr {[lindex $b 0]-[lindex $a 0]}]; set ty [expr {[lindex $b 1]-[lindex $a 1]}]; set tz [expr {[lindex $b 2]-[lindex $a 2]}]
+            set q0 [lindex $pp $k]; set q1 [lindex $pn $k]
+            set ux [expr {[lindex $q1 0]-[lindex $q0 0]}]; set uy [expr {[lindex $q1 1]-[lindex $q0 1]}]; set uz [expr {[lindex $q1 2]-[lindex $q0 2]}]
+            set nx [expr {$ty*$uz-$tz*$uy}]; set ny [expr {$tz*$ux-$tx*$uz}]; set nz [expr {$tx*$uy-$ty*$ux}]
+            set p [lindex $pts $k]
+            set ox [expr {[lindex $p 0]-$cx}]; set oy [expr {[lindex $p 1]-$cy}]; set oz [expr {[lindex $p 2]-$cz}]
+            set nl [expr {sqrt($nx*$nx+$ny*$ny+$nz*$nz)}]
+            if {$nl < 1e-9} {
+                set nx $ox; set ny $oy; set nz $oz; set nl [expr {sqrt($nx*$nx+$ny*$ny+$nz*$nz)}]
+                if {$nl < 1e-9} { set nl 1.0 }
+            } elseif {$nx*$ox+$ny*$oy+$nz*$oz < 0} {
+                set nx [expr {-$nx}]; set ny [expr {-$ny}]; set nz [expr {-$nz}]
+            }
+            lappend rn [format "{%.4f %.4f %.4f}" [expr {$nx/$nl}] [expr {$ny/$nl}] [expr {$nz/$nl}]]
+        }
+        lappend nrm $rn
+    }
+    set ntri 0
+    for {set i 0} {$i < $nr-1} {incr i} {
+        lassign [lindex $rings $i] t0 eff0 p0
+        lassign [lindex $rings [expr {$i+1}]] t1 eff1 p1
+        if {$t1 - $t0 > $gapmax} continue
+        set band [_hole_radius_band $eff0]
+        if {$band ne $last} { puts $out "draw color $band"; set last $band }
+        set n0 [lindex $nrm $i]; set n1 [lindex $nrm [expr {$i+1}]]
+        for {set k 0} {$k < $N} {incr k} {
+            set k2 [expr {($k+1)%$N}]
+            puts $out "draw trinorm [_capsule_stack_fmt [lindex $p0 $k]] [_capsule_stack_fmt [lindex $p0 $k2]] [_capsule_stack_fmt [lindex $p1 $k]] [lindex $n0 $k] [lindex $n0 $k2] [lindex $n1 $k]"
+            puts $out "draw trinorm [_capsule_stack_fmt [lindex $p0 $k2]] [_capsule_stack_fmt [lindex $p1 $k2]] [_capsule_stack_fmt [lindex $p1 $k]] [lindex $n0 $k2] [lindex $n1 $k2] [lindex $n1 $k]"
+            incr ntri 2
+        }
+    }
+    close $out
+    return [expr {$ntri > 0 ? $nr : 0}]
+}
+
+proc ::VMDPathFinder::_capsule_stack_plot {run_dir sph_file frame form} {
+    # The capsule surface for one frame, built if it is not on disk. "" if it
+    # cannot be built.
+    variable state
+    set plot [_capsule_stack_path $run_dir $form]
+    if {[geom_cache_valid $plot $sph_file]} { return $plot }
+    lassign [_capsule_run_axis $run_dir] cp cv
+    set nr [_build_capsule_stack $sph_file $plot $cv $cp $state(endrad) $form [_surface_smooth_with $frame]]
+    if {$nr < 2} { catch {file delete $plot}; return "" }
+    geom_cache_mark $plot
+    return $plot
+}
+
 proc ::VMDPathFinder::create_plot_asset {run_dir sph_file mode {molid -1} {frame 0} {draft 0}} {
     # Tags every mesh filename this call produces, so a cheap draft mesh and the
     # full one never share a path - the settle pass would otherwise re-render the
@@ -39882,10 +40059,9 @@ proc ::VMDPathFinder::_create_plot_asset_body {run_dir sph_file mode {molid -1} 
         set conn_dotden [expr {$draft ? [_conn_draft_dotden] : [_conn_safe_dotden $npts]}]
         catch {vmdcon -info "VMDPathFinder: CONNOLLY - triangulating $npts accessible-surface points (dot density $conn_dotden)."}
     }
-    # CAPSULE's surface is a union of capsule slices and goes through surface_mesh
-    # like every other method. Only its centreline is its own: a capsule slice is
-    # a segment swept by a sphere, so its centre is a PAIR - one averaged line
-    # would draw the round pore capsule mode exists to contradict.
+    # A capsule slice is a segment swept by a sphere, so its centre is a PAIR;
+    # one averaged line would draw the round pore capsule mode exists to
+    # contradict.
     if {[_run_uses_card capsule] && $mode eq "centerline"} {
         set cl [file join $run_dir "hole_capsule_centerlines.vmd_plot"]
         if {[geom_cache_valid $cl $sph_file]} { return [dict create kind capsule_lines path $cl] }
@@ -39897,6 +40073,14 @@ proc ::VMDPathFinder::_create_plot_asset_body {run_dir sph_file mode {molid -1} 
             return [dict create kind capsule_lines path $cl]
         }
         return [dict create kind capsule_skip]
+    }
+    # CAPSULE's surface is the stack of its slices' stadium outlines, under
+    # either mesher: a union of the capsules bulges every wide slice into its
+    # neighbours and loses a slit-shaped constriction between them.
+    if {[_run_uses_card capsule] && $mode in {triangulated wireframe dots}} {
+        set plot [_capsule_stack_plot $run_dir $sph_file $frame [expr {$mode eq "dots" ? "dots" : "draw"}]]
+        if {$plot eq ""} { error "no capsule slices to draw for this frame." }
+        return [dict create kind vmd_plot path $plot]
     }
     switch -- $mode {
         centerline {
@@ -40055,7 +40239,13 @@ proc ::VMDPathFinder::build_hydro_trinorm {run_dir sph_file molid frame {draft 0
     # base had to be rebuilt from the raw cloud.
     if {$lining_sph eq ""} { set lining_sph [_smooth_union_sph $frame $sph_file] }
     set lsph [expr {$lining_sph ne "" ? $lining_sph : $sph_file}]
-    set csgbase [_csg_base_mesh $run_dir $sph_file]
+    set csgbase ""
+    set capstack ""
+    if {[_run_uses_card capsule]} {
+        set capstack [_capsule_stack_plot $run_dir $sph_file $frame draw]
+    } else {
+        set csgbase [_csg_base_mesh $run_dir $sph_file]
+    }
     # An uncached property recolor is a synchronous sph_process/sos_triangle build (on
     # an ALREADY-triangulated base - see load_surface_for_frame for the separate, much
     # heavier from-scratch geometry build, gated there). For a NORMAL frame this recolor
@@ -40067,7 +40257,9 @@ proc ::VMDPathFinder::build_hydro_trinorm {run_dir sph_file molid frame {draft 0
     # (tribase, hole_triangulated.vmd_plot from create_plot_asset), so the colored
     # surface has the same geometry as the radius-colored one.
     set plot0 [file join $run_dir hole_hydro_base.vmd_plot]
-    if {$csgbase ne ""} {
+    if {$capstack ne ""} {
+        set plot0 $capstack
+    } elseif {$csgbase ne ""} {
         set plot0 $csgbase
     } elseif {[surface_has_geometry $tribase] && [file exists $sph_file] && \
             [file mtime $tribase] >= [file mtime $sph_file]} {
@@ -40094,6 +40286,7 @@ proc ::VMDPathFinder::build_hydro_trinorm {run_dir sph_file molid frame {draft 0
     # A colour file is per triangle: one built on the other mesher's mesh must
     # never be served after a switch.
     if {$csgbase ne ""} { append msuffix "_csg" }
+    if {$capstack ne ""} { append msuffix "_stack" }
     # A caller coloring a SUB-mesh (a Connolly region) needs its own cache file:
     # same scheme and settings, different geometry, so sharing the run-wide name
     # would let the two overwrite each other's colors.
@@ -40344,6 +40537,21 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
     if {$state(display_mode) in {none centerline}} { return }
     vmdcon -info "VMDPathFinder: pre-building surfaces - mode=$state(display_mode)  frames=[llength $result_frames]"
     set mode $state(display_mode)
+    if {[_run_uses_card capsule]} {
+        set form [expr {$mode eq "dots" ? "dots" : "draw"}]
+        set n 0
+        foreach frame $result_frames {
+            if {[_abort_stop "surface prebuild"]} { return }
+            if {![dict exists $results $frame]} continue
+            set fdata [dict get $results $frame]
+            if {[dict get $fdata asset] ne {}} continue
+            set sph_file [dict get $fdata sph_file]
+            if {![file exists $sph_file]} continue
+            if {[_capsule_stack_plot [dict get $fdata run_dir] $sph_file $frame $form] ne ""} { incr n }
+        }
+        vmdcon -info "VMDPathFinder: surface pre-build complete for $n frame(s)."
+        return
+    }
     # Pre-build the COLOR-INDEPENDENT radius-colored base mesh (always -color).
     # Color and hydrophobicity are applied at render time from this one base, so
     # there is no color-specific prebuild; hydro variants recolor lazily on show.
@@ -40410,9 +40618,8 @@ proc ::VMDPathFinder::prebuild_surfaces_parallel {} {
         # prebuild writes to the SAME plot path the display path then reads, so
         # its clipped surface was served from cache and the fixed builder never
         # ran.
-        lassign [_capsule_sos_input $sph_file [expr {$cflag ne "" ? 1 : 0}]] _sos_sph _sos_col
         set sph_cmd "[_sph_process_cmd $state(dot_density) \
-                         [expr {$_sos_col ? "-colour " : ""}] $_sos_sph $sos] > /dev/null 2>&1[_capsule_sos_fix_cmd $sos]"
+                         [expr {$cflag ne "" ? "-colour " : ""}] $sph_file $sos] > /dev/null 2>&1"
 
         set out_file [expr {$mode eq "dots" && !$fast_dots ? $tmp : $plot}]
 

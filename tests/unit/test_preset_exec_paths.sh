@@ -57,7 +57,8 @@ proc lift {src name} {
     }
     return ""
 }
-foreach p {load_config _config_skip_keys init_executables find_hole_exe _find_exe \
+foreach p {load_config _config_skip_keys _config_persistent_keys _config_adopt_defaults \
+           init_executables find_hole_exe _find_exe \
            tool_path tool_exec_keys save_config _note} {
     set b [lift $src $p]
     if {$b eq ""} { puts "FATAL: could not lift ::VMDPathFinder::$p"; exit 3 }
