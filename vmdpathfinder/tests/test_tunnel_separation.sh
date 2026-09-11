@@ -70,8 +70,13 @@ set ::VMDPathFinder::state(work_dir) $work
 set hole   [lindex [::VMDPathFinder::resolve_output_root 0]        0]
 set tunnel [lindex [::VMDPathFinder::resolve_output_root 0 tunnel] 0]
 if {$hole eq $tunnel} { puts $o "FAIL roots identical: $hole"; incr bad }
-if {$tunnel ne [file join $hole tunnels]} {
+# Each pore run now makes its own <work_dir>/<structure>_<run id> folder, so
+# the tunnel root is its SIBLING rather than sitting inside it.
+if {$tunnel ne [file join $work tunnels]} {
     puts $o "FAIL tunnel root not <work_dir>/tunnels: $tunnel"; incr bad
+}
+if {[string first [file normalize $work] [file normalize $hole]] != 0} {
+    puts $o "FAIL pore root is not under the work dir: $hole"; incr bad
 }
 
 # collect_frame_dirs must see HOLE's folder and ignore the tunnel one.

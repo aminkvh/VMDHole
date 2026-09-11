@@ -139,7 +139,11 @@ if {[catch {::VMDPathFinder::build_and_show_mean_surface 1 1} e]} {
 }
 report "the mean surface builds" 1
 
-set plots [glob -nocomplain [file join $::VMDPathFinder::state(work_dir) mean_profile mean_profile_*.vmd_plot]]
+# Every pore run makes its own <work_dir>/<structure>_<run id> folder and the
+# mean mesh sits beside that run's frames, so look one level down too.
+set plots [concat \
+    [glob -nocomplain [file join $::VMDPathFinder::state(work_dir) mean_profile mean_profile_*.vmd_plot]] \
+    [glob -nocomplain [file join $::VMDPathFinder::state(work_dir) * mean_profile mean_profile_*.vmd_plot]]]
 report "a mean-profile mesh was written" [expr {[llength $plots] > 0}] "(none in the work dir)"
 if {![llength $plots]} { puts "  ---- mean-axis checks, $fails failed"; exit 1 }
 
@@ -155,7 +159,9 @@ report "the tube lies along the declared CVECT (< 3 deg)" [expr {$off < 3.0}] \
 
 # The run's own persisted axis must be what fed it - otherwise the check above
 # could pass on a PCA fit that happens to agree.
-set fd [file join $::VMDPathFinder::state(work_dir) frame_[format %05d [lindex $::VMDPathFinder::result_frames 0]]]
+# The frame folder lives under the run's own folder, not straight under the
+# work dir - take it from the result record rather than rebuilding the path.
+set fd [dict get $::VMDPathFinder::results [lindex $::VMDPathFinder::result_frames 0] run_dir]
 set fa [::VMDPathFinder::_frame_axis_persisted $fd]
 report "the run persisted a resolved CPOINT/CVECT to build from" [expr {[llength $fa] == 6}] \
     "(got '$fa' from $fd)"
