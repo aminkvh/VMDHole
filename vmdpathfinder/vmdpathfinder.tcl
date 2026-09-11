@@ -19930,7 +19930,8 @@ proc ::VMDPathFinder::_cavity_refresh {} {
             set _cell $g.v${r}_[dict get $_ci vol]
             if {[winfo exists $_cell]} {
                 catch {$_cell configure -foreground [expr {$here ? "#1a5fb4" : "black"}] \
-                                        -cursor [expr {$here ? "hand2" : ""}]}
+                                        -cursor [expr {$here ? "hand2" : ""}] \
+                                        -font [expr {$here ? {Helvetica 9 underline} : {Helvetica 9}}]}
             }
         }
         # Per-frame buttons follow the same presence test the row build used.
@@ -20096,7 +20097,12 @@ proc ::VMDPathFinder::_cavity_gear_set {var value} {
         dict set $_which $tid $value
         set $_which [set $_which]
     }
+    # Changing how a pocket looks means showing it: on an unticked pocket the
+    # menu appeared to do nothing at all.
+    variable tunnel_cavity_shown
+    set tunnel_cavity_shown($tid) 1
     _tunnel_cavity_toggle
+    catch {_cavity_refresh}
 }
 
 proc ::VMDPathFinder::_cavity_volume_plot {tid} {
@@ -20642,7 +20648,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
                 # The volume itself opens its trend. A separate column with a
                 # chart emoji was both an extra column and an unrenderable
                 # glyph: \U0001F4C8 is outside Tk 8.5's BMP.
-                $g.v${r}_$c configure -cursor hand2 -foreground "#1a5fb4"
+                $g.v${r}_$c configure -cursor hand2 -foreground "#1a5fb4" \
+                    -font {Helvetica 9 underline}
                 bind $g.v${r}_$c <Button-1> [list ::VMDPathFinder::_cavity_volume_plot $tid]
                 add_tooltip $g.v${r}_$c [format "Click to plot pocket %s's volume across the trajectory. It averages %.0f +/- %.0f A^3 over the %d frame(s) it appears in." \
                     $tid [dict get $tr vol_mean] [dict get $tr vol_sd] [llength [dict get $tr frames]]]
@@ -20676,6 +20683,10 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         add_tooltip $g.gear$r "This pocket's display: colour by property, flat colour, material, surface or spheres."
     }
 
+    # The wheel reaches a widget only, never its ancestors, so every label and
+    # button in the table needs the binding or the list looks stuck wherever
+    # the pointer happens to rest.
+    catch {_bind_wheel_subtree $t.sc.c $g}
     # Pin the columns FIRST, then size the canvas to the table. Pinning the
     # body's columns to the wider header labels grows the table (564 -> 780
     # px on 1BL8); measured before it, the canvas came out short by exactly

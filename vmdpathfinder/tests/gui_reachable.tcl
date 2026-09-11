@@ -6104,6 +6104,35 @@ if {$ntun > 0} {
                "(gear right edge $_gr px, canvas $_cvw px)"
         report "the cavities window has no note line under the table" \
                [expr {![winfo exists $w.tuncav.note]}] ""
+        # The wheel reaches only the widget under the pointer, so every row
+        # label needs the binding or the table scrolls only over blank space.
+        set _wb 0; set _wn 0
+        foreach _kid [winfo children $w.tuncav.sc.c.inner] {
+            incr _wn
+            if {[bind $_kid <Button-5>] ne ""} { incr _wb }
+        }
+        report "every cavity row widget scrolls with the wheel" \
+               [expr {$_wn > 5 && $_wb == $_wn}] "($_wb of $_wn bound)"
+        # The clickable volume must LOOK clickable, not just carry a tooltip.
+        set _vc -1
+        for {set c 0} {$c < 20} {incr c} {
+            if {[winfo exists $w.tuncav.hdr.h$c]
+                && [string match "Volume*" [$w.tuncav.hdr.h$c cget -text]]} { set _vc $c; break }
+        }
+        set _vf ""
+        catch {set _vf [$w.tuncav.sc.c.inner.v1_$_vc cget -font]}
+        report "a plottable volume is drawn as a link (underlined)" \
+               [expr {[lsearch -exact $_vf underline] >= 0}] "(font '$_vf')"
+        # A gear change on an unticked pocket did nothing visible.
+        set _t1 [lindex [dict get $::VMDPathFinder::_cavity_row_map 1] 0]
+        set ::VMDPathFinder::tunnel_cavity_shown($_t1) 0
+        set ::VMDPathFinder::state(cavgear_tid) $_t1
+        ::VMDPathFinder::_cavity_gear_set cavgear_style spheres
+        report "picking a look in the gear shows that pocket" \
+               [::VMDPathFinder::_tunnel_cavity_shown $_t1] ""
+        set ::VMDPathFinder::tunnel_cavity_shown($_t1) 0
+        catch {::VMDPathFinder::_cavity_gear_set cavgear_style auto}
+        set ::VMDPathFinder::tunnel_cavity_shown($_t1) 0
         # One master checkbox replaced the Show all / Hide all button pair, and
         # colour/material/spheres moved to a per-row gear.
         # The master checkbox sits in the HEADER's column 0, directly above the
