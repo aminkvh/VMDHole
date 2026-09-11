@@ -67,9 +67,9 @@ With synchronization enabled, moving the VMD frame slider selects the
 corresponding calculated frame. Surface meshes are built lazily and held in an
 in-memory cache. Relevant controls are:
 
-- **Prebuild surfaces**: prepare all selected frames before playback.
+- **Pre-build surfaces**: prepare all selected frames before playback.
 - **Surface cache**: retain a limited number of meshes.
-- **Playback stride** (Settings, `sos_triangle` mesher only): draw every Nth triangle while the trajectory plays.
+- **Playback triangles** (Settings, `sos_triangle` mesher only): draw every Nth triangle while the trajectory plays.
 - **Keep visualization**: retain generated VMD objects after a run or reset.
 
 Prebuilding improves interactive playback but increases initial runtime and

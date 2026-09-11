@@ -18,8 +18,8 @@ change a default.
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| `CPOINT` | VMD centre of rotation | Initial point inside the pore, in Å |
-| `CVECT` | `{0 0 1}` | Direction of the channel axis |
+| `CPOINT` | blank | Initial point inside the pore, in Å. Loading a molecule fills it with the centre of the selection |
+| `CVECT` | blank | Direction of the channel axis. An axis is proposed from the structure; left blank, HOLE guesses one |
 | Stabilize `CPOINT` | off | Carry the point with a local rigid-body fit in every frame |
 | Local fit radius | 10 Å | Initial neighbourhood for `CPOINT` or endpoint stabilization |
 | Auto-expand fit radius | 15 Å | Larger neighbourhood used if the initial fit has too few atoms |
@@ -86,7 +86,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Maximum similarity | 0.9 | MOLE similarity threshold for redundant routes |
 | Weight function | `VoronoiScale` | Route cost: VoronoiScale, LengthAndRadius, Length, or Constant |
 | FBL | off | Enable the MOLE FBL option |
-| Strict Interior | off | Apply a stricter interior classification; may yield no routes for borderline inputs |
+| Strict interior (MOLE-degenerate) | off | Apply a stricter interior classification; may yield no routes for borderline inputs |
 
 ### Tunnel exits and clustering
 
@@ -130,7 +130,7 @@ Atomic radii are separate from the bare, hydrated, and probe radii used by
 | Pore surface color | `hole_def` | HOLE radius banding, property, `pore_lat` pore/spill classification, `pore_lobes` individual Connolly openings, or a flat VMD color |
 | Tunnel surface color | automatic rank | Route/rank color, selected property, or a flat VMD color |
 | Material | Opaque | VMD material applied to the generated representation |
-| Playback stride (Settings, `sos_triangle` mesher only) | 4 | Draw every Nth triangle while the trajectory plays; the marching-cubes mesher always draws full detail |
+| Playback triangles (Settings, `sos_triangle` mesher only) | 4 | Draw every Nth triangle while the trajectory plays; the marching-cubes mesher always draws full detail |
 | Synchronize playback | on | Update VMDPathFinder geometry with the VMD frame |
 | Smooth (beside playback) | follows VMD smoothing, usually 0 | Average neighbouring analysed surfaces on either side; tunnel smoothing follows tracked routes. Also sets VMD representation smoothing. Numerical profiles are unchanged |
 | Pore lining threshold | 3 Å | Maximum atom-to-local-surface distance used to classify lining residues for display and residue-property averaging |
@@ -222,10 +222,10 @@ is a steric comparison, not a free-energy calculation.
 | Overwrite | on | Tunnel runs: replace prior stored frames after confirmation. Pore runs always write a new folder |
 | Keep visualization | on | Retain generated VMD molecules/representations |
 | Keep input PDB | off | Preserve exact per-frame coordinates submitted to an engine |
-| Prebuild surfaces | off | Generate surfaces before they are displayed |
+| Pre-build surfaces | off | Generate surfaces before they are displayed |
 | Parallel jobs | automatic | Normally available cores minus one |
 | Surface cache | 20 frames | Number of prepared surfaces retained in memory |
-| Mean-profile frame cap | 1000 | Maximum frames used for expensive mean 3D/property work; `0` uses all frames |
+| Mean-profile frame cap | 0 (all frames) | Maximum frames used for expensive mean 3D/property work |
 
 Configure executable paths and the radius file in **File → Settings**. See
 [Installation](installation.md) for recommended binaries.

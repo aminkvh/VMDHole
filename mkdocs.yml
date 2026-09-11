@@ -59,5 +59,6 @@ nav:
       - Tcl and headless use: scripting.md
   - Reference:
       - Performance: performance.md
+      - Testing: testing.md
       - Troubleshooting: troubleshooting.md
       - References: references.md

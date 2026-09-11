@@ -62,6 +62,10 @@ produced the fixes they guard.
 | `test_tsv_publish_on_failure.sh` **(review)** | a failed profile parse truncating the good `hole_profile.tsv` beside it - both writers publish by rename only after a parse that produced rows |
 | `test_gui_smoke.sh` **(review)** | the GUI itself without VMD: `vmdpathfinder.tcl` sourced under plain tclsh+Tk with VMD stubbed, the real widget tree built by the real `show_gui`, and scripted user actions asserting the close path, the busy guards, the deleted-molecule dialog class, tunnel gear-popup route pinning, and nan-tolerant option fields. Skips without Tk or a display; CI runs it under xvfb. |
 
+Further tests cover the memory slots and the runs they hold, surface smoothing
+and mesh normals, ion-flow projection and its azimuth, the hydration grid, and
+the HOLE coordinate-format gate.
+
 `run_unit_tests.sh` globs `test_*.sh`, so a new test is picked up by being
 added - nothing to register.
 

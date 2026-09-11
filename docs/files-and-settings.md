@@ -8,7 +8,7 @@ directory; under the temp directory when **Save results** is off). It holds the
 per-frame data, `run_<id>.txt` with the settings, and a manifest that records
 the structure's atom count and radius of gyration. Use **File → Load Saved
 Analysis…** on a run folder to restore that run, or on `hole_output_<structure>`
-to restore every run in it as a memory each. A run loaded onto a different
+to restore its runs as memories, up to ten. A run loaded onto a different
 structure is flagged before anything is drawn. Do not rearrange files inside a
 run folder.
 
@@ -23,8 +23,9 @@ Two runs are comparable only if their settings say so: read `run_<id>.txt`.
 
 ## Persistent configuration
 
-**Set default** and **Save Settings** save settings for later sessions; nothing
-else writes them, except the export run number. A new memory starts from the
+**Set default** and **Save Settings** are the only controls that save your
+settings. The export run number and auto-detected engine paths write themselves
+into the same file without saving anything else. A new memory starts from the
 saved settings. Saved runs and exported CSV files record individual analyses.
 
 ## Executable settings
@@ -47,9 +48,9 @@ selected binaries. See [Installation](installation.md) for recommended builds.
 | Control | Trade-off |
 |---|---|
 | Parallel jobs | More simultaneous frames; higher CPU and temporary-storage use |
-| Prebuild surfaces | Longer initial run; smoother later playback |
+| Pre-build surfaces | Longer initial run; smoother later playback |
 | Surface cache | More memory; fewer mesh rebuilds |
-| Playback stride (`sos_triangle` mesher only) | Draw every Nth triangle while the trajectory plays; the frame at rest is full detail. The marching-cubes mesher draws one full-detail mesh throughout |
+| Playback triangles (Settings, `sos_triangle` mesher only) | Draw every Nth triangle while the trajectory plays; the frame at rest is full detail. The marching-cubes mesher draws one full-detail mesh throughout |
 | Mean frame cap | Bounds expensive mean/property work on long trajectories |
 | Accurate 3D | Better property projection; higher calculation cost |
 
