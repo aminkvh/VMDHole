@@ -161,7 +161,7 @@ colour, material, and whether it is drawn as a surface or as the clearance
 spheres themselves.
 
 The window initially shows pockets present in at least 25% of analysed frames.
-Enable **All pockets** to include less frequent pockets; the adjacent count
+Enable **List rare pockets** to include less frequent pockets; the adjacent count
 shows how many are displayed.
 
 ### Using a cavity to start a search

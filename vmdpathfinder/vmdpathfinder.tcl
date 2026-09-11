@@ -19958,9 +19958,9 @@ proc ::VMDPathFinder::_cavity_refresh {} {
 }
 
 proc ::VMDPathFinder::_cavity_show_all_toggle {} {
-    # The master checkbox over the per-row ones. It drives only the pockets the
-    # filter is actually showing - ticking it must not silently switch on 300
-    # transients the list is hiding.
+    # The header tick over the per-row ones: draw or hide every LISTED pocket.
+    # It drives only the pockets the filter is actually showing - ticking it
+    # must not silently switch on 300 transients the list is hiding.
     variable state
     variable tunnel_cavity_shown
     set on [expr {[info exists state(cavity_shown_all)] && $state(cavity_shown_all)}]
@@ -20514,19 +20514,22 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     set _every [_cavity_tracks]
     # Most tracks are transient: on a 50-frame run 108 of 315 appear in <=5% of
     # frames. Listing them all buries the dozen pockets that persist, which is
-    # what a trajectory is actually described by.
+    # what a trajectory is actually described by. Rebuilding the row set is the
+    # only cost the toggle has - the pockets themselves were found by the run.
     if {$state(cavity_sort_col) eq "mean"} { set state(cavity_sort_col) vol }
     set _tracks [_cavity_visible_tracks]
-    checkbutton $t.ctl.allt -text "All pockets" \
+    # NOT a drawing control: it decides which pockets are LISTED. Read as
+    # "show every pocket in 3D", which is what the tick column does.
+    checkbutton $t.ctl.allt -text "List rare pockets" \
         -variable ::VMDPathFinder::state(cavity_all_tracks) \
         -command ::VMDPathFinder::show_tunnel_cavities
     label $t.ctl.cnt -foreground gray40 -font {Helvetica 8} \
-        -text "[llength $_tracks] of [llength $_every] shown"
+        -text "[llength $_tracks] of [llength $_every] listed"
     button $t.ctl.exp -text "Export CSV" -command ::VMDPathFinder::_cavity_export_csv
     pack $t.ctl.allt $t.ctl.cnt -side left -padx {6 0}
     pack $t.ctl.exp -side right -padx {6 0}
     add_tooltip $t.ctl.exp "Write three CSVs: one row per tracked pocket, one row per pocket per frame, and one row per lining residue in the displayed frame."
-    add_tooltip $t.ctl.allt "Off: only pockets present in at least $state(cavity_min_seen)% of analysed frames. On: every track, including one-frame transients."
+    add_tooltip $t.ctl.allt "Which pockets the TABLE lists - it draws nothing.\n\nOff: only pockets present in at least $state(cavity_min_seen)% of the analysed frames.\nOn: every pocket ever seen, including ones found in a single frame. On a trajectory that is often hundreds of rows, so the table takes a moment to rebuild.\n\nUse the tick beside a pocket to draw it."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
     set _hmax 340
@@ -24276,7 +24279,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "Select a route to drive the plots; its checkbox controls 3D visibility. The header gear sets shared display choices, while row gears set overrides. Accurate 3D projects properties around the surface. Lining displays and exports contacting residues. Pore Profile, Over Time, Mean Profile, Trends, and Histogram use the selected tracked route. Trends offers bottleneck radius, length, and tube volume. Over Time uses the route's property without a separate Compute step. Mean Profile averages frames where the route was found; missing routes are not zero-radius observations. Tunnel hydration and ellipse fitting are unavailable.\n\n"
 
     $t insert end "Cavities\n" h2
-    $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. All pockets includes those below the initial 25% Seen filter. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
+    $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. List rare pockets adds the ones below the Seen filter; it changes the table only, never the 3D view. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
 
     $t insert end "Settings and saved results\n" h2
     $t insert end "File > Settings selects executable paths, acceleration, the surface mesher, grid, and parallel jobs. The HOLE and MOLE parameter gears hold search controls. Keep Save results enabled for a reloadable run; use File > Load Saved Analysis to restore it. Export lining, cavity, and opening tables separately. Consult the Citations tab for the methods you use.\n\n"
