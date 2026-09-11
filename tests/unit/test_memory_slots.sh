@@ -6,6 +6,8 @@
 #   * switching back restores that memory's settings, results and folder;
 #   * a new memory has no folder until it runs (the run makes one);
 #   * sync copies display settings only, never run geometry;
+#   * a memory whose run does not cover the shown frame is blanked, not left
+#     showing the last frame it did cover;
 #   * the saved settings (not the shipped ones) are what a new memory starts from.
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -31,8 +33,9 @@ namespace eval ::VMDPathFinder {
     variable pore_memories [dict create]; variable pore_memory_active ""
     variable pore_memory_next 1; variable plot_data_version 0
     variable run_root ""; variable run_root_temp 0; variable last_geom_key ""
+    variable current_surface_mol -1
     variable mem_surface_mols; array set mem_surface_mols {}
-    proc analysis_mode {} { return "pore" }
+    proc analysis_mode {} { return "hole" }
 }
 $(awk '/^proc ::VMDPathFinder::_mem_run_keys/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_track_ids/,/^}/' "$TCL")
@@ -50,6 +53,7 @@ $(awk '/^proc ::VMDPathFinder::_mem_delete/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_sync_presentation/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_persistent_keys/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_adopt_defaults/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_mem_render_other_memories/,/^}/' "$TCL")
 
 namespace eval ::VMDPathFinder {
     array set default_state {selection protein cpoint {} cvect {0 0 1} sample 0.25
@@ -109,6 +113,25 @@ namespace eval ::VMDPathFinder {
     _mem_delete \$id2
     puts "AFTER_DEL2 [lsort -integer [dict keys \$pore_memories]]"
 }
+
+# Drawing the frame for every OTHER memory: one covers frame 3, one does not.
+namespace eval ::VMDPathFinder {
+    proc _abort_requested {} { return 0 }
+    proc _op_in_progress {} { return 0 }
+    proc load_surface_for_frame {frame {draft 0}} { lappend ::DREW "mem\$::VMDPathFinder::pore_memory_active f\$frame" }
+    proc _mem_blank_track {frame} { lappend ::BLANKED "mem\$::VMDPathFinder::pore_memory_active f\$frame" }
+    set pore_memories [dict create \
+        1 [dict create params {surface_color red} results [dict create 0 {} 1 {} 2 {} 3 {}] frames {0 1 2 3} run_root /tmp/a] \
+        2 [dict create params {surface_color blue} results [dict create 0 {} 1 {} 2 {}] frames {0 1 2} run_root /tmp/b] \
+        3 [dict create params {surface_color green} results [dict create 0 {} 1 {} 2 {}] frames {0 1 2} run_root /tmp/c]]
+    set pore_memory_active 3
+    set state(pore_method) circular
+    set ::DREW {}; set ::BLANKED {}
+    _mem_render_other_memories 3 1
+    puts "DREW3 \$::DREW"
+    puts "BLANKED3 \$::BLANKED"
+    puts "ACTIVE_AFTER \$pore_memory_active"
+}
 TCLEOF
 )
 get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
@@ -137,6 +160,10 @@ printf '%s' "$(get M2_RESULTS)" | grep -q "^1 frames 5$" && ok "...including its
 
 [ "$(get AFTER_DEL)" = "2" ] && ok "a memory can be deleted" || bad "after delete: $(get AFTER_DEL)"
 [ "$(get AFTER_DEL2)" = "2" ] && ok "the last memory cannot be deleted" || bad "after deleting the last: $(get AFTER_DEL2)"
+
+[ "$(get DREW3)" = "{mem1 f3}" ] && ok "a memory whose run covers the frame is drawn" || bad "drew: $(get DREW3)"
+[ "$(get BLANKED3)" = "{mem2 f3}" ] && ok "...and one whose run does not is blanked, not left stale" || bad "blanked: $(get BLANKED3)"
+[ "$(get ACTIVE_AFTER)" = "3" ] && ok "...with the active memory restored either way" || bad "active after: $(get ACTIVE_AFTER)"
 
 echo "memory-slots: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || { echo "--- raw ---"; printf '%s\n' "$OUT" | head -25; exit 1; }

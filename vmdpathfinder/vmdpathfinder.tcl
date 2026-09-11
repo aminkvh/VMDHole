@@ -27303,6 +27303,17 @@ proc ::VMDPathFinder::_mem_activate {id} {
     return 1
 }
 
+proc ::VMDPathFinder::_mem_blank_track {frame} {
+    # Clear ONE memory's surface track for a frame its run does not cover.
+    # blank_surface_for_frame's per-memory twin, minus the scalebar, which is
+    # shared. current_surface_mol must already point at that memory's track.
+    variable current_surface_mol
+    if {$current_surface_mol < 0 || [catch {molinfo $current_surface_mol get name}]} { return }
+    catch {graphics $current_surface_mol delete all}
+    catch {dict unset ::VMDPathFinder::_drawn_key $current_surface_mol}
+    catch {mol rename $current_surface_mol "HOLE surface (frame $frame: no data)"}
+}
+
 proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     # Draw the frame for every memory OTHER than the active one. Playback and
     # scrubbing render the live `results` only, so with five pores held, four of
@@ -27348,10 +27359,20 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
         if {[_abort_requested]} { break }
         if {$id eq $save_active} { continue }
         set rec [dict get $pore_memories $id]
-        if {![dict exists [dict get $rec results] $frame]} { continue }
+        set pore_memory_active $id
+        # A memory whose run does not cover this frame is BLANKED, not left as
+        # it was. Two runs over different frame ranges kept the shorter one's
+        # last surface on screen for every frame past its end - one memory
+        # stuck on a stale frame while the trajectory played on. The active
+        # memory has always blanked here (blank_surface_for_frame); this is the
+        # same answer for the others.
+        if {![dict exists [dict get $rec results] $frame]} {
+            _mem_point_surface_mol
+            _mem_blank_track $frame
+            continue
+        }
         set results       [dict get $rec results]
         set result_frames [dict get $rec frames]
-        set pore_memory_active $id
         dict for {k v} [dict get $rec params] {
             if {[lsearch -exact $_swap $k] >= 0} { set state($k) $v }
         }
@@ -52803,6 +52824,18 @@ proc ::VMDPathFinder::frame_changed {name index op} {
         # the animation honestly shows that this frame was not analyzed.
         set state(selected_result_frame) ""
         blank_surface_for_frame $frame
+        # The OTHER memories still have to follow: their own runs may well cover
+        # this frame, and the ones that do not blank themselves. Without this
+        # every other memory froze on the frame it last drew and stayed there
+        # for the rest of playback.
+        if {[_frame_render_wanted]} {
+            set _frame_render_busy 1
+            catch {_mem_render_other_memories $frame 1}
+            # Stamped after the render, like _draft_render_frame, so a slow
+            # blank frame cannot false-stop the play watchdog.
+            set vmd_last_frame_ms [clock milliseconds]
+            set _frame_render_busy 0
+        }
         update_transport_for_frame $frame
     }
 }
@@ -52912,6 +52945,13 @@ proc ::VMDPathFinder::frame_changed_settle {} {
     if {$state(selected_result_frame) eq ""} {
         if {[info exists ::VMDPathFinder::_scrub_debug] && $::VMDPathFinder::_scrub_debug} {
             vmdcon -info "VMDPathFinder settle: SKIPPED the full rebuild - no selected result frame (the landed frame has no HOLE result)."
+        }
+        # The active memory has nothing here, but another memory's run may
+        # cover this frame - settle it at full detail like any selected frame.
+        if {$state(display_mode) ne "none" && ![surface_is_hidden]} {
+            set _landed ""
+            catch {set _landed [molinfo [string trim $state(molid)] get frame]}
+            if {$_landed ne ""} { catch {_mem_render_other_memories $_landed 0} }
         }
         return
     }
