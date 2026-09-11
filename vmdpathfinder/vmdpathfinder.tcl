@@ -2852,7 +2852,7 @@ and counts crossings of the constriction. PBC-safe."
     # per slice, so at the narrowest point it reads systematically wider than
     # Mean Profile's bottleneck-anchored minimum (measured 0.18-0.26 A on a
     # 394-cluster fixture) - so it moved here rather than being dropped.
-    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore; a molecule that crossed the constriction is coloured by direction and drawn on top.\nCount vs frame: how many are inside the pore at each frame.\nOpenings: how much of the traffic went through each lateral opening (Connolly only).\n\nThe pore-wall curve r(z) is a trajectory MEAN per slice, not bottleneck-anchored like Mean Profile, so it reads slightly wider at the narrowest point."
+    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore, coloured by direction if it crossed.\nCount vs frame: how many are inside at each frame.\nOpenings: traffic through each lateral opening (Connolly only)."
     menubutton $fb.spm -textvariable ::VMDPathFinder::state(ion_flow_species_disp) \
         -menu $fb.spm.m -relief raised -indicatoron 1 -width 6
     menu $fb.spm.m -tearoff 0
@@ -2862,9 +2862,7 @@ and counts crossings of the constriction. PBC-safe."
     button $fb.gear -text "⚙" -width 2 -relief flat -command ::VMDPathFinder::show_ion_flow_settings
     button $fb.perm -text "Permeation" -command ::VMDPathFinder::show_permeation_dialog
     add_tooltip $fb.go   "Maps ion occupancy and flow through the pore over the trajectory, and counts crossings of the constriction. PBC-safe."
-    add_tooltip $fb.vwm  "Occupancy %: one aggregate map of all ions, with flow. Passage: one trace per ion\
-        that came near the pore axis, crossings coloured by direction. Count vs frame: molecules inside\
-        the pore per frame. None is the Permeation count, which needs a full bulk-to-bulk crossing."
+    add_tooltip $fb.vwm  "Occupancy %: one map of all ions, with flow. Passage: one trace per ion near the axis, crossings coloured by direction. Count vs frame: how many are inside at each frame."
     add_tooltip $fb.perm "Ions that fully cross the pore, bulk to bulk.
 Stricter than Passage, which counts ions that merely entered."
     add_tooltip $fb.spm  "Show one ion type, All (every ion type together - never water), or Water: one oxygen per molecule from the Hydration tab's water selection, scanned the first time it is picked."
@@ -3006,10 +3004,7 @@ Stricter than Passage, which counts ions that merely entered."
     }
     pack $w.bottom.options.sm   -side right -padx {1 0}
     pack $w.bottom.options.sm_l -side right -padx {8 2}
-    add_tooltip $w.bottom.options.sm "Average over this many frames either side. 0 is off.\
-        Sets VMD's own trajectory smoothing on every representation of the molecule, and the\
-        plugin's frame averaging of the surface, so the two always match. Changing it in\
-        Graphics > Representations updates this box too."
+    add_tooltip $w.bottom.options.sm "Average over this many frames either side. 0 is off. Sets VMD's own smoothing and the plugin's surface averaging together, so the two always match."
 
     # Abort button: created here but NOT packed - _begin_calc/_end_calc show/hide it
     # (via _show_abort_button) so it only appears while a calculation runs. It sits
@@ -7249,7 +7244,7 @@ proc ::VMDPathFinder::build_tunnel_panel {parent} {
     grid $parent.sp_l -row $row -column 0 -sticky w  -padx 8 -pady 2
     grid $parent.sp_e -row $row -column 1 -sticky ew -padx 8 -pady 2
     grid $parent.sp_box -row $row -column 2 -sticky ew -padx 8 -pady 2
-    add_tooltip $parent.sp_e "Where the tunnels lead out of: \"x y z\" inside the buried cavity, a VMD selection (its centre, re-evaluated every frame - e.g. \"resname HEM\"), or several of either separated by \";\" for pinned multi-origin runs."
+    add_tooltip $parent.sp_e "Where the tunnels lead out of: \"x y z\" inside the cavity, or a VMD selection whose centre is used and re-read each frame. Separate several with \";\"."
     incr row
 
     add_tooltip $parent.sp_box.com "Fill with the centre of geometry of the selection typed here. Blank\
@@ -7595,9 +7590,7 @@ proc ::VMDPathFinder::show_tunnel_advanced_settings {} {
     entry $d.mdev_e -textvariable ::VMDPathFinder::state(tunnel_cluster_maxdev) -width 7
     grid $d.mdev_l -row $row -column 2 -sticky w -padx {0 4} -pady 1
     grid $d.mdev_e -row $row -column 3 -sticky w -padx {0 8} -pady 1
-    add_tooltip $d.mdev_e "Å; default 12, 0 = off. Routes are grouped by their MEAN separation, so two routes\
-        can match closely for most of their length yet still stray far apart at one point. This caps how far\
-        apart grouped routes may ever get."
+    add_tooltip $d.mdev_e "Å; default 12, 0 = off. Routes are grouped by their mean separation, so two can match for most of their length and still part at one point. This caps how far apart they may get."
     incr row
 
     # List-display filter, not a MOLE or clustering parameter, but lives here
@@ -20506,8 +20499,8 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         -command [list ::VMDPathFinder::_cavity_set_rule caver "largest sphere (CAVER)"]
     pack $t.ctl.rl $t.ctl.rm -side left -padx {0 6}
     grid $t.ctl -row 0 -column 0 -sticky w -padx 8 -pady {6 2}
-    add_tooltip $t.ctl.rl "A pocket is where a tunnel search BEGINS. \"Use as start\" copies this point into the Start point box, so the next search looks for routes leading out of that pocket. The two rules pick that point differently."
-    add_tooltip $t.ctl.rm "Where inside the pocket a search would start.\n\ndeepest point (MOLE) - the point furthest from the surface, which MOLE itself would pick.\nlargest sphere (CAVER) - the centre of the biggest sphere that fits, which is what CAVER Analyst uses.\n\nThey usually differ by a few Angstroms; the Start pt column shows the point you would get."
+    add_tooltip $t.ctl.rl "A pocket is where a tunnel search begins. \"Use as start\" copies this point into the Start point box. The two rules pick the point differently."
+    add_tooltip $t.ctl.rm "Where inside the pocket a search would start.\n\ndeepest point (MOLE): furthest from the surface.\nlargest sphere (CAVER): centre of the biggest ball that fits.\n\nThe Start pt column shows the point you would get."
 
     # ---- table ----------------------------------------------------------
     # ONE grid for the header and the rows, inside a scrolling frame. Two
@@ -20531,7 +20524,7 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     pack $t.ctl.allt $t.ctl.cnt -side left -padx {6 0}
     pack $t.ctl.exp -side right -padx {6 0}
     add_tooltip $t.ctl.exp "Write three CSVs: one row per tracked pocket, one row per pocket per frame, and one row per lining residue in the displayed frame."
-    add_tooltip $t.ctl.allt "Which pockets the TABLE lists - it draws nothing.\n\nOff: only pockets present in at least $state(cavity_min_seen)% of the analysed frames.\nOn: every pocket ever seen, including ones found in a single frame. On a trajectory that is often hundreds of rows, so the table takes a moment to rebuild.\n\nUse the tick beside a pocket to draw it."
+    add_tooltip $t.ctl.allt "Which pockets the table lists. It draws nothing.\n\nOff: only pockets seen in at least $state(cavity_min_seen)% of frames. On: every pocket, including one-frame ones, which can be hundreds of rows.\n\nTick a pocket to draw it."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
     set _hmax 340
@@ -22578,9 +22571,7 @@ proc ::VMDPathFinder::build_run_panel {parent} {
     pack $parent.mem.del   -side right
     pack $parent.mem.sync  -side right -padx {0 3}
     set _mem_row $parent.mem
-    add_tooltip $parent.mem.l "Each memory is one complete pore analysis - its own\
-        start point, direction, selection and results - kept and drawn at the same time as the others.\
-        Click a number to go back to that analysis; its settings and its results return with it."
+    add_tooltip $parent.mem.l "Each memory is one complete pore analysis - its own start point, direction, selection and results - drawn alongside the others. Click a number to go back to it."
     add_tooltip $parent.mem.sync "Copy this memory's colour, material and dot density to every other\
         memory and redraw them, so all the pores on screen read as one picture."
     add_tooltip $parent.mem.del "Delete the current memory and its surface. The last memory cannot be deleted."
@@ -22787,7 +22778,7 @@ proc ::VMDPathFinder::build_run_panel {parent} {
     pack $parent.hs_box.m   -side left -padx {4 0}
     grid $parent.hs_box -row $row -column 0 -columnspan 3 -sticky w -padx 8 -pady 2
     add_tooltip $parent.hs_box.sc "Color the pore surface by a fixed color, HOLE's own default, or a Property."
-    add_tooltip $parent.hs_box.m "Which scale colors the surface/profile when Color is set to Property. Under Connolly this reads HOLE's Connolly (equivalent-area) radius, not the probe radius CHAP itself is built and validated on - values are not directly comparable to spherical mode or to real CHAP output."
+    add_tooltip $parent.hs_box.m "Which scale colours the surface and profile when Color is set to Property. Under Connolly the radius is the equivalent-area one, so values are not comparable with spherical mode."
     incr row
 
     # "Scale bar" and "Accurate 3D" moved OFF this row into the ⚙ Property Coloring
@@ -23652,9 +23643,7 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
         $d.hp.ce_mb.m add command -label $_ced -command [list ::VMDPathFinder::_set_conn_engine $_cev $_ced]
     }
     grid $d.hp.ce_mb -row 3 -column 1 -sticky w -padx {2 6}
-    add_tooltip $d.hp.ce_mb "HOLE\'s own conn, or the faster nm_search port - same dots. Monte Carlo can use\
-        either; Nelder-Mead normally uses the port (it falls back to HOLE\'s own conn if the port is missing or\
-        cannot take a card you added)."
+    add_tooltip $d.hp.ce_mb "HOLE's own conn, or the faster port of it - the same dots. Nelder-Mead normally uses the port and falls back to HOLE's conn if it is missing."
     set ::VMDPathFinder::_hp_frame $d.hp
     after idle ::VMDPathFinder::_update_search_rows
     checkbutton $d.hp.cgate_c -text "Hide sideways spill" \
@@ -23673,7 +23662,7 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
     checkbutton $d.hp.ionrad_c -text "Ionic radii fallback" \
         -variable ::VMDPathFinder::state(ion_radius_fallback)
     grid $d.hp.ionrad_c -row 8 -column 2 -columnspan 2 -sticky w -pady 2
-    add_tooltip $d.hp.ionrad_c "Your radius file is never modified. When a van der Waals radius is missing for an atom in your selection - e.g. K+/CHARMM's POT with simple.rad, which stops the run - a temporary copy is used with crystal ionic radii appended, from Nightingale, E.R. Jr. (1959) J. Phys. Chem. 63, 1381-1387, Table I. Also turns on \"Rename unreadable atoms\" above, for systems that hit both problems at once."
+    add_tooltip $d.hp.ionrad_c "Adds crystal ionic radii (Nightingale 1959) for ions your radius file is missing, such as CHARMM's POT. Your file is not changed. Also turns on \"Rename unreadable atoms\"."
     grid $d.hp -row $row -column 0 -columnspan 3 -sticky w -padx 8
     incr row
     add_tooltip $d.hp.rs_e "Blank = 1."
@@ -23686,9 +23675,7 @@ proc ::VMDPathFinder::show_hole_params_settings {} {
         reaches it is not stored. Required; pre-filled with HOLE's own default, 15."
     add_tooltip $d.hp.sa_e "Distance between successive search planes along the channel axis, in Å.\
         Required; pre-filled with HOLE's own default, 0.25."
-    add_tooltip $d.hp.sh_e "How much HOLE prints to the console: 0 = everything. Must be 0, 1 or 2\
-        here - HOLE itself also accepts 3, but this plugin's profile plot needs the radius table\
-        that 2 or higher omits. Required; pre-filled with 1."
+    add_tooltip $d.hp.sh_e "How much HOLE prints to the console: 0 = everything. Use 0, 1 or 2 here; 3 omits the radius table the profile plot needs."
     add_tooltip $d.hp.ig_e "Residue names HOLE treats as empty space rather than wall. Pre-filled with\
         this plugin's own default, HOH WAT TIP SOL; blank omits the card entirely."
 
@@ -23974,7 +23961,7 @@ proc ::VMDPathFinder::show_mean_profile_settings {} {
     entry $d.vth.oe -textvariable ::VMDPathFinder::state(mean_vol_thresh_open) -width 5
     pack $d.vth.l $d.vth.e $d.vth.ol $d.vth.oe -side left -padx {0 4}
     grid $d.vth -row $row -column 0 -sticky w -padx 8 -pady 3; incr row
-    add_tooltip $d.venable "Builds the surface from the Connolly clouds instead of revolving the mean radius. The Å\u00b3 is the lumen open in at least half the frames, so it reads below the mean profile's own volume. Applies on Apply."
+    add_tooltip $d.venable "Builds the surface from the Connolly clouds instead of revolving the mean radius. The volume is the lumen open in at least half the frames, so it reads below the mean profile's. Applies on Apply."
     add_tooltip $d.vgrid.he "Voxel size in Å. Smaller resolves finer openings and takes longer. The volume shifts about 14% across a twofold change, so quote it with this setting."
     add_tooltip $d.vgrid.se "Gaussian width in voxels. Each region is smoothed separately, so the pore does not bleed into an opening."
     add_tooltip $d.vth.e "Fraction of frames a point must be inside the pore to count. 0.5 is the median lumen - what was open more often than not."
@@ -26924,10 +26911,10 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     entry $d.pf.scope_box.tr   -textvariable ::VMDPathFinder::state(track_radius) -width 4
     label $d.pf.scope_box.tr_l -text "A, at start"
     grid $d.pf.scope_box -row 1 -column 0 -sticky w -pady {2 0}
-    add_tooltip $d.pf.scope_box.ri "Ca atoms within this radius of CPOINT (at the reference frame) are used to fit the local rigid-body motion."
+    add_tooltip $d.pf.scope_box.ri "CA atoms within this radius of CPOINT, at the reference frame, set the local motion the axis follows."
     add_tooltip $d.pf.scope_box.ro "If fewer than 3 Ca atoms are found within the fit radius, search out to here instead."
     add_tooltip $d.pf.scope_box.rw "Warn in the console if the fit's residual error exceeds this many A."
-    add_tooltip $d.pf.scope_box.tr "Radius around CPOINT, at the reference frame only, used to pick the atom patch Track follows."
+    add_tooltip $d.pf.scope_box.tr "Radius around CPOINT, at the reference frame, that picks the patch of atoms Track follows."
     _update_cpoint_scope_row $d.pf
     frame $d.vec -relief groove -borderwidth 1
     _build_vector_controls $d.vec
@@ -26975,7 +26962,7 @@ proc ::VMDPathFinder::show_axis_stick_dialog {{mode ""}} {
     grid $d.pad.canv  -row 1 -column 1
     grid $d.pad.right -row 1 -column 2
     grid $d.pad.down  -row 2 -column 1
-    add_tooltip $d.pad.canv "Drag moves the target point in the direction you drag, relative to the CURRENT view - up/down/left/right always match the screen, whatever the model's rotation. For CVECT, pick Point 1 or Point 2 above first; CVECT is recomputed from the pair as you move either one."
+    add_tooltip $d.pad.canv "Drag moves the point the way you drag, relative to the view: up, down, left and right always match the screen. For CVECT, pick Point 1 or Point 2 first."
     bind $d.pad.canv <ButtonPress-1> [list ::VMDPathFinder::_axis_stick_drag_start $d %x %y]
     bind $d.pad.canv <B1-Motion>     [list ::VMDPathFinder::_axis_stick_drag_motion $d %x %y]
     bind $d.pad.canv <ButtonRelease-1> [list ::VMDPathFinder::_axis_stick_drag_end $d]
@@ -35641,7 +35628,7 @@ proc ::VMDPathFinder::_build_conn_lobe_panel {parent row} {
     label $d.hdr.io -text "Ions \u2003" -font {Helvetica 8 bold} -anchor w
     label $d.hdr.gg -text "\u2699" -font {Helvetica 9} -cursor hand2
     bind $d.hdr.gg <Button-1> {::VMDPathFinder::show_conn_lobes_global_gear}
-    add_tooltip $d.hdr.io "How many times an ion was found inside this opening, counting each frame separately. An ion that stays for 5 frames counts 5.\n\nHover a number for which ions they were, how long a visit lasts, and how many visits also moved 3 A or more outward.\n\nReads \"-\" until you run an Ion & Water scan."
+    add_tooltip $d.hdr.io "How many times an ion was found inside this opening, counting each frame separately. Hover a number for the species, visit length and outward moves. \"-\" until you run an Ion & Water scan."
     add_tooltip $d.hdr.gg "Color, property, material, matching, reset and export for ALL regions."
     grid $d.hdr.all -row 0 -column 0 -sticky w -padx 1
     grid $d.hdr.t   -row 0 -column 1 -sticky w -padx 2
@@ -36201,8 +36188,8 @@ proc ::VMDPathFinder::_conn_lobe_row_panel {parent r sid label seen neck present
         add_tooltip $f.az$sid "Which way round the axis it faces, in degrees. Two openings at the same height are told apart by this."
         add_tooltip $f.gr$sid "Color, property, material and export for this region."
         add_tooltip $f.se$sid "How often this region was found, as a share of the analysed frames. Green if it is on the frame you are looking at, red if not."
-        add_tooltip $f.nk$sid "Narrowest clearance on the widest route from the pore centreline into this opening, in Å, averaged over the frames it is seen in. open = wider than the search's end radius."
-        add_tooltip $f.st$sid "How far this opening stretches past the margin, in Å."
+        add_tooltip $f.nk$sid "The narrowest point on the way from the pore into this opening, in Å - the widest ball that could pass, averaged over the frames it is seen in. \"open\" means nothing narrower than the end radius blocks it."
+        add_tooltip $f.st$sid "How far this opening reaches out past the pore wall, in Å."
         add_tooltip $f.nm$sid ""
     }
     # sid 0 is the pore, which is not in the openings palette - _conn_site_color
@@ -36466,9 +36453,7 @@ proc ::VMDPathFinder::_conn_gear_dialog {sid} {
         bind $d.c.mshf.e <FocusOut> {::VMDPathFinder::_commit_conn_lobe_minshare}
         grid $d.c.mshl -row $row -column 0 -sticky w -pady 2
         grid $d.c.mshf -row $row -column 1 -sticky w -padx 6 -pady 2
-        add_tooltip $d.c.mshf.e "How big a patch has to be before it is called an opening rather than noise,\
-            as a share of all the dots outside the pore. Applied before the Seen filter, so anything it drops\
-            is not counted in the \"under the floor\" line either. Lower it to see small openings."
+        add_tooltip $d.c.mshf.e "How big a patch must be to count as an opening, as a share of the dots outside the pore. Applied before the Seen filter. Lower it to see small openings."
         incr row
     }
     # Export goes LAST, after every field that is typed into.
@@ -47662,7 +47647,7 @@ proc ::VMDPathFinder::show_ion_flow_settings {} {
         grid $d.pe -row $row -column 1 -sticky w -padx {0 10} -pady {8 3}; incr row
         bind $d.pe <Return>   {catch {::VMDPathFinder::_ion_flow_refilter}}
         bind $d.pe <FocusOut> {catch {::VMDPathFinder::_ion_flow_refilter}}
-        add_tooltip $d.pe "How far beyond the pore wall still counts as INSIDE for a passage trace (Å). Default 0.5, tighter than the occupancy shell: a wide margin lets an ion travel up the outside of the pore and read as a crossing it never made. Ignored under Connolly, whose radius already reaches the solvent surface; floored at 1.5 in Tunnel mode, whose centreline is sampled too coarsely for 0.5 to be reachable."
+        add_tooltip $d.pe "How far past the pore wall still counts as inside, for passage traces (Å). Default 0.5. Wider lets an ion travel up the outside and read as a crossing it never made. Not used under Connolly; at least 1.5 in Tunnel mode."
     } else {
         label $d.rl -text "Shell (Å)" -anchor w
         entry $d.re -width 8 -textvariable ::VMDPathFinder::state(ion_flow_shell)
@@ -61937,19 +61922,7 @@ Falls back to 0.0334 only when there is too little bulk water."
     incr r
     label $d.kbw_l -text "KDE bandwidth (Å)" -anchor w
     entry $d.kbw_e -width 8 -textvariable ::VMDPathFinder::state(water_kde_bw)
-    add_tooltip $d.kbw_e "1.4 Å = default; \"auto\" solves the AMISE-optimal width per frame.
-
-This choice sets the BARRIER HEIGHT, so quote it with any G(z) you report.
-Measured against CHAP 0.9.1 on its own example-02 (4pirtm), same water
-selection: 1.4 Å gives a 9.57 kT peak where CHAP reports 3.82 (+151%);
-\"auto\" gives 3.14 kT (-18%). The shape barely moves either way (energy
-r = 0.95 vs 0.97) - it is the absolute height that shifts.
-
-Both values are CHAP's own: 1.4 Å is the bandwidth Klesse et al. publish
-in the CHAP paper, while the CHAP PROGRAM defaults to the per-frame AMISE
-width (-de-bandwidth -1) and never hard-codes 1.4 anywhere in its source.
-The disagreement is inside CHAP, between its paper and its software - 1.4
-is not a wrong number, it is just not the one the program produces."
+    add_tooltip $d.kbw_e "Width of the smoothing used for the water density, in Å. 1.4 is the published CHAP value; \"auto\" picks a width for each frame. It sets how tall the energy barrier reads, so quote it with any G(z) you report."
     grid $d.kbw_l -row $r -column 0 -sticky w -padx {24 6} -pady {0 3}
     grid $d.kbw_e -row $r -column 1 -sticky w -padx {0 6}  -pady {0 3}
     incr r
