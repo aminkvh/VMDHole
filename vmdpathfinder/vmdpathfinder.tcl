@@ -2852,7 +2852,7 @@ and counts crossings of the constriction. PBC-safe."
     # per slice, so at the narrowest point it reads systematically wider than
     # Mean Profile's bottleneck-anchored minimum (measured 0.18-0.26 A on a
     # 394-cluster fixture) - so it moved here rather than being dropped.
-    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore, coloured by direction if it crossed.\nCount vs frame: how many are inside at each frame.\nOpenings: traffic through each lateral opening (Connolly only)."
+    add_tooltip $fb.vwm "Occupancy %: where ions spend their time.\nPassage: one line per ion that entered the pore, coloured by direction if it crossed.\nCount vs frame: how many are inside at each frame.\nOpenings: traffic through each lateral opening (Connolly only).\n\nThe wall curve here is a per-slice mean, not bottleneck-anchored like Mean Profile, so the narrowest point reads slightly wider."
     menubutton $fb.spm -textvariable ::VMDPathFinder::state(ion_flow_species_disp) \
         -menu $fb.spm.m -relief raised -indicatoron 1 -width 6
     menu $fb.spm.m -tearoff 0
