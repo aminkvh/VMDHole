@@ -1651,11 +1651,12 @@ proc ::VMDPathFinder::_frame_progress_line {text} {
     # backslash, newline and indent all become literal characters in the
     # regexp, so the branch that followed one required leading whitespace and
     # could never match a trimmed line.
-    # Progress lines all end in an ellipsis and name a frame or a count of
-    # frames/surfaces - "Loading surface for frame 7...", "HOLE: 3 / 100
-    # frame(s)...", "Hydration: binning frame 4 / 20 ...". Summaries and
-    # warnings do not end that way, so the shape is the rule, not a word list.
+    # Two shapes. A line that names ONE frame - "for frame 7", "frame 4 / 20"
+    # - is per-frame whatever it says; "10 frame(s)" is a count and stays.
+    # The rest are progress lines ending in an ellipsis: "HOLE: 3 / 100
+    # frame(s)...", "Preparing surface 2 / 9...".
     set t [string trim $text]
+    if {[regexp -nocase {\mframe \d+\M} $t]} { return 1 }
     if {![regexp {(\.\.\.|\u2026)$} $t]} { return 0 }
     return [regexp -nocase {frame|surface|triangulat|render|smooth|mesh|prim|bak|scan|read|pars|worker|complet} $t]
 }
@@ -27353,6 +27354,7 @@ proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     dict for {k v} $save_disp { set state($k) $v }
     set _mem_swapping 0
     set _mem_render_busy 0
+    catch {_update_surface_vis_buttons}
     # The flag this loop raised is the one it consumes. Leaving it up would
     # abort the next real calculation before it started.
     if {[_abort_requested] && ![_op_in_progress]} {
@@ -27493,12 +27495,24 @@ proc ::VMDPathFinder::_mem_show_tracks {on} {
     # them: Connolly and Tunnel draw a different kind of surface into their own
     # track, and leaving five spherical pores on screen underneath would read as
     # part of their result. Coming back shows them again - nothing is lost.
+    # Only tracks this proc hid come back: one the user hid with P, or in
+    # VMD Main, stays hidden across a memory switch.
     variable pore_memories
     variable pore_memory_active
+    variable _mem_tracks_autohidden
+    if {![info exists _mem_tracks_autohidden]} { set _mem_tracks_autohidden {} }
+    if {$on} {
+        foreach m $_mem_tracks_autohidden { catch {mol on $m} }
+        set _mem_tracks_autohidden {}
+        return
+    }
     foreach id [dict keys $pore_memories] {
         if {$id eq $pore_memory_active} { continue }
-        set verb [expr {$on ? {on} : {off}}]
-        foreach m [_mem_track_ids $id] { catch {mol $verb $m} }
+        foreach m [_mem_track_ids $id] {
+            if {[catch {molinfo $m get displayed} d] || !$d} continue
+            catch {mol off $m}
+            lappend _mem_tracks_autohidden $m
+        }
     }
 }
 
@@ -27578,6 +27592,8 @@ proc ::VMDPathFinder::_mem_slot_clicked {id} {
     _mem_refresh_row
     catch {refresh_results_list}
     catch {apply_display_change}
+    # P reads the track of the memory now active.
+    catch {_update_surface_vis_buttons}
     set state(status) "Memory $id."
 }
 
@@ -51647,6 +51663,9 @@ proc ::VMDPathFinder::_update_surface_vis_buttons {} {
     variable _vis_pore_shown
     variable _vis_mean_shown
     variable _vis_tunnel_shown
+    # While another memory is swapped in for drawing, P must not read its track.
+    variable _mem_swapping
+    if {[info exists _mem_swapping] && $_mem_swapping} { return }
     # Headless guard - see _have_tk.
     if {![_have_tk]} { return }
     if {![winfo exists $w.bottom.statusrow.vistoggle]} { return }

@@ -5170,10 +5170,11 @@ chk "_conn_classify_cached promotes a cache hit (unset then re-set), not a no-op
 # frame or surface - not a word list, which missed most of them.
 foreach _t {"Building surface for frame 3..." "Loading surface for frame 7..." \
             "HOLE: 3 / 100 frame(s) (8 parallel)..." "Hydration: binning frame 4 / 20 ..." \
-            "Preparing surface 2 / 9 for batch\u2026" "Rendering frame 12..."} {
+            "Preparing surface 2 / 9 for batch\u2026" "Rendering frame 12..." \
+            "Loaded triangulated surface for frame 3." "Showing HOLE results for frame 44."} {
     chk "log filter hides: $_t" [::VMDPathFinder::_frame_progress_line $_t] 1
 }
-foreach _t {"Run 20260909-120000 - 10 frame(s), sel protein" "Loaded triangulated surface for frame 3." \
+foreach _t {"Run 20260909-120000 - 10 frame(s), sel protein" "HOLE complete (5 frame(s), 0 failed)." \
             "Surface pre-build complete for 10 frame(s)." "Mean surface: no centreline"} {
     chk "log filter keeps: $_t" [::VMDPathFinder::_frame_progress_line $_t] 0
 }
@@ -6647,6 +6648,31 @@ chk "...so it is never reconstructed from cls(keep) any more" \
 # does, or the two would still mesh clouds of different sizes.
 chk "...and a large cloud is reduced with the SAME call plain CONNOLLY uses" \
     [expr {[string first {_reduce_conn_sph $_mesh_src $_uni_sph 0 $_target} $_rm2] >= 0}] 1
+
+# --- A memory hidden with P stays hidden across a memory switch ---------------
+# The row refresh turned every other memory's track back on; now only the
+# tracks the plugin itself hid (leaving spherical) come back.
+set _sv_mem [list [array get ::VMDPathFinder::mem_surface_mols] $::VMDPathFinder::pore_memories \
+                  $::VMDPathFinder::pore_memory_active]
+array unset ::VMDPathFinder::mem_surface_mols
+set _ma [mol new]; set _mb [mol new]
+set ::VMDPathFinder::mem_surface_mols(0|1) $_ma
+set ::VMDPathFinder::mem_surface_mols(0|2) $_mb
+set ::VMDPathFinder::pore_memories [dict create 1 {} 2 {}]
+set ::VMDPathFinder::pore_memory_active 3
+mol off $_ma
+::VMDPathFinder::_mem_show_tracks 0
+chk "leaving spherical hides the shown track" [molinfo $_mb get displayed] 0
+::VMDPathFinder::_mem_show_tracks 1
+chk "...and coming back shows it again" [molinfo $_mb get displayed] 1
+chk "...but not the one the user had hidden" [molinfo $_ma get displayed] 0
+::VMDPathFinder::_mem_show_tracks 1
+chk "a second refresh still leaves it hidden" [molinfo $_ma get displayed] 0
+catch {mol delete $_ma}; catch {mol delete $_mb}
+array unset ::VMDPathFinder::mem_surface_mols
+array set ::VMDPathFinder::mem_surface_mols [lindex $_sv_mem 0]
+set ::VMDPathFinder::pore_memories [lindex $_sv_mem 1]
+set ::VMDPathFinder::pore_memory_active [lindex $_sv_mem 2]
 
 puts "SMOKE-RESULT pass=$pass fail=$fail"
 quit
