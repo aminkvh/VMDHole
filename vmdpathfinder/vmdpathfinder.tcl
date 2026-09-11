@@ -53115,6 +53115,15 @@ proc ::VMDPathFinder::_draft_render_frame {frame} {
     # Follow the frame with the reshaped-ellipse surface too, when it's active (render-paced,
     # inside the same busy guard so the play watchdog treats the whole frame as one render).
     catch { _update_ellipse_for_frame $frame }
+    # The lining is per-frame data like the surface. It used to wait for the
+    # settle pass and run last, behind the full-detail rebuild, so it landed
+    # about a second after the surface. Not during playback: it costs a few
+    # tenths of a second a frame, and play_stopped redraws on pause.
+    variable playing
+    if {![info exists playing] || !$playing} {
+        catch {update_pore_lining_rep}
+        catch {update_pore_facing_rep}
+    }
     set vmd_last_frame_ms [clock milliseconds]
     # Render counter for the render-paced verification: every draft render bumps it.
     # Set `::VMDPathFinder::_scrub_debug 1` in the VMD console before a play/scrub to log each
@@ -53540,7 +53549,12 @@ proc ::VMDPathFinder::goto_trajectory_frame {frame {draft 0}} {
             }
             set syncing_frame 0
         }
-        if {[info exists tunnel_results($frame)]} {
+        if {[info exists tunnel_results($frame)] && [tunnel_surface_is_hidden]} {
+            # Track hidden - skip the mesh and draw entirely, the same gate
+            # frame_changed uses. With the Mean Profile on, the tunnel track
+            # IS hidden, so every step of the slider was meshing into an
+            # invisible molecule.
+        } elseif {[info exists tunnel_results($frame)]} {
             catch {render_tunnels_for_frame $frame $draft}
         } else {
             catch {_blank_tunnels_for_frame $frame}
@@ -56936,6 +56950,18 @@ proc ::VMDPathFinder::_tunnel_hide_geometry_for_mean {on} {
         if {$_tunnel_geom_was_shown ne "" && $_tunnel_geom_was_shown} {
             catch {mol on $m}
             set _vis_tunnel_shown 1
+            # Frames moved while the track was hidden, and nothing rendered
+            # into it, so bring it up to the frame on screen.
+            variable tunnel_results
+            set _landed ""
+            catch {set _landed [molinfo $molid get frame]}
+            if {$_landed ne ""} {
+                if {[info exists tunnel_results($_landed)]} {
+                    catch {render_tunnels_for_frame $_landed}
+                } else {
+                    catch {_blank_tunnels_for_frame $_landed}
+                }
+            }
         }
         set _tunnel_geom_was_shown ""
     }

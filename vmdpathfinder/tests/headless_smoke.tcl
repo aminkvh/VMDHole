@@ -6685,5 +6685,17 @@ array set ::VMDPathFinder::mem_surface_mols [lindex $_sv_mem 0]
 set ::VMDPathFinder::pore_memories [lindex $_sv_mem 1]
 set ::VMDPathFinder::pore_memory_active [lindex $_sv_mem 2]
 
+# --- The lining follows the frame, and a hidden tunnel track is not meshed ---
+chk "the lining is updated on the per-frame render path, not only on settle" \
+    [expr {[string first {update_pore_lining_rep} [info body ::VMDPathFinder::_draft_render_frame]] >= 0 \
+        && [string first {update_pore_facing_rep} [info body ::VMDPathFinder::_draft_render_frame]] >= 0}] 1
+chk "...but not while playing" \
+    [expr {[string first {!$playing} [info body ::VMDPathFinder::_draft_render_frame]] >= 0}] 1
+chk "the plugin's own transport honours the hidden tunnel track" \
+    [expr {[string first {tunnel_surface_is_hidden} [info body ::VMDPathFinder::goto_trajectory_frame]] >= 0}] 1
+chk "...and showing the track again re-renders the landed frame" \
+    [expr {[string first {render_tunnels_for_frame $_landed} \
+        [info body ::VMDPathFinder::_tunnel_hide_geometry_for_mean]] >= 0}] 1
+
 puts "SMOKE-RESULT pass=$pass fail=$fail"
 quit
