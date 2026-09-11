@@ -8,7 +8,8 @@
 #   * sync copies display settings only, never run geometry;
 #   * a memory whose run does not cover the shown frame is blanked, not left
 #     showing the last frame it did cover;
-#   * the saved settings (not the shipped ones) are what a new memory starts from.
+#   * the saved settings (not the shipped ones) are what a new memory starts from;
+#   * there are at most ten.
 set -u
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -54,6 +55,8 @@ $(awk '/^proc ::VMDPathFinder::_mem_sync_presentation/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_persistent_keys/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_adopt_defaults/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_render_other_memories/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_mem_max/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_mem_add_clicked/,/^}/' "$TCL")
 
 namespace eval ::VMDPathFinder {
     array set default_state {selection protein cpoint {} cvect {0 0 1} sample 0.25
@@ -132,6 +135,21 @@ namespace eval ::VMDPathFinder {
     puts "BLANKED3 \$::BLANKED"
     puts "ACTIVE_AFTER \$pore_memory_active"
 }
+
+# The cap: the eleventh "+" is refused, the tenth is not.
+namespace eval ::VMDPathFinder {
+    proc _mem_guard_busy {what} { return 0 }
+    proc _mem_refresh_row {} {}
+    proc refresh_results_list {} {}
+    set pore_memories [dict create]
+    set pore_memory_active ""
+    set pore_memory_next 1
+    set results [dict create]; set result_frames {}
+    set state(pore_method) circular
+    for {set i 0} {\$i < 12} {incr i} { _mem_add_clicked }
+    puts "CAP_N [dict size \$pore_memories]"
+    puts "CAP_STATUS \$state(status)"
+}
 TCLEOF
 )
 get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
@@ -164,6 +182,9 @@ printf '%s' "$(get M2_RESULTS)" | grep -q "^1 frames 5$" && ok "...including its
 [ "$(get DREW3)" = "{mem1 f3}" ] && ok "a memory whose run covers the frame is drawn" || bad "drew: $(get DREW3)"
 [ "$(get BLANKED3)" = "{mem2 f3}" ] && ok "...and one whose run does not is blanked, not left stale" || bad "blanked: $(get BLANKED3)"
 [ "$(get ACTIVE_AFTER)" = "3" ] && ok "...with the active memory restored either way" || bad "active after: $(get ACTIVE_AFTER)"
+
+[ "$(get CAP_N)" = "10" ] && ok "at most ten memories" || bad "cap: $(get CAP_N)"
+printf '%s' "$(get CAP_STATUS)" | grep -q "At most 10" && ok "...and the eleventh + says so" || bad "cap status: $(get CAP_STATUS)"
 
 echo "memory-slots: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || { echo "--- raw ---"; printf '%s\n' "$OUT" | head -25; exit 1; }

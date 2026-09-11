@@ -4048,6 +4048,46 @@ chk "...and so does the any-shown test" \
 chk "...and it is part of the plot cache key" \
     [expr {[string first {_conn_lobe_min_seen} \
         [info body ::VMDPathFinder::_conn_lobes_tag]] >= 0}] 1
+# An opening present in the shown frame but under the floor is drawn in its
+# own grey region, never in the pore's colour - painted as pore, a fenestration
+# open in few frames vanished into the pore on every frame it was open.
+foreach _p {_conn_site_table _conn_frame_axis _conn_classify_cached _conn_frame_lobes
+            _conn_lobe_site_map _build_conn_region_meshes _write_conn_multi_plot} {
+    rename ::VMDPathFinder::$_p ::VMDPathFinder::_orig_$_p
+}
+namespace eval ::VMDPathFinder {
+    proc _conn_site_table {} { return [dict create status ok frames {a b c d e f g h i j} \
+        sites [list [list 0.0 0.0 9 {}] [list 1.0 0.0 1 {}]]] }
+    proc _conn_frame_axis {f} { return [list {0 0 1} {0 0 0} {1 0 0 0 1 0}] }
+    proc _conn_classify_cached {args} { return [dict create pore {P1 P2 P3 P4} \
+        lateral {L1 L2 L3 L4 L5 L6 L7 L8 L9} keep {}] }
+    proc _conn_frame_lobes {cls} { return [list [list 0.0 0.0 4 {0 1 2 3}] [list 1.0 0.0 4 {4 5 6 7}]] }
+    proc _conn_lobe_site_map {table frame lobes} { return [dict create 0 1 1 2] }
+    proc _build_conn_region_meshes {run_dir cls regions args} { set ::_regions $regions; return {} }
+    proc _write_conn_multi_plot {parts out} { return 1 }
+}
+set ::_regions {}
+set ::VMDPathFinder::state(conn_lobe_minseen) 25
+catch {::VMDPathFinder::_build_conn_lobes_plot /tmp/x /tmp/x.sph 0 15 /tmp/x.vmd_plot -1}
+set _rn {}; set _other_lines {}; set _pore_lines {}
+foreach _r $::_regions {
+    lappend _rn [lindex $_r 0]
+    if {[lindex $_r 0] eq "other"} { set _other_lines [lindex $_r 1]; set _other_col [lindex $_r 2] }
+    if {[lindex $_r 0] eq "pore"}  { set _pore_lines [lindex $_r 1] }
+}
+chk "a lobe whose site is under the floor becomes the grey `other` region" \
+    [expr {"other" in $_rn && [info exists _other_col] && $_other_col eq "gray"}] 1
+chk "...holding that lobe's dots" [lsort $_other_lines] {L5 L6 L7 L8}
+chk "...which are NOT in the pore region" \
+    [expr {[lsearch $_pore_lines L5] < 0 && [lsearch $_pore_lines L6] < 0}] 1
+chk "...while lateral dots in no lobe at all still join the pore" \
+    [expr {[lsearch $_pore_lines L9] >= 0}] 1
+chk "...and the listed site keeps its own region" [expr {"site1" in $_rn}] 1
+foreach _p {_conn_site_table _conn_frame_axis _conn_classify_cached _conn_frame_lobes
+            _conn_lobe_site_map _build_conn_region_meshes _write_conn_multi_plot} {
+    rename ::VMDPathFinder::$_p {}
+    rename ::VMDPathFinder::_orig_$_p ::VMDPathFinder::$_p
+}
 # FocusOut fires on window-manager focus changes, so an unchanged commit must
 # not wipe a 20 s table.
 chk "an unchanged tolerance commit is a no-op" \

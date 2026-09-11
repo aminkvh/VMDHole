@@ -79,8 +79,9 @@ disk use. A larger cache reduces rebuilding but increases memory use.
 
 In pore mode, use **Memory** to keep several runs visible at once. Each memory
 is one run: its settings, its results and its own folder. **+** starts a new
-memory (the next Run makes its folder); select a numbered memory to restore
-its settings and results. **Sync** copies the active memory's colour, material,
+memory (the next Run makes its folder), up to ten; select a numbered memory to
+restore its settings and results. On frames a memory's run does not cover, its
+surface is not drawn. **Sync** copies the active memory's colour, material,
 and dot density to the others. **×** removes the active memory and its surface,
 not its folder. Runs made with different methods can sit side by side; hover a
 memory to see its method and folder.

@@ -143,7 +143,8 @@ atoms; otherwise it is blank.
 
 Two filters decide what the table lists, and both are in the header gear.
 **Seen in at least N% of frames** hides openings that come and go; the panel
-reports how many it dropped. **At least N% of the sideways dots** is the size
+reports how many it dropped, and the 3D view draws them in grey rather than in
+the pore colour. **At least N% of the sideways dots** is the size
 cut applied *before* that, so anything it removes is not in the dropped count
 either - lower it to see small openings.
 

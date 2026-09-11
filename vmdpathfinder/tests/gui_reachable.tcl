@@ -6093,6 +6093,17 @@ if {$ntun > 0} {
                [expr {[winfo exists $w.tuncav.sc.sb]
                       && [winfo reqheight $w.tuncav] < 700}] \
                "(height [winfo reqheight $w.tuncav] px)"
+        # The canvas is as wide as the table: every row's buttons, gear
+        # included, sit inside it. Sized before the header pinning, it came
+        # out 216 px short and the four buttons were past the right edge.
+        set _cvw [winfo width $w.tuncav.sc.c]
+        set _gr 0
+        catch {set _gr [expr {[winfo x $w.tuncav.sc.c.inner.gear1] + [winfo width $w.tuncav.sc.c.inner.gear1]}]}
+        report "every row button, the gear included, is inside the cavity table's canvas" \
+               [expr {[winfo ismapped $w.tuncav.sc.c.inner.gear1] && $_gr > 0 && $_gr <= $_cvw}] \
+               "(gear right edge $_gr px, canvas $_cvw px)"
+        report "the cavities window has no note line under the table" \
+               [expr {![winfo exists $w.tuncav.note]}] ""
         # One master checkbox replaced the Show all / Hide all button pair, and
         # colour/material/spheres moved to a per-row gear.
         # The master checkbox sits in the HEADER's column 0, directly above the
@@ -6142,6 +6153,12 @@ if {$ntun > 0} {
         report "the cavity Seen light is refreshable in place (green/red, not a rebuild)" \
                [expr {$_seencol >= 0 && $_after in {#2a9d3f #c0392b}}] \
                "(col $_seencol, before '$_before' after '$_after')"
+        # The title carries the frame too, and only the rebuild wrote it.
+        catch {wm title $w.tuncav "Cavities - frame stale"}
+        catch {::VMDPathFinder::_cavity_refresh}
+        report "the cavities window title follows the frame on a refresh, not only on a rebuild" \
+               [expr {[wm title $w.tuncav] eq "Cavities - frame [::VMDPathFinder::_tunnel_display_frame]"}] \
+               "(title '[wm title $w.tuncav]')"
         report "_cavity_refresh is wired into the frame-change path" \
                [expr {[string first "_cavity_refresh" \
                    [info body ::VMDPathFinder::frame_changed_settle]] >= 0}] \

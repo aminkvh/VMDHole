@@ -19711,8 +19711,23 @@ proc ::VMDPathFinder::_render_cavities_for_frame {frame {m ""} {fd ""}} {
 
 proc ::VMDPathFinder::_tunnel_cavity_toggle {} {
     # A tick changed: redraw the shown frame's track (tunnels + cavities).
+    variable state
+    variable w
     set fr [_tunnel_display_frame]
-    if {$fr ne ""} { catch {render_tunnels_for_frame $fr} }
+    if {$fr eq ""} { return }
+    # Say so in the title and repaint before the redraw starts. Meshing a
+    # pocket on a large structure is seconds with no event processing, and the
+    # cavities window sat blank under its title bar for all of it.
+    set t $w.tuncav
+    set _title ""
+    if {[winfo exists $t]} {
+        set _title [wm title $t]
+        catch {wm title $t "$_title - calculating..."}
+    }
+    set state(status) "Drawing pockets for frame $fr..."
+    catch {update}
+    catch {render_tunnels_for_frame $fr}
+    if {$_title ne "" && [winfo exists $t]} { catch {wm title $t $_title} }
 }
 
 proc ::VMDPathFinder::_lining_residue_value {prop resname} {
@@ -19913,6 +19928,7 @@ proc ::VMDPathFinder::_cavity_refresh {} {
     set g $t.sc.c.inner
     set frame [_tunnel_display_frame]
     set cavs [_tunnel_cavities $frame]
+    catch {wm title $t "Cavities - frame $frame"}
     # Column index for each per-frame KEY, read off the header. By key, not by a
     # fixed index: the Type column is conditional, so every index after it moves.
     set _ci [dict create]
@@ -20710,17 +20726,17 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         add_tooltip $g.gear$r "This pocket's display: colour by property, flat colour, material, surface or spheres."
     }
 
-    set _nfr [expr {[llength $_tracks] ? [dict get [lindex $_tracks 0] nframes] : 0}]
-    # The detail lives in the column tooltips, read when needed.
-    # The table sets the width: as wide as its rows, no wider.
+    # Pin the columns FIRST, then size the canvas to the table. Pinning the
+    # body's columns to the wider header labels grows the table (564 -> 780
+    # px on 1BL8); measured before it, the canvas came out short by exactly
+    # the button columns and every row's Lining / Use as start / Residues /
+    # gear sat past the right edge.
+    _sync_cavity_header_columns $t
     update idletasks
     set _cw [expr {[winfo reqwidth $g] + 4}]
     $t.sc.c configure -width $_cw
-    label $t.note -justify left -wraplength $_cw -foreground gray40 -font {Helvetica 8} -text \
-        "A pocket is where a search starts. Id follows the pocket across all $_nfr frames; \"Rank here\" is MOLE's own per-frame rank. Colour, material and Color by are in each row's gear."
-    # Row 3. At row 2 it sat ON TOP of the table, drawing a grey band across the
-    # middle of the results.
-    grid $t.note -row 3 -column 0 -sticky ew -padx 8 -pady {2 6}
+    catch {grid propagate $t.hdr 0}
+    catch {$t.hdr configure -width $_cw -height [winfo reqheight $t.hdr]}
     # Height follows the table, capped so a structure with many pockets scrolls
     # instead of growing a window taller than the screen.
     # Only on a first open: re-centring on every sort would move the window
@@ -20729,7 +20745,6 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
         _center_toplevel $t
         wm deiconify $t
     }
-    _sync_cavity_header_columns $t
 }
 
 proc ::VMDPathFinder::_cavity_row_cmp {col a b} {
@@ -27617,9 +27632,16 @@ proc ::VMDPathFinder::_mem_slot_clicked {id} {
     set state(status) "Memory $id."
 }
 
+proc ::VMDPathFinder::_mem_max {} { return 10 }
+
 proc ::VMDPathFinder::_mem_add_clicked {} {
     variable state
+    variable pore_memories
     if {[_mem_guard_busy "add a memory"]} { return }
+    if {[dict size $pore_memories] >= [_mem_max]} {
+        set state(status) "At most [_mem_max] memories. Delete one to add another."
+        return
+    }
     set id [_mem_new]
     _mem_refresh_row
     catch {refresh_results_list}
@@ -28470,6 +28492,10 @@ proc ::VMDPathFinder::import_memories_from_folder {{root ""}} {
     set loaded 0
     foreach pr $pairs {
         lassign $pr id dir
+        if {$id > [_mem_max]} {
+            set state(status) "Load: at most [_mem_max] memories; the rest of $root was not loaded."
+            break
+        }
         set pore_memory_active $id
         if {$pore_memory_next <= $id} { set pore_memory_next [expr {$id+1}] }
         set state(import_dir) $dir
@@ -36321,7 +36347,7 @@ proc ::VMDPathFinder::_conn_lobes_tag {} {
     # The mesh RECIPE is part of this file's identity too: it is a concatenation
     # of the per-region plots, and those went from standalone meshes to slices of
     # one union mesh. Without it a prior run directory keeps serving sealed lobes.
-    append sig "u1,"
+    append sig "g1,"
     if {$sig eq ""} { return "[_conn_margin_tag]_u2" }
     # A short digest, so the name stays a filename with 10+ openings.
     set h 0
@@ -36757,10 +36783,16 @@ proc ::VMDPathFinder::_conn_azim_deg {rad} {
     return $d
 }
 
+proc ::VMDPathFinder::_conn_other_color {} {
+    # Openings in the shown frame that have no row (below the persistence
+    # floor, or in no pooled site): drawn in this one colour.
+    return gray
+}
+
 proc ::VMDPathFinder::_conn_lobe_frame_drop_note {} {
     # Openings present in the DISPLAYED frame that this list does not admit:
     # the list is pooled over the trajectory and gates on the persistence
-    # floor. They are drawn in the pore's colour, not left out. Counted by
+    # floor. They are drawn in grey, not left out. Counted by
     # _build_conn_lobes_plot.
     variable _conn_lobe_frame_drops
     if {![info exists _conn_lobe_frame_drops]} { return "" }
@@ -36769,7 +36801,7 @@ proc ::VMDPathFinder::_conn_lobe_frame_drop_note {} {
     if {$n < 1} { return "" }
     # One line. It sits above the list and every extra clause pushes the rows
     # down, so it says what is missing and where to see it, and stops.
-    return [format "  +%d under the %s%% floor." $n [_conn_lobe_min_seen]]
+    return [format "  +%d under the %s%% floor, drawn grey." $n [_conn_lobe_min_seen]]
 }
 
 proc ::VMDPathFinder::_elide_to_width {text fnt px} {
@@ -37145,16 +37177,18 @@ proc ::VMDPathFinder::_build_conn_lobes_plot {run_dir sph_file frame dotden out_
     set li 0
     set _drop_floor 0; set _drop_nosite 0; set _drop_hidden 0
     set _pore_extra {}
+    set _other {}
     foreach lb $lobes {
         set sid [expr {[dict exists $map $li] ? [dict get $map $li] : 0}]
         incr li
-        # A lobe with no row (no site, or below the persistence floor) stays
-        # part of the surface: its dots join the pore region, so the pore is
-        # drawn whole and only the listed openings carry their own colour.
+        # A lobe with no row (no site, or below the persistence floor) is still
+        # an opening in THIS frame: it is drawn in its own grey region, never
+        # in the pore's colour. Painted as pore, a fenestration seen in few
+        # frames vanished into the pore on every frame it was open.
         # An UNTICKED site is meshed and simply not drawn (see the note above).
         if {$sid == 0 || ![_conn_site_persistent $table $sid]} {
             if {$sid == 0} { incr _drop_nosite } else { incr _drop_floor }
-            foreach i [lindex $lb 3] { lappend _pore_extra [lindex $lat $i] }
+            foreach i [lindex $lb 3] { lappend _other [lindex $lat $i] }
             continue
         }
         if {![_conn_site_shown $sid]} { incr _drop_hidden }
@@ -37174,6 +37208,12 @@ proc ::VMDPathFinder::_build_conn_lobes_plot {run_dir sph_file frame dotden out_
     }
     if {[llength $_pore_extra]} {
         lset regions 0 1 [concat [lindex $regions 0 1] $_pore_extra]
+    }
+    # "other" is not a site: no id, no gear, no property colouring - one flat
+    # colour outside the palette, shown whenever the pore is.
+    if {[llength $_other]} {
+        lappend regions [list other $_other [_conn_other_color] \
+            [expr {[_conn_site_shown 0] ? 1 : 0}]]
     }
     if {![llength $regions]} { return 0 }
     set _anyshown 0
