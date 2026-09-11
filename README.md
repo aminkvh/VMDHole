@@ -43,6 +43,28 @@ VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD work
 
 * **Results ready to use.** Export pathway properties, plots, and figures for further analysis, publication, or reproducible workflows.
 
+## What is new
+
+* **Compare several pores side by side.** Run an analysis, press **+**, run
+  another, and both stay on screen in their own colours. Each run keeps its own
+  settings, its own results and its own folder, so nothing overwrites anything.
+
+* **Slit-shaped pores look like slits.** The capsule surface is now the stack of
+  each slice's outline, so a narrow gate reads as a gate instead of a row of
+  overlapping balls.
+
+* **Side openings are counted properly.** Two openings on different sides of the
+  channel are no longer merged into one, each one's narrowest point is measured
+  along the route a molecule would actually take, and openings that come and go
+  are drawn in grey rather than disappearing into the pore.
+
+* **See what goes through each opening.** **Ion & Water** has an *Openings* view
+  listing how many ions and waters passed through each one, how long they
+  stayed, and which ions they were.
+
+* **Faster on trajectories.** Finding the side openings across a 100-frame
+  trajectory takes about four seconds instead of forty.
+
 ## Performance
 
 Measured on an 8-core AMD Ryzen 7 7700X. Trajectory comparisons use 15
