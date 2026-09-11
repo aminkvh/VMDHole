@@ -39828,6 +39828,36 @@ proc ::VMDPathFinder::_capsule_perp {x y z ox oy oz ax ay az} {
     return [expr {sqrt(($dx-$a*$ax)**2 + ($dy-$a*$ay)**2 + ($dz-$a*$az)**2)}]
 }
 
+proc ::VMDPathFinder::_capsule_clip_segment {x1 y1 z1 x2 y2 z2 ox oy oz ax ay az rad} {
+    # The part of the segment inside a cylinder of radius rad about the axis,
+    # as {x1 y1 z1 x2 y2 z2}; the first element is "" when none of it is.
+    # Perpendicular distance along the segment is a quadratic in the segment
+    # parameter, so the inside part is one interval.
+    set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
+    set wx [expr {$x1-$ox}]; set wy [expr {$y1-$oy}]; set wz [expr {$z1-$oz}]
+    set da [expr {$dx*$ax+$dy*$ay+$dz*$az}]
+    set wa [expr {$wx*$ax+$wy*$ay+$wz*$az}]
+    set px [expr {$dx-$da*$ax}]; set py [expr {$dy-$da*$ay}]; set pz [expr {$dz-$da*$az}]
+    set qx [expr {$wx-$wa*$ax}]; set qy [expr {$wy-$wa*$ay}]; set qz [expr {$wz-$wa*$az}]
+    set A [expr {$px*$px+$py*$py+$pz*$pz}]
+    set B [expr {2.0*($px*$qx+$py*$qy+$pz*$qz)}]
+    set C [expr {$qx*$qx+$qy*$qy+$qz*$qz - $rad*$rad}]
+    if {$A < 1e-12} {
+        if {$C > 0} { return [list "" "" "" "" "" ""] }
+        return [list $x1 $y1 $z1 $x2 $y2 $z2]
+    }
+    set disc [expr {$B*$B - 4.0*$A*$C}]
+    if {$disc <= 0} { return [list "" "" "" "" "" ""] }
+    set sq [expr {sqrt($disc)}]
+    set t0 [expr {(-$B - $sq)/(2.0*$A)}]
+    set t1 [expr {(-$B + $sq)/(2.0*$A)}]
+    if {$t0 < 0} { set t0 0.0 }
+    if {$t1 > 1} { set t1 1.0 }
+    if {$t1 <= $t0} { return [list "" "" "" "" "" ""] }
+    return [list [expr {$x1+$t0*$dx}] [expr {$y1+$t0*$dy}] [expr {$z1+$t0*$dz}] \
+                 [expr {$x1+$t1*$dx}] [expr {$y1+$t1*$dy}] [expr {$z1+$t1*$dz}]]
+}
+
 proc ::VMDPathFinder::_capsule_rings {sph_file cvect_s cpoint_s endrad} {
     # Capsule slices from the .sph, SORTED along the axis: {axial band geometry},
     # geometry = {x1 y1 z1 x2 y2 z2 R}, the two cap centres (QC1/QC2) and the
@@ -39866,7 +39896,18 @@ proc ::VMDPathFinder::_capsule_rings {sph_file cvect_s cpoint_s endrad} {
         lassign $qc1($rs) x1 y1 z1; lassign $qc2($rs) x2 y2 z2
         set p1 [_capsule_perp $x1 $y1 $z1 $ox $oy $oz $ax $ay $az]
         set p2 [_capsule_perp $x2 $y2 $z2 $ox $oy $oz $ax $ay $az]
-        if {$endrad > 0 && ($p1 > $endrad || $p2 > $endrad)} continue
+        # At a wide mouth the capsule lies flat and its far end runs tens of
+        # Angstroms out along the surface. Dropping the whole slice cut the
+        # pore short of HOLE's own profile; the slice is CLIPPED to the part
+        # within ENDRAD of the axis instead, and dropped only if none of it
+        # is. A slice with both ends outside and nothing in between is gone.
+        if {$endrad > 0 && ($p1 > $endrad || $p2 > $endrad)} {
+            lassign [_capsule_clip_segment $x1 $y1 $z1 $x2 $y2 $z2 \
+                         $ox $oy $oz $ax $ay $az $endrad] x1 y1 z1 x2 y2 z2
+            if {$x1 eq ""} continue
+            set p1 [_capsule_perp $x1 $y1 $z1 $ox $oy $oz $ax $ay $az]
+            set p2 [_capsule_perp $x2 $y2 $z2 $ox $oy $oz $ax $ay $az]
+        }
         set cx [expr {($x1+$x2)/2.0}]; set cy [expr {($y1+$y2)/2.0}]; set cz [expr {($z1+$z2)/2.0}]
         set dx [expr {$x2-$x1}]; set dy [expr {$y2-$y1}]; set dz [expr {$z2-$z1}]
         set L  [expr {sqrt($dx*$dx+$dy*$dy+$dz*$dz)}]

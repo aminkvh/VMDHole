@@ -82,10 +82,11 @@ models are available:
 - **Capsule** fits an anisotropic stadium-like probe and reports its effective
   radius. Use it when a circular radius hides a strongly elongated opening.
   Its 3D surface is the stack of the slices' stadium outlines, one on the
-  next, under either mesher setting; slices whose cap centres escaped past
-  ENDRAD are dropped first, the rule HOLE's own profile applies. Smoothing
-  averages each slice with its neighbours in the window. Centerline draws
-  the two cap-centre tracks.
+  next, under either mesher setting. At a wide mouth the probe lies flat and
+  one end runs far out along the surface; each slice is clipped to the part
+  within ENDRAD of the axis, so the drawn pore covers the same range as the
+  profile. Smoothing averages each slice with its neighbours in the window.
+  Centerline draws the two cap-centre tracks.
 
 Keep the method fixed when comparing structures. Method names and equivalent
 radii are not interchangeable.

@@ -6697,5 +6697,18 @@ chk "...and showing the track again re-renders the landed frame" \
     [expr {[string first {render_tunnels_for_frame $_landed} \
         [info body ::VMDPathFinder::_tunnel_hide_geometry_for_mean]] >= 0}] 1
 
+# --- A wide capsule mouth is clipped to the end radius, not thrown away -----
+# The probe lies flat there and its far end runs tens of Angstroms out along
+# the surface; dropping the slice cut the drawn pore short of HOLE's profile.
+lassign [::VMDPathFinder::_capsule_clip_segment 0 0 0 40 0 0  0 0 0  0 0 1  12.0] _cx1 _cy1 _cz1 _cx2 _cy2 _cz2
+chk "a slice reaching past the end radius keeps the part inside it" \
+    [expr {$_cx1 == 0 && abs($_cx2 - 12.0) < 1e-6}] 1
+lassign [::VMDPathFinder::_capsule_clip_segment 20 0 0 40 0 0  0 0 0  0 0 1  12.0] _cx1
+chk "...and one entirely outside is dropped" [expr {$_cx1 eq ""}] 1
+lassign [::VMDPathFinder::_capsule_clip_segment 0 0 -5 0 0 5  0 0 0  0 0 1  12.0] _cx1 _cy1 _cz1 _cx2 _cy2 _cz2
+chk "...while one inside is untouched" [expr {$_cz1 == -5 && $_cz2 == 5}] 1
+chk "the ring builder clips rather than dropping" \
+    [expr {[string first {_capsule_clip_segment} [info body ::VMDPathFinder::_capsule_rings]] >= 0}] 1
+
 puts "SMOKE-RESULT pass=$pass fail=$fail"
 quit
