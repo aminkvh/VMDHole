@@ -3272,12 +3272,14 @@ int main (int argc, char *argv[])
       /* nm_search re-execs itself once to pin OMP_WAIT_POLICY=PASSIVE, with
          the argv it was handed - which here would be the shifted one, minus
          this subcommand. Do that re-exec at this level with the full argv. */
+#ifndef _WIN32
       if (!getenv("OMP_WAIT_POLICY") && !getenv("NM_NO_REEXEC")) {
         setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
         setenv("NM_NO_REEXEC", "1", 1);
         execv("/proc/self/exe", argv);
         execv(argv[0], argv);
       }
+#endif
       argv[1] = argv[0]; return nm_search_main(argc - 1, argv + 1);
     }
     if (strcmp(argv[1], "--mesh")       == 0) { argv[1] = argv[0]; return mesh_csg_main(argc - 1, argv + 1); }

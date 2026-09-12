@@ -35,6 +35,20 @@
 #include <math.h>
 #include <limits.h>
 
+/* getline() is POSIX only; same contract, grows *buf, returns -1 at EOF. */
+static long read_line(char **buf, size_t *cap, FILE *f) {
+    if (!*buf) { *cap = 256; *buf = malloc(*cap); if (!*buf) return -1; }
+    size_t len = 0;
+    for (;;) {
+        if (!fgets(*buf + len, (int)(*cap - len), f)) return len ? (long)len : -1;
+        len += strlen(*buf + len);
+        if (len && (*buf)[len-1] == '\n') return (long)len;
+        if (len + 1 < *cap) return (long)len;              /* short final line */
+        char *nb = realloc(*buf, *cap * 2); if (!nb) return -1;
+        *buf = nb; *cap *= 2;
+    }
+}
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -640,8 +654,8 @@ static void do_split(const char *union_plot, char **names, char **label_paths, c
 
     FILE *f = fopen(union_plot, "r");
     if (!f) { fprintf(stderr, "cannot read %s\n", union_plot); exit(1); }
-    char *line = NULL; size_t cap = 0; ssize_t n;
-    while ((n = getline(&line, &cap, f)) >= 0) {
+    char *line = NULL; size_t cap = 0; long n;
+    while ((n = read_line(&line, &cap, f)) >= 0) {
         while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r')) line[--n] = 0;
         if (strncmp(line, "draw trinorm ", 13)) continue;
         double v[9]; int nv = 0;

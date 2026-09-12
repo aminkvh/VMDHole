@@ -48,7 +48,7 @@ static int nm_physical_cores(void) {
    impossible the run just proceeds with the default. Call first in main(). */
 #include <unistd.h>
 static void nm_set_wait_policy(char **argv) {
-#ifdef _OPENMP
+#if defined(_OPENMP) && !defined(_WIN32)
     if (getenv("OMP_WAIT_POLICY") || getenv("NM_NO_REEXEC")) return;
     setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
     setenv("NM_NO_REEXEC", "1", 1);
