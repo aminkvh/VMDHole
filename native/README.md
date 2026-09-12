@@ -39,7 +39,7 @@ Without `HOLE_INSTALL_DIR`, point VMDPathFinder at `build/` via
 | `mole/` | the MOLE 2 tunnel-search port and its per-unit test tools |
 | `hydration/` | the hydration accelerator (`hydro_project.c`) with its reference implementation and tests |
 | `nm/` | Nelder-Mead pore search + fast Connolly surface (`nm_search`), marching-cubes spherical mesher (`mesh_csg`); see `nm/README.md` |
-| `conn_lobes.c` | classifies and clusters Connolly lateral openings, and splits the surface mesh by region - replaces the same computation in pure Tcl |
+| `conn_lobes.c` | classifies and clusters Connolly lateral openings, and splits the surface mesh by region - replaces the same computation in pure Tcl; measurements in [CONN_LOBES.md](CONN_LOBES.md) |
 | `connolly_patches/` | the optional HOLE-side Fortran patches (`apply_patches.py` + the patched units) |
 | `build.sh` | builds the three self-contained C tools — what CI runs on a fresh checkout, no HOLE tree needed |
 | `build-vmdpathfinder-optimized.sh` | the full install script: patches and rebuilds HOLE + `sph_process` from a HOLE source tree and builds the C tools |
