@@ -45,55 +45,28 @@ VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD work
 
 ## What is new
 
-* **Compare several pores side by side.** Run an analysis, press **+**, run
-  another, and both stay on screen in their own colours. Each run keeps its own
-  settings, results, and a separate run folder. Up to ten pore analyses can be
-  held in Memory.
+* **Several pores at once.** Run an analysis, press **+**, run another; each
+  run keeps its own settings, results and run folder, and up to ten stay on
+  screen in their own colours.
 
-* **Display slit-shaped pores.** Capsule surfaces join the slices' stadium-shaped
-  outlines to show elongated cross-sections and narrow gates.
+* **New pore search.** A deterministic Nelder-Mead search sits beside HOLE's
+  Monte Carlo search; no seed dependence, and the two can settle in different
+  passages.
 
-* **Track individual side openings.** Connolly annotations estimate each
-  opening's neck radius and track its occurrence. Openings below the **Seen**
-  threshold remain visible in grey.
+* **New surface builder.** A marching-cubes mesher draws pore and tunnel
+  surfaces as one full-detail mesh, faster than dot triangulation. Capsule
+  surfaces stack the slices' stadium outlines.
 
-* **Inspect ions and water in each opening.** **Ion & Water > Openings** reports
-  occupancy, visit lengths, and ion species. These are not full permeation counts.
+* **Cavities in Tunnel mode.** Internal cavities are found, listed and drawn,
+  tracked across frames, and can seed a tunnel search.
 
-See [Performance](docs/performance.md) for measured timings and comparisons.
+* **Lateral openings on Connolly surfaces.** Side openings are split, given a
+  neck radius and tracked across frames; rare ones stay visible in grey.
 
-## Performance
+* **Water in Ion & Water.** Water is a species alongside ions, and
+  **Ion & Water > Openings** reports occupancy and visits per opening.
 
-Measured on an 8-core AMD Ryzen 7 7700X. Trajectory comparisons use 15
-VMDPathFinder workers against serial baselines. Results depend on the system,
-settings, and hardware; repetition counts and build details are recorded with
-each benchmark.
-
-| What | Compared with | Speedup |
-|---|---|---|
-| Surface triangulation (`sos_triangle`), same surface, byte-identical output | HOLE 2 `sos_triangle` | 3.4x at dot density 10, 73x at density 40 |
-| HOLE pipeline on one structure (1BL8): search, dots, surface | HOLE 2 binaries built at -O2 | 5.3x circular, 7.6x Connolly |
-| 50-frame trajectory, radius profiles | mdahole2 | 93x |
-| 50-frame trajectory, radius profiles | serial HOLE shell loop | 6.1x |
-| 50-frame trajectory, surface generation | mdahole2 | 50x |
-| 50-frame trajectory, surface generation | serial HOLE shell loop | 16x |
-| Job pool, 15 workers on 8 cores | 1 worker | 6.4x |
-| Pore search step only, Nelder-Mead (18,677 atoms) | HOLE's Monte Carlo search | 5x |
-| Tunnel search (MOLE 2 algorithm), matching tunnel counts | MOLE 2 | 8.9x to 15x |
-| Tunnel search, compiled engine | the plugin's Tcl fallback | 173x to 231x |
-| Cross-frame tunnel clustering, 1837 pathways | the plugin's Tcl fallback | 23x |
-
-HOLE comparisons use locally rebuilt `-O2` binaries. Surface-generation timings
-exclude interactive display. The Nelder-Mead 5x result measures the search
-step, not a complete run; the separate 50-frame benchmark showed no overall
-speedup over accelerated HOLE. Matching tunnel counts do not establish identical
-route geometry; tetrahedron counts differ on some test structures.
-
-<p align="center">
-  <img src="docs/images/performance_summary.png" alt="Benchmark summary: end-to-end trajectory throughput, triangulation, parallel scaling and tunnel search" width="900">
-</p>
-
-Provenance and the replication kit: [paper/README.md](paper/README.md).
+Measured timings: [docs/performance.md](docs/performance.md).
 
 ## Install
 
