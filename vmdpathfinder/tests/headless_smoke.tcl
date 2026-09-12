@@ -4011,9 +4011,11 @@ chk "...and writes it after a complete pass" \
 # Needle built with ESCAPED braces in a quoted word: an unescaped one inside
 # expr {...} still counts toward that outer brace, which silently swallowed the
 # rest of this file the first time.
-set _needle "if \{!\$_aborted\} \{ _save_conn_lobe_cache"
+set _needle "if \{!\$_aborted\} \{"
+set _ai [string first $_needle $_cst]
 chk "...but never after an aborted one" \
-    [expr {[string first $_needle $_cst] >= 0}] 1
+    [expr {$_ai >= 0 && [string first {_save_conn_lobe_cache} \
+        [string range $_cst $_ai [expr {$_ai+200}]]] >= 0}] 1
 chk "...and reports progress while it reads the clouds" \
     [expr {[string first {Finding lateral openings - frame} $_cst] >= 0}] 1
 # An internal error must NOT be reported as "no openings" - that is a
