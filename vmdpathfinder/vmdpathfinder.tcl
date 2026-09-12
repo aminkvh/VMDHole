@@ -35538,13 +35538,13 @@ proc ::VMDPathFinder::_conn_safe_dotden {npts} {
     return $dd
 }
 
-proc ::VMDPathFinder::_conn_render_target_npts {} {
-    # How many cloud points a CONNOLLY surface is built from; above this,
-    # create_plot_asset thins the cloud (_reduce_conn_sph) first. Flat, not
-    # coupled to density: points = grain, density = tessellation, dots = cost
-    # (the only thing that overflows, _sos_tri_dot_ceiling) - three separable
-    # knobs. 14000 is the last point-count before renders visibly coarsen.
-    return 14000
+proc ::VMDPathFinder::_conn_render_target_npts {{draft 0}} {
+    # Cloud points a CONNOLLY surface is built from; above twice this the cloud
+    # is thinned (_reduce_conn_sph). Thinning is for speed only: the mesher and
+    # the playback draft keep 14000. sos_triangle draws the exact sphere union,
+    # and at 14000 points the probe spheres show as beads, so it keeps the cloud.
+    if {$draft || [_csg_can_mesh]} { return 14000 }
+    return 120000
 }
 
 proc ::VMDPathFinder::_is_large_conn_sph {sph_file} {
@@ -37787,12 +37787,13 @@ proc ::VMDPathFinder::_build_conn_region_meshes {run_dir cls regions dotden {src
             set _mesh_src $src_sph
             set _npts 0
             if {$_mesh_src ne "" && [file exists $_mesh_src]} { set _npts [_sph_point_count $_mesh_src] }
-            set _target [_conn_render_target_npts]
+            set _target [_conn_render_target_npts \
+                [expr {$dotden eq [_conn_draft_dotden] && $dotden ne [_conn_safe_dotden 0]}]]
             if {$_mesh_src eq "" || ![file exists $_mesh_src]} {
                 # No caller has ever left src_sph blank (both pass their own
                 # sph_file), but this is the input the whole mesh depends on -
                 # fail the union build cleanly rather than meshing nothing.
-            } elseif {$_npts > $_target} {
+            } elseif {$_npts >= 2 * $_target} {
                 # Identical call to the one plain CONNOLLY's own display path
                 # makes above this proc, so a large cloud reduces to the same
                 # point set here as it does there.
@@ -40389,13 +40390,13 @@ proc ::VMDPathFinder::_create_plot_asset_body {run_dir sph_file mode {molid -1} 
                 }
             }
         }
-        set _target [_conn_render_target_npts]
-        if {$npts > $_target} {
+        set _target [_conn_render_target_npts $draft]
+        if {$npts >= 2 * $_target} {
             # Named after its INPUT: the trim and the sideways gate each produce a
             # different cloud, and _reduce_conn_sph reuses on mtime. Sharing one
             # name means switching either knob off serves the cloud built while it
             # was on - the original .sph is older, so the check passes.
-            set _reduced [file join $run_dir "[file rootname [file tail $sph_file]]_render2.sph"]
+            set _reduced [file join $run_dir "[file rootname [file tail $sph_file]]_render2_${_target}.sph"]
             # maxr = 0: do NOT drop the big spheres. Dropping them is what put the
             # round "blobs" on the pore mouths. HOLE's widest spheres out at the
             # vestibules ENVELOP the small ones around them, so sph_process culls
