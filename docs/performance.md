@@ -24,13 +24,14 @@ channel (45,000 dots):
 
 | Builder | Time | Triangles |
 |---|---|---|
-| Marching cubes, grid 1.4/0.7 Å | 0.24 s | 44,000 |
+| Marching cubes, Connolly grid 1.4 Å | 0.24 s | 44,000 |
 | `sph_process` + `sos_triangle`, dot density 15 | 1.10 s | 103,000 |
 
 The marching-cubes mesher threads across cores (1.37 s on one core, 0.24 s on
 eight) and is the default. Under `sos_triangle`, playback draws every 4th
 triangle by default: drawing all of them costs 475 ms a frame against 94 ms,
-and the frame at rest is always full detail. The mesher needs no such setting.
+and the frame at rest is always full detail. Marching cubes draws the full mesh
+during playback.
 
 HOLE comparisons use locally rebuilt `-O2` binaries. Surface-generation timings
 exclude interactive display. The Nelder-Mead 5x result measures the search
@@ -39,7 +40,7 @@ speedup over accelerated HOLE. Matching tunnel counts do not establish identical
 route geometry; tetrahedron counts differ on some test structures.
 
 <p align="center">
-  <img src="images/performance_summary.png" alt="Benchmark summary: end-to-end trajectory throughput, triangulation, parallel scaling, tunnel search and cross-frame clustering" width="900">
+  <img src="images/performance_summary.png" alt="Benchmark summary: end-to-end trajectory throughput, triangulation, parallel scaling and tunnel search" width="900">
 </p>
 
 [Benchmark records and reproduction instructions](https://github.com/aminkvh/VMDPathFinder/blob/main/paper/README.md).

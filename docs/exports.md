@@ -33,6 +33,9 @@ count and radius of gyration.
 
 ## Connolly openings
 
+The **Ion & Water > Openings** summary can be exported as a figure. Its CSV
+command still exports the occupancy grid, not the per-opening summary.
+
 With **Color** set to `pore_lobes`, each region gear exports the pore or one
 lateral opening. The header gear exports all regions. The all-frame table
 includes occurrence, dot count, neck, extension, axial position, and azimuth.

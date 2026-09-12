@@ -19952,6 +19952,27 @@ proc ::VMDPathFinder::_cavity_refresh {} {
     }
 }
 
+proc ::VMDPathFinder::_cavity_show_all_tracks {} {
+    # The filter can take the table from a dozen rows to several hundred, which
+    # is seconds of widget building. Say so first, and keep the window where it
+    # is: it used to resize itself around the new row set with no warning.
+    variable w
+    variable state
+    set t $w.tuncav
+    set _geom ""
+    catch {set _geom [wm geometry $t]}
+    set state(status) [expr {$state(cavity_all_tracks)
+        ? "Listing every pocket - this can be several hundred rows..."
+        : "Listing the pockets seen in at least $state(cavity_min_seen)% of frames..."}]
+    catch {update idletasks}
+    show_tunnel_cavities
+    if {$_geom ne "" && [winfo exists $t]} {
+        # Same size, same place: only the rows inside change.
+        catch {wm geometry $t $_geom}
+    }
+    set state(status) ""
+}
+
 proc ::VMDPathFinder::_cavity_show_all_toggle {} {
     # The header tick over the per-row ones: draw or hide every LISTED pocket.
     # It drives only the pockets the filter is actually showing - ticking it
@@ -20028,30 +20049,35 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     wm withdraw $d
     wm title $d "Pocket $tid display"
     set state(cavgear_tid) $tid
-    set state(cavgear_color)    [expr {[dict exists $cavity_gear_color $tid]    ? [dict get $cavity_gear_color $tid]    : "auto"}]
     set state(cavgear_material) [expr {[dict exists $cavity_gear_material $tid] ? [dict get $cavity_gear_material $tid] : "auto"}]
     set state(cavgear_style)    [expr {[dict exists $cavity_gear_style $tid]    ? [dict get $cavity_gear_style $tid]    : "auto"}]
-    set state(cavgear_prop)     [expr {[dict exists $cavity_gear_prop $tid]     ? [dict get $cavity_gear_prop $tid]     : "auto"}]
     set r 0
+    # ONE colour control. Two menus - a flat "Color" and a "Color by" with its
+    # own "none" - meant every choice had to be made twice and one of the two
+    # was always dead.
+    set state(cavgear_by) [_cavity_gear_by_value $tid]
+    foreach {_v _val} [list cavgear_by $state(cavgear_by) \
+                            cavgear_material $state(cavgear_material) \
+                            cavgear_style $state(cavgear_style)] {
+        set state(${_v}_disp) [expr {$_val in [_cavity_prop_tokens] ? [_tunnel_prop_label $_val] : $_val}]
+    }
     foreach {var label opts tip} [list \
-        cavgear_prop "Color by" [concat auto none [_cavity_prop_tokens]] \
-            "Colour this pocket by a property of its lining residues. auto = the setting every pocket shares; none = the flat colour below." \
-        cavgear_color "Color" [concat auto [_vmd_color_names {white black}]] \
-            "Flat colour for this pocket, used when it is not coloured by a property." \
+        cavgear_by "Color by" [concat auto [_vmd_color_names {white black}] [_cavity_prop_tokens]] \
+            "How this pocket is coloured: auto follows the window, a colour paints it flat, a property colours it by that property of its lining residues." \
         cavgear_material "Material" [concat auto [_cavity_material_names]] \
             "VMD material for this pocket's surface." \
         cavgear_style "Draw as" {auto surface spheres} \
             "surface = one mesh over the clearance spheres. spheres = the clearance spheres themselves (CAVER Analyst's \"Locked Probes\"). auto follows the window default."] {
         label $d.l$r -text $label
         set _mb $d.m$r
-        menubutton $_mb -textvariable ::VMDPathFinder::state($var) -relief raised \
-            -indicatoron 1 -menu $_mb.m -width 14
+        menubutton $_mb -textvariable ::VMDPathFinder::state(${var}_disp) -relief raised \
+            -indicatoron 1 -menu $_mb.m -width 18
         menu $_mb.m -tearoff 0
         foreach o $opts {
-            $_mb.m add command -label [expr {$var eq "cavgear_prop" && $o ni {auto none} ? [_tunnel_prop_label_short $o] : $o}] \
+            $_mb.m add command -label [expr {$o in [_cavity_prop_tokens] ? [_tunnel_prop_label $o] : $o}] \
                 -command [list ::VMDPathFinder::_cavity_gear_set $var $o]
         }
-        if {$var eq "cavgear_prop"} { _menu_two_columns $_mb.m }
+        if {$var eq "cavgear_by"} { _menu_two_columns $_mb.m }
         grid $d.l$r -row $r -column 0 -sticky w -padx {8 4} -pady 1
         grid $_mb   -row $r -column 1 -sticky w -padx {0 8} -pady 1
         add_tooltip $_mb $tip
@@ -20068,6 +20094,22 @@ proc ::VMDPathFinder::show_cavity_gear_settings {tid} {
     wm deiconify $d
 }
 
+proc ::VMDPathFinder::_cavity_gear_by_value {tid} {
+    # What the single Color by menu shows for this pocket: its property if it
+    # has one, else its flat colour, else auto.
+    variable cavity_gear_prop
+    variable cavity_gear_color
+    if {[info exists cavity_gear_prop] && [dict exists $cavity_gear_prop $tid]} {
+        set p [dict get $cavity_gear_prop $tid]
+        if {$p in [_cavity_prop_tokens]} { return $p }
+    }
+    if {[info exists cavity_gear_color] && [dict exists $cavity_gear_color $tid]} {
+        set c [dict get $cavity_gear_color $tid]
+        if {$c ne "" && $c ne "auto"} { return $c }
+    }
+    return "auto"
+}
+
 proc ::VMDPathFinder::_cavity_gear_set {var value} {
     # One handler for all three fields: store the override (or drop it on
     # "auto") and redraw, so the viewer follows the menu immediately.
@@ -20078,6 +20120,26 @@ proc ::VMDPathFinder::_cavity_gear_set {var value} {
     variable cavity_gear_prop
     set state($var) $value
     set tid $state(cavgear_tid)
+    # One menu, two stores: a property goes to the property store and clears
+    # the flat colour, a colour does the reverse, auto clears both.
+    if {$var eq "cavgear_by"} {
+        variable cavity_gear_prop
+        variable cavity_gear_color
+        set cavity_gear_prop  [dict remove $cavity_gear_prop $tid]
+        set cavity_gear_color [dict remove $cavity_gear_color $tid]
+        if {$value in [_cavity_prop_tokens]} {
+            dict set cavity_gear_prop $tid $value
+        } elseif {$value ne "auto"} {
+            dict set cavity_gear_color $tid $value
+        }
+        set state(cavgear_by) $value
+        set state(cavgear_by_disp) [expr {$value in [_cavity_prop_tokens] ? [_tunnel_prop_label $value] : $value}]
+        variable tunnel_cavity_shown
+        set tunnel_cavity_shown($tid) 1
+        _tunnel_cavity_toggle
+        catch {_cavity_refresh}
+        return
+    }
     switch -exact -- $var {
         cavgear_color    { set _which cavity_gear_color }
         cavgear_material { set _which cavity_gear_material }
@@ -20092,6 +20154,7 @@ proc ::VMDPathFinder::_cavity_gear_set {var value} {
         dict set $_which $tid $value
         set $_which [set $_which]
     }
+    set state(${var}_disp) $value
     # Changing how a pocket looks means showing it: on an unticked pocket the
     # menu appeared to do nothing at all.
     variable tunnel_cavity_shown
@@ -20392,10 +20455,13 @@ proc ::VMDPathFinder::_cavity_prop_to_all {} {
     # The open gear's Color by becomes the shared one; own choices are cleared.
     variable state
     variable cavity_gear_prop
-    set p [expr {[info exists state(cavgear_prop)] && $state(cavgear_prop) ne "auto" ? $state(cavgear_prop) : "none"}]
-    set cavity_gear_prop [dict create]
-    set state(cavgear_prop) auto
-    _cavity_set_prop $p
+    variable cavity_gear_color
+    set v [expr {[info exists state(cavgear_by)] ? $state(cavgear_by) : "auto"}]
+    set cavity_gear_prop  [dict create]
+    set cavity_gear_color [dict create]
+    set state(cavgear_by) auto
+    set state(cavgear_by_disp) auto
+    _cavity_set_prop [expr {$v in [_cavity_prop_tokens] ? $v : "none"}]
 }
 
 proc ::VMDPathFinder::_cavity_effective_prop {tid} {
@@ -20513,18 +20579,18 @@ proc ::VMDPathFinder::show_tunnel_cavities {} {
     # only cost the toggle has - the pockets themselves were found by the run.
     if {$state(cavity_sort_col) eq "mean"} { set state(cavity_sort_col) vol }
     set _tracks [_cavity_visible_tracks]
-    # NOT a drawing control: it decides which pockets are LISTED. Read as
-    # "show every pocket in 3D", which is what the tick column does.
-    checkbutton $t.ctl.allt -text "List rare pockets" \
+    # Same control the tunnel list has, same name: it decides which rows are
+    # LISTED, not what is drawn.
+    checkbutton $t.ctl.allt -text "Show all" \
         -variable ::VMDPathFinder::state(cavity_all_tracks) \
-        -command ::VMDPathFinder::show_tunnel_cavities
+        -command ::VMDPathFinder::_cavity_show_all_tracks
     label $t.ctl.cnt -foreground gray40 -font {Helvetica 8} \
         -text "[llength $_tracks] of [llength $_every] listed"
     button $t.ctl.exp -text "Export CSV" -command ::VMDPathFinder::_cavity_export_csv
     pack $t.ctl.allt $t.ctl.cnt -side left -padx {6 0}
     pack $t.ctl.exp -side right -padx {6 0}
     add_tooltip $t.ctl.exp "Write three CSVs: one row per tracked pocket, one row per pocket per frame, and one row per lining residue in the displayed frame."
-    add_tooltip $t.ctl.allt "Which pockets the table lists. It draws nothing.\n\nOff: only pockets seen in at least $state(cavity_min_seen)% of frames. On: every pocket, including one-frame ones, which can be hundreds of rows.\n\nTick a pocket to draw it."
+    add_tooltip $t.ctl.allt "List every pocket, including ones found in a single frame. Off, only those seen in at least $state(cavity_min_seen)% of frames are listed."
     set _rowh 22
     set _want [expr {[llength $_tracks]*$_rowh + 30}]
     set _hmax 340
@@ -24268,7 +24334,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "Select a route to drive the plots; its checkbox controls 3D visibility. The header gear sets shared display choices, while row gears set overrides. Accurate 3D projects properties around the surface. Lining displays and exports contacting residues. Pore Profile, Over Time, Mean Profile, Trends, and Histogram use the selected tracked route. Trends offers bottleneck radius, length, and tube volume. Over Time uses the route's property without a separate Compute step. Mean Profile averages frames where the route was found; missing routes are not zero-radius observations. Tunnel hydration and ellipse fitting are unavailable.\n\n"
 
     $t insert end "Cavities\n" h2
-    $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. List rare pockets adds the ones below the Seen filter; it changes the table only, never the 3D view. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
+    $t insert end "Cavities lists pockets and enclosed voids, their volume, max probe, depth, residues, and Seen. Show all adds the pockets below the Seen filter; it changes the table only, never the 3D view. Each row's gear sets how that pocket is drawn: Color by takes a colour or a property. Use as start copies the selected deepest point or largest-sphere centre into Start point. Draw and Lining display the pocket and its residues. Tracked identities can split or exchange between moving, nearby pockets: inspect them before reporting averages. Cavity volume follows MOLE's tetrahedral definition, not the enclosed volume of the displayed sphere-union surface.\n\n"
 
     $t insert end "Settings and saved results\n" h2
     $t insert end "File > Settings selects executable paths, acceleration, the surface mesher, grid, and parallel jobs. The HOLE and MOLE parameter gears hold search controls. Keep Save results enabled for a reloadable run; use File > Load Saved Analysis to restore it. Export lining, cavity, and opening tables separately. Consult the Citations tab for the methods you use.\n\n"
@@ -24454,6 +24520,10 @@ proc ::VMDPathFinder::_stop_background_work {} {
     # makes while tearing a molecule down, and frame_changed is not a cheap
     # handler. Nothing else removes it on the quit path.
     catch {remove_frame_trace}
+    # The helper processes too, or VMD waits on them: the mesher/classifier
+    # server and the persistent per-frame workers both outlive a plain quit.
+    catch {_csg_server_close}
+    catch {_pw_shutdown}
     # Where a slow quit went.
     set _el [expr {[clock milliseconds] - $_t0}]
     if {$_el > 200} {
@@ -24506,6 +24576,7 @@ proc ::VMDPathFinder::close_gui {} {
     variable current_surface_mol
     variable results
     _csg_server_close
+    catch {_pw_shutdown}
     # Cancel any pending GUI-apply idle callbacks so a deferred handler can't fire
     # against the just-destroyed window (display/material re-apply, surface prebuild,
     # prewarm). The per-frame settle/scrub afters ARE torn down by remove_frame_trace

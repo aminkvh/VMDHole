@@ -6727,5 +6727,21 @@ chk "...by the same call that removes it everywhere else" \
     [expr {[string first {remove_mean_surface} \
         [info body ::VMDPathFinder::_mem_drop_mean_surface]] >= 0}] 1
 
+# --- The cavity gear has ONE colour control, and quitting stops the helpers --
+chk "the pocket gear offers a single Color by" \
+    [expr {[string first {cavgear_by "Color by"} [info body ::VMDPathFinder::show_cavity_gear_settings]] >= 0
+        && [string first {cavgear_color "Color"} [info body ::VMDPathFinder::show_cavity_gear_settings]] < 0}] 1
+chk "...whose properties are named in full" \
+    [expr {[string first {_tunnel_prop_label $o} [info body ::VMDPathFinder::show_cavity_gear_settings]] >= 0}] 1
+chk "...and a property choice clears the flat colour" \
+    [expr {[string first {dict remove $cavity_gear_color $tid} [info body ::VMDPathFinder::_cavity_gear_set]] >= 0}] 1
+chk "quitting VMD stops the helper processes, not just closing the panel" \
+    [expr {[string first {_csg_server_close} [info body ::VMDPathFinder::_stop_background_work]] >= 0
+        && [string first {_pw_shutdown} [info body ::VMDPathFinder::_stop_background_work]] >= 0}] 1
+chk "...and closing the panel stops the per-frame workers too" \
+    [expr {[string first {_pw_shutdown} [info body ::VMDPathFinder::close_gui]] >= 0}] 1
+chk "Show all keeps the cavities window where it is" \
+    [expr {[string first {wm geometry $t $_geom} [info body ::VMDPathFinder::_cavity_show_all_tracks]] >= 0}] 1
+
 puts "SMOKE-RESULT pass=$pass fail=$fail"
 quit

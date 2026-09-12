@@ -157,12 +157,13 @@ Every value that depends on the frame - volume, depth, the residue counts, the
 rank and the start point - is re-read when you change frames, and the **Seen**
 cell turns green when the pocket exists in the frame you are looking at and red
 when it does not. The **⚙** at the end of each row sets that pocket's own
-colour, material, and whether it is drawn as a surface or as the clearance
-spheres themselves.
+appearance: **Color by** takes either a flat colour or a property of its lining
+residues, and the other two settings choose the material and whether it is drawn
+as a surface or as the clearance spheres themselves.
 
 The window initially shows pockets present in at least 25% of analysed frames.
-Enable **List rare pockets** to include less frequent pockets; the adjacent count
-shows how many are displayed.
+Enable **Show all** to include less frequent pockets; the adjacent count shows
+how many are listed. On a long trajectory that can be several hundred rows.
 
 ### Using a cavity to start a search
 

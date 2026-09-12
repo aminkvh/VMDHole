@@ -195,7 +195,7 @@ barrier is a sampling-dependent lower bound.
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Ion Flow view | Occupancy % | Occupancy map, Passage tracks (water crossings coloured by direction), or Count vs frame (one curve per ion type when all are selected) |
+| Ion Flow view | Occupancy % | Occupancy map, Passage tracks, Count vs frame, or Openings (Connolly occupancy and visit statistics) |
 | Passage Show (Water only) | All crossing | All crossing, Passage up, Passage down, or All entered (adds the molecules that never crossed) |
 | Species | All detected | All = every ion type, never water; Water = one oxygen per molecule from the Hydration water selection |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |

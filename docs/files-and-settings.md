@@ -19,14 +19,15 @@ run folder.
 | Keep input PDB | Preserve coordinates used for the calculation |
 | Keep visualization | Retain generated VMD objects when results are reset or replaced |
 
-Two runs are comparable only if their settings say so: read `run_<id>.txt`.
+Compare the run settings and trajectory preparation before comparing results.
+`run_<id>.txt` records the pore search settings, not every downstream-analysis
+option; see the [minimum reporting set](parameters.md#minimum-reporting-set).
 
 ## Persistent configuration
 
-**Set default** and **Save Settings** are the only controls that save your
-settings. The export run number and auto-detected engine paths write themselves
-into the same file without saving anything else. A new memory starts from the
-saved settings. Saved runs and exported CSV files record individual analyses.
+Use **Set default** or **Save Settings** to retain settings for later sessions.
+A new memory starts from those saved settings. Exporting results does not save
+changes to your defaults.
 
 ## Executable settings
 
