@@ -58890,8 +58890,14 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     # the mesh GENERATION changes, so a mesh cached under the old code can't be served after a
     # code change (the files are otherwise keyed only by plot_data_version + settings, neither
     # of which changes on a code change). A different token is a cache miss, forcing a rebuild.
-    set _geomver "g10"
-    set mean_tag_base "v${plot_data_version}_${_safe_key}_${_geomver}_${_mtag}"
+    set _geomver "g11"
+    # Which mesher will actually build this geometry (surface_mesh is called
+    # below with union=1, so match that here) - without this, switching
+    # Settings > Surface mesher never invalidated the cached file (neither
+    # plot_data_version nor _geomver changes on a mesher switch) and the OTHER
+    # mesher's tube just kept being served.
+    set _meshtag [surface_mesh_tag 1]
+    set mean_tag_base "v${plot_data_version}_${_safe_key}_${_geomver}${_meshtag}_${_mtag}"
     set mean_dir [file join [file dirname $run_dir] mean_profile]
     catch {file mkdir $mean_dir}
     # Delete mean meshes from an older geometry version. The tag already prevents SERVING them
@@ -58926,14 +58932,14 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     # Smooth is toggled - smoothing an already-colored mesh reproduces its
     # color histogram exactly, so this order keeps
     # it a purely geometric operation as intended.
-    set mean_plot_raw [file join $mean_dir "mean_profile_v${plot_data_version}_${_safe_key}_${_geomver}_raw.vmd_plot"]
+    set mean_plot_raw [file join $mean_dir "mean_profile_v${plot_data_version}_${_safe_key}_${_geomver}${_meshtag}_raw.vmd_plot"]
     # UNSMOOTHED colored mesh - tagged WITHOUT _mtag (smooth-independent), like mean_plot_raw.
     # The recolor / 3D-average writes HERE once; the smooth-specific mean_plot_prop is then
     # derived from it (smooth or plain copy) + clipped. So toggling Smooth reuses this cached
     # coloring instead of re-running the expensive recolor / 3D-average when smooth is
     # toggled (mean_tag_us is the same smooth-independent
     # base, so build_mean_hydro3d_average's internal avgfile is smooth-independent too).
-    set mean_tag_us "v${plot_data_version}_${_safe_key}_${_geomver}"
+    set mean_tag_us "v${plot_data_version}_${_safe_key}_${_geomver}${_meshtag}"
     set mean_plot_prop_us [file join $mean_dir "mean_profile_${mean_tag_us}_propus_$state(mean_hydro_scheme)${_3dtag}.vmd_plot"]
     # ignore_cache (Compute button only - see on_mean_stats_changed) treats
     # every one of these as a miss regardless of what's already on disk, so
@@ -59062,6 +59068,18 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
     # collect_binned_radii's [zmin, zmax] across all frames) onto that real span
     # before placing it. This needs no CPOINT/CVECT lookup and is immune to PCA's
     # arbitrary sign convention (min always maps to min, max to max).
+    # HOLE's own "coord" (what collect_binned_radii bins into zmin/zstep) is an
+    # ABSOLUTE lab-frame projection along CVECT, not a distance from CPOINT: on
+    # a system whose CPOINT sits far from the coordinate origin (a GROMACS box,
+    # say, vs. a structure already centred near 0,0,0) coord runs e.g. 42-55 A,
+    # not the +-20 A it would be if it were CPOINT-relative. Placing a bin at
+    # `ax + coord*axis` therefore added CPOINT's own axial component TWICE - the
+    # tube landed dot(CPOINT,axis) Angstroms off, tens of A on a real MD system,
+    # invisible on fixtures already centred near the origin where that dot
+    # product is small. Subtract it once so `t` is CPOINT-relative before it is
+    # added back to ax below.
+    set _ax_proj [expr {$ax_x*$ux + $ax_y*$uy + $ax_z*$uz}]
+
     set t_ref_min 1e20; set t_ref_max -1e20
     foreach c $ref_centers {
         lassign $c cx0 cy0 cz0
@@ -59105,8 +59123,9 @@ proc ::VMDPathFinder::build_and_show_mean_surface {{force 1} {ignore_cache 0}} {
         set mean [lindex $s 0]
         set z_raw [expr {$zmin + ($b + 0.5) * $zstep}]
         if {$_ax_declared} {
-            # coord IS distance along CVECT from CPOINT - place it, do not rescale.
-            set t $z_raw
+            # coord is ABSOLUTE along CVECT (see _ax_proj above) - make it
+            # CPOINT-relative, do not rescale.
+            set t [expr {$z_raw - $_ax_proj}]
         } else {
             set frac  [expr {($z_raw - $zmin) / $zspan}]
             set t [expr {$t_ref_min + $frac * $t_ref_span}]

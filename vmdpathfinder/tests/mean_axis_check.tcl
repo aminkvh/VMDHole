@@ -79,6 +79,24 @@ proc plot_axis {file} {
     return [list $vx $vy $vz]
 }
 
+proc plot_points {file} {
+    set fh [open $file r]; set txt [read $fh]; close $fh
+    set pts {}
+    foreach line [split $txt "\n"] {
+        if {![string match "*trinorm*" $line]} { continue }
+        set g {}
+        foreach tok [split [string map {\{ { } \} { }} $line]] {
+            if {[string is double -strict $tok]} { lappend g $tok }
+        }
+        for {set i 0} {$i < 9} {incr i 3} {
+            set x [lindex $g $i]; set y [lindex $g [expr {$i+1}]]; set z [lindex $g [expr {$i+2}]]
+            if {$x eq "" || $z eq ""} { continue }
+            lappend pts [list $x $y $z]
+        }
+    }
+    return $pts
+}
+
 source [file join $here .. vmdpathfinder.tcl]
 proc say_diag {} {
     set n [llength $::VMDPathFinder::result_frames]
@@ -156,6 +174,45 @@ set off [angle_deg $axis $CV]
 # carries some noise. The defect this guards produced 18.2 deg.
 report "the tube lies along the declared CVECT (< 3 deg)" [expr {$off < 3.0}] \
     "(off by [format %.2f $off] deg; axis [format "%.4f %.4f %.4f" {*}$axis], cvect $CV)"
+
+
+# THE DEFECT THIS ALSO GUARDS (fixed alongside the angle check): a pure
+# translation along the tube's own axis leaves the angle above unchanged, so
+# that check alone is blind to it. HOLE's own "coord" is an ABSOLUTE lab-frame
+# projection along CVECT, not a distance from CPOINT - build_and_show_mean_surface
+# once added CPOINT's own axial component on top of it, landing the tube
+# dot(CPOINT,CVECT) Angstroms off. This fixture's CPOINT is deliberately far
+# from the origin (dot(CPOINT,CVECT) ~47 A here) so that offset would be
+# unmissable - a fixture centred near 0,0,0 would hide it, same as an upright
+# cvect hides the angle defect above.
+set _cvn [vnorm $CV]
+lassign $_cvn _cux _cuy _cuz
+set nbins [::VMDPathFinder::_mean_profile_nbins]
+lassign [::VMDPathFinder::_mean_frames_and_key] _mf _mk
+set _bdata [::VMDPathFinder::collect_binned_radii $nbins $_mf $_mk]
+set _have_range [expr {$_bdata ne {} && [dict exists $_bdata zmin]}]
+if {$_have_range} {
+    set _zmin [dict get $_bdata zmin]
+    set _zstep [dict get $_bdata zstep]
+    set _zmax [expr {$_zmin + $nbins * $_zstep}]
+    set _pts [plot_points [lindex $plots 0]]
+    set _plo 1e20; set _phi -1e20
+    foreach _p $_pts {
+        lassign $_p _px _py _pz
+        set _proj [expr {$_px*$_cux + $_py*$_cuy + $_pz*$_cuz}]
+        if {$_proj < $_plo} { set _plo $_proj }
+        if {$_proj > $_phi} { set _phi $_proj }
+    }
+    # Generous tolerance: the mesh's own sphere radii carry vertices a bit past
+    # the bin centres axially too. Still far tighter than the ~47 A this
+    # fixture's CPOINT-projection defect would produce.
+    set _tol 20.0
+    set _ok [expr {$_plo >= $_zmin - $_tol && $_phi <= $_zmax + $_tol}]
+    report "the tube sits at the profile's own axial position" $_ok \
+        "(tube [format %.2f $_plo]..[format %.2f $_phi], expected ~[format %.2f $_zmin]..[format %.2f $_zmax])"
+} else {
+    puts "  SKIP: no binned profile data to compare the tube's position against"
+}
 
 # The run's own persisted axis must be what fed it - otherwise the check above
 # could pass on a PCA fit that happens to agree.
