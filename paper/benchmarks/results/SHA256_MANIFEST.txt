@@ -1,19 +1,18 @@
 # SHA-256 manifest - VMDPathFinder 1.0.1 numerical freeze
-# generated: 2026-09-07T06:20:58Z
-# code snapshot: git commit 03e7271dc19b71dc8841cc7c94627827cf6816f1 (tree 2e6d48355393f694fc2a2331b3457a64bc55d364)
+# generated: 2026-09-12T05:50:44Z
+# code snapshot: git commit 2b14f727b14627bc33b81e4db55eb7cd4d477a96 (timing stages re-run 2026-09-12 on an idle machine, stock reference rebuilt at -O2; correctness rows unchanged)
 # scope: all files in paper/benchmarks/results/ + the benchmark inputs the env stage checksummed (see checksum_manifest.log)
-# re-hashed 2026-09-10 for text-only edits made after the run: the 2026-09-07 rename
-# (VMDHole -> VMDPathFinder in labels and paths, commit 9ed96e9) and later wording in
-# FINAL_NUMERICAL_RESULTS.md. No measured value changed; input-file hashes are unchanged.
 #
 ## results/ (raw outputs, processed CSVs, canonical doc, figures)
-92660c5db98c65e05b4cedf9082ff4515d2360d2538668dd1257c360fa31fc02  ./accel_parity.log
+#
+## benchmark inputs (structures, trajectory, sweep input)
+12f9d187a99f38c0a625542d42af079083771b5200a6fe9c2f9e7a74327d5c98  ./accel_parity.log
 1768e7701dd8a3512c760e03831178f747afa7f70229085dfb764743d23b8a9c  ./capsule_f4.csv
 cb2fbc4aac753ec1bbfbe497e41519c6deb93cbdc6158ec47743a9edb2049cdd  ./chap_correlation.csv
 eb5e7650a1cb4f8b4481614719a26bfc9b707282351d750291c4b2d910685876  ./checksum_manifest.log
 61879ae50cfe30d0f8c988c00cbd70548cd2d084ca29825d223224deb40717c5  ./ellipse_parity.log
 aaa8178931ed815ccaf40477e592accd1f76cc02029087cedfacd248cebe1003  ./endtoend.csv
-796710a2507db388b993abf217ffd4ec872261a8455dd70260a8fcd91d7fba1e  ./env_manifest.txt
+69f6251884bddca9f41bb4f6fb085d0f9dc3bcbc219dc6521ac4875a159c4087  ./env_manifest.txt
 93c784e07c63f618247533f54aef2a8dd3fe63442da585e94dc930e445400e11  ./fig_accuracy.eps
 f9228ac02304252e38f3dfaa7dbc4cd1067b03d08d3a190d425faf265dd81ce8  ./fig_accuracy.pdf
 b804305ee31259365c3c51fe650a3ba3b15dfc40cce920467c864484ad5c201e  ./fig_accuracy.png
@@ -27,32 +26,30 @@ d3782e7c5f8e40461b0280ea3bf503041281277339fd58145abcb8ccc3823053  ./fig_performa
 6b6e3425bbdf2631015969fb66588bd931e195582d0e07ca5d7fdbb1ebbf1f87  ./fig_pipeline_stages.pdf
 989546ac5a41be08c79e5780b106f75da8fc3dad235e76c1149daf43a09623eb  ./fig_pipeline_stages.png
 9a33738932e5ff6d6cc209eabd6f14ed61c0da1e59ec2862d821b22d91b2c3e0  ./fig_pipeline_stages_provenance.txt
-a0ed5e77f37a101b50e116c4de14eb258f80e9670129d7fee58e308eb545a41e  ./FINAL_NUMERICAL_RESULTS.md
-c360cce4548dd2d4a60848f2d2142ae706ea0883698d385078e01d99942e9f92  ./gate_surface.log
+bc0cbdc4837c39844fa0bc715f50115e585bdfc560f6c1bb09d0cd5eb556acf4  ./FINAL_NUMERICAL_RESULTS.md
+5382481bb3c7d86dbc791cc4d8de7874a7047ea1f21fb8d8579235a1050c1dc4  ./gate_surface.log
 ea0651668570fb63e3d1ecd2fed1b4921fd41a397c2b84d587ceb51ba603dd0f  ./hydro_qco_parity.log
 3724bc73557b1001b92a1fa4d24b347fe75983a12bdd3704ec2d1fea3f8791bc  ./o2_rebuild.csv
-adbda9775e70661798ada9032ab62305711a1c52c059804798674ba639db5d2d  ./pipeline_1bl8.csv
-ddffeb4d00243bf32e09d2869d806261016038fb67220b8fdbc1e91a2748b64e  ./poreanalyser_ellipse.csv
+9c6b8a148990fed597900e9babf7835b7e5d12052ae697ec71073771482fbd2e  ./pipeline_1bl8.csv
+2a3f12b0f7af9a67e0f03d9f0899c65b8a5888ee3a8eabd1226cbc835ca01843  ./poreanalyser_ellipse.csv
 043915f937e94896491228282f1dda4ddc307f0c75596518d957907ad749e810  ./pore_tcl_fallback_parity.log
-710210bc5e82e5efe2c07ab44e8fb0f96ba78b9c4eba29c3ccf572d498b0c46e  ./profile_identity.csv
-c05c4498da55313d5cb1ce89d581a759615607b805d093c32882f4ed491c260a  ./regression.log
+7d1fbafb1f359cf03e4f4a314455d8d43a8280d1ad416551db07743ae80aed6a  ./profile_identity.csv
+943983d54a4d932e6db35852622bb5ec42f0f317add9bc8a8a26bc33577dde8f  ./regression.log
 0c69ed04729b9fb619a272d4832fe8e51926ff6649bb7cd9f851a1cf4b285bae  ./scaling.csv
-bda5b8486afd15b67d4b872244a911db12128b7e47ee4d987012c5fd0e4fbe1d  ./sos_scaling.csv
-c809b1b79d6fe33f581558b6ffcff6fa2d9c7ff334f546107f182e12d948429e  ./sos_sweep.log
+5ad1bb01a5c9fca7a03e7eef49410c2d7876da746eff7c2da2fc4b02023c1424  ./sos_scaling.csv
+2901736042b5d97efbade6a7cc167ac86a85458f942cb33513b57e0c142351cb  ./sos_sweep.log
 8940b0b9d829e9dd7b87224614853298f8f3ee6eec873fb7833e4e63c52a1a4a  ./tool_versions.txt
 ea7867c5f647648a8078f65fd8fb11c983d3a004b9e99c92059d8652854bf927  ./tunnel_clustering_real_pool.csv
-93020592c3b9c95ebd825a9ccc59cdf4207e8afe1fbb34c979b8487b162440d2  ./tunnel_clustering_scaling.csv
+2788a6345de213d7afbf4962b8c997a021450db8e71318a2d07de4a7e9dd5de8  ./tunnel_clustering_scaling.csv
 07c854a354d0dc852dbf0675dd4232b5a5109f8a9fad54925505adcf5311dc82  ./tunnel_tcl_vs_compiled.csv
 e4f98a73a9229f4babb6e58f509f2d89ff0650c306df5c0f27046447b81cc4d7  ./tunnel_vs_caver_auto_threshold.csv
-bd30c85dc6a3775907611987060ededdabadc5b7f02c8afb66e8b08ee0b3b348  ./tunnel_vs_caver.csv
-df499afd55f39f71b739a13525b27078d80bf4b7a7df21c77cfb2c37550e0a16  ./tunnel_vs_caver_step3_unfiltered.csv
+62b5d34231577f8ca612391bf9e6b30f9707b9bb707d224e5d17ec21f8daa0b3  ./tunnel_vs_caver.csv
+08aa64e7f32f42580ce5e5cbe205b5e973d83cd9dec28ee5560556b6a95e11ea  ./tunnel_vs_caver_step3_unfiltered.csv
 5faf6fb28847b47769f982e0972686775a5444694f95f83115260d4367db5686  ./tunnel_vs_caver_timing.csv
-4f8cfa2dd9c3cb3b2ce21aea71749fb31f17d3cd0b48a997ff074c45498bad28  ./tunnel_vs_mole2_auto_origin.csv
-3b058ab368038b7bf4512226965087b9b898334b0091cb1434b30e170de7087a  ./tunnel_vs_mole2.csv
+3b35b740d340bccefd2fb65e063e423d14b28f0b350121ea8e7b48ba5ed4cc13  ./tunnel_vs_mole2_auto_origin.csv
+5c78d0ce3cca88a2ab97c0e363e4bec0ad0de8f557257655c1b2b67ab185453a  ./tunnel_vs_mole2.csv
 954853235f03ecb665b54fece577758f33880fda58b4acc5ee41475f9bce52f2  ./upstream_capability.csv
 038366266f731312c7f5cca5e240263839ddc16f864aefbce08d3d2b56948802  ./verify.log
-#
-## benchmark inputs (structures, trajectory, sweep input)
 e06a449384c98819d6d091623f0d363c84c3359dae2a77b64dc267337fb2e446  vmdpathfinder/step5_assembly.hmr.psf
 33d4ba083b8de60cf6d2170a5c2e56a7339f1c757b40ee131cc0a37c947de7eb  vmdpathfinder/sim_1.dcd
 360f7cc0ace6df7f2461be3617769aa3ff48eb7ef0a62e8a6297b405867743f2  paper/case_studies/case2_hydrophobic_gating/hole_output_9HNR/frame_00000/hole_out.sph

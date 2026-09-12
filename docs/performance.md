@@ -8,14 +8,14 @@ each benchmark.
 | What | Compared with | Speedup |
 |---|---|---|
 | Surface triangulation (`sos_triangle`), same surface, byte-identical output | HOLE 2 `sos_triangle` | 3.4x at dot density 10, 73x at density 40 |
-| HOLE pipeline on one structure (1BL8): search, dots, surface | HOLE 2 binaries built at -O2 | 5.3x circular, 7.1x Connolly |
+| HOLE pipeline on one structure (1BL8): search, dots, surface | HOLE 2 binaries built at -O2 | 5.3x circular, 7.6x Connolly |
 | 50-frame trajectory, radius profiles | mdahole2 | 93x |
 | 50-frame trajectory, radius profiles | serial HOLE shell loop | 6.1x |
 | 50-frame trajectory, surface generation | mdahole2 | 50x |
 | 50-frame trajectory, surface generation | serial HOLE shell loop | 16x |
 | Job pool, 15 workers on 8 cores | 1 worker | 6.4x |
 | Pore search step only, Nelder-Mead (18,677 atoms) | HOLE's Monte Carlo search | 5x |
-| Tunnel search (MOLE 2 algorithm), matching tunnel counts | MOLE 2 | 9.7x to 16x |
+| Tunnel search (MOLE 2 algorithm), matching tunnel counts | MOLE 2 | 8.9x to 15x |
 | Tunnel search, compiled engine | the plugin's Tcl fallback | 173x to 231x |
 | Cross-frame tunnel clustering, 1837 pathways | the plugin's Tcl fallback | 23x |
 

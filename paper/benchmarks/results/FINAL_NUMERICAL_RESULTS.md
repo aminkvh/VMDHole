@@ -115,27 +115,27 @@ rows keep the accelerated binaries and switch the plugin's own engines on:
 
 | dotden | triangles | upstream ms | fast ms | speedup | identical |
 |---|---|---|---|---|---|
-| 10 | 2810 | 105.5 | 30.9 | 3.4 | yes |
-| 15 | 6390 | 464.2 | 50.5 | 9.2 | yes |
-| 20 | 11280 | 1399.1 | 79.0 | 17.7 | yes |
-| 25 | 17354 | 3216.1 | 114.3 | 28.1 | yes |
-| 30 | 24570 | 6400.7 | 159.9 | 40.0 | yes |
-| 35 | 33388 | 11644.1 | 208.3 | 55.9 | yes |
-| 40 | 43707 | 19775.4 | 270.1 | 73.2 | yes |
+| 10 | 2810 | 100.0 | 29.6 | 3.4 | yes |
+| 15 | 6390 | 444.7 | 50.0 | 8.9 | yes |
+| 20 | 11280 | 1315.0 | 77.0 | 17.1 | yes |
+| 25 | 17354 | 3042.5 | 109.9 | 27.7 | yes |
+| 30 | 24570 | 6056.5 | 150.4 | 40.3 | yes |
+| 35 | 33388 | 11107.8 | 198.1 | 56.1 | yes |
+| 40 | 43707 | 18874.1 | 257.0 | 73.4 | yes |
 
-Range: **3.4x (density 10) to 73.2x (density 40)**, output identical at every point.
+Range: **3.4x (density 10) to 73.4x (density 40)**, output identical at every point.
 
 ## MOLE 2 tunnel validation + timing - `tunnel_vs_mole2.csv`, `tunnel_vs_mole2_auto_origin.csv`
 
 | structure | tetra MOLE2 | tetra VMDPathFinder | tunnels (both) | MOLE2 s | VMDPathFinder s | speedup |
 |---|---|---|---|---|---|---|
-| 1BL8 | 18394 | 18380 | 4/4 | 0.3813 | 0.0250 | 15.24x |
-| 1MXT_noHET | 45044 | 45031 | 5/5 | 0.6124 | 0.0581 | 10.55x |
-| 1ERI | 15163 | 15163 | 1/1 | 0.3224 | 0.0197 | 16.41x |
-| 1BL8_auto | 18394 | 18380 | 8/8 | 0.3979 | 0.0287 | 13.87x |
-| 1MXT_auto | 45044 | 45031 | 13/13 | 0.7249 | 0.0750 | 9.66x |
+| 1BL8 | 18394 | 18380 | 4/4 | 0.3449 | 0.0252 | 13.69x |
+| 1MXT_noHET | 45044 | 45031 | 5/5 | 0.5485 | 0.0593 | 9.26x |
+| 1ERI | 15163 | 15163 | 1/1 | 0.2987 | 0.0196 | 15.25x |
+| 1BL8_auto | 18394 | 18380 | 8/8 | 0.3891 | 0.0286 | 13.60x |
+| 1MXT_auto | 45044 | 45031 | 13/13 | 0.6507 | 0.0731 | 8.90x |
 
-Timing range: **9.66-16.41x**; tunnel counts agree on every structure: yes.
+Timing range: **8.90-15.25x**; tunnel counts agree on every structure: yes.
 
 ## CAVER comparison - `tunnel_vs_caver_timing.csv`, `tunnel_tcl_vs_compiled.csv`, `tunnel_clustering_real_pool.csv`
 
@@ -188,14 +188,14 @@ free energy **r = 0.968**.
 
 | method | build | total s |
 |---|---|---|
-| circular | stock | 0.8273 |
-| circular | accel_1t | 0.1575 |
-| circular | accel_nt | 0.1566 |
-| connolly | stock | 2.7219 |
-| connolly | accel_1t | 0.7212 |
-| connolly | accel_nt | 0.3857 |
+| circular | stock | 0.7746 |
+| circular | accel_1t | 0.1463 |
+| circular | accel_nt | 0.1475 |
+| connolly | stock | 2.5582 |
+| connolly | accel_1t | 0.6876 |
+| connolly | accel_nt | 0.3364 |
 
-circular total **5.28x**; connolly total **7.06x** (connolly at dotden 8 -
+circular total **5.25x**; connolly total **7.60x** (connolly at dotden 8 -
 stock sos_triangle overflows above dotden ~12; always carry this caveat).
 
 ## Comparison with the 2026-09-03 freeze (commit 07790cc)
@@ -205,8 +205,8 @@ stock sos_triangle overflows above dotden ~12; always carry this caveat).
 | calc vs mdahole2 (accelerated HOLE search) | 99.1 | 93.40 |
 | surfaces vs mdahole2 (accelerated HOLE path) | 54.8 | 49.92 |
 | 15-worker speedup | 6.96 | 6.39 |
-| triangulation, density 40 | 72.0 | 73.20 |
-| MOLE 2 fold, 1BL8 | 14.28 | 15.24 |
+| triangulation, density 40 | 72.0 | 73.40 |
+| MOLE 2 fold, 1BL8 | 14.28 | 13.69 |
 | CAVER stage-only, 2.0 A | 10.54 | 10.54 |
 | cross-frame clustering compiled vs Tcl | 26.5 | 23.27 |
 | CHAP min-radius r | 0.998 | 1.00 |
