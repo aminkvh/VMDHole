@@ -56,6 +56,7 @@ $(awk '/^proc ::VMDPathFinder::_mem_sync_presentation/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_persistent_keys/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_config_adopt_defaults/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_render_other_memories/,/^}/' "$TCL")
+$(awk '/^proc ::VMDPathFinder::_mem_forget_assets/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_max/,/^}/' "$TCL")
 $(awk '/^proc ::VMDPathFinder::_mem_add_clicked/,/^}/' "$TCL")
 
@@ -151,6 +152,20 @@ namespace eval ::VMDPathFinder {
     puts "CAP_N [dict size \$pore_memories]"
     puts "CAP_STATUS \$state(status)"
 }
+
+# A geometry change forgets every memory's cached surface, not only the active one's.
+namespace eval ::VMDPathFinder {
+    set pore_memories [dict create \
+        1 [dict create params {} results [dict create 0 {asset {path /tmp/a/hole_triangulated_csg1.40.vmd_plot kind vmd_plot}} 1 {asset {}}] frames {0 1} run_root /tmp/a] \
+        2 [dict create params {} results [dict create 0 {asset {path /tmp/b/hole_triangulated.vmd_plot kind vmd_plot}}] frames {0} run_root /tmp/b]]
+    _mem_forget_assets
+    set left 0
+    dict for {id rec} \$pore_memories {
+        dict for {f r} [dict get \$rec results] { if {[dict get \$r asset] ne {}} { incr left } }
+    }
+    puts "ASSETS_LEFT \$left"
+    puts "FRAMES_KEPT [dict get \$pore_memories 1 frames]"
+}
 TCLEOF
 )
 get() { printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | head -1; }
@@ -186,6 +201,9 @@ printf '%s' "$(get M2_RESULTS)" | grep -q "^1 frames 5$" && ok "...including its
 
 [ "$(get CAP_N)" = "10" ] && ok "at most ten memories" || bad "cap: $(get CAP_N)"
 printf '%s' "$(get CAP_STATUS)" | grep -q "At most 10" && ok "...and the eleventh + says so" || bad "cap status: $(get CAP_STATUS)"
+
+[ "$(get ASSETS_LEFT)" = "0" ] && ok "a geometry change forgets every memory's surface" || bad "assets left: $(get ASSETS_LEFT)"
+[ "$(get FRAMES_KEPT)" = "0 1" ] && ok "...and keeps the rest of the record" || bad "frames kept: $(get FRAMES_KEPT)"
 
 echo "memory-slots: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || { echo "--- raw ---"; printf '%s\n' "$OUT" | head -25; exit 1; }

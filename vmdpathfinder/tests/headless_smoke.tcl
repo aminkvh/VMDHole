@@ -2564,8 +2564,10 @@ chk "a nonsense draft density falls back" [::VMDPathFinder::_conn_draft_dotden] 
 set ::VMDPathFinder::state(conn_draft_dotden) $_sv_cdd
 set ::VMDPathFinder::state(dot_density) $_sv_dd
 
-# A draft mesh must never be served as the full one (sos_triangle path: the
-# marching-cubes mesher draws one mesh for both and tags nothing).
+# A draft mesh must never be served as the full one. Under sos_triangle the
+# settle pass keeps the full cloud and is tagged _full (the untagged name held
+# meshes of the thinned cloud); the marching-cubes mesher draws one mesh for
+# both and tags nothing.
 set _sv_pm7 $::VMDPathFinder::state(pore_method)
 set _sv_ms7 $::VMDPathFinder::state(mesher)
 set ::VMDPathFinder::state(pore_method) connolly
@@ -2575,10 +2577,13 @@ set _sfx_full [::VMDPathFinder::_conn_surface_suffix]
 set ::VMDPathFinder::_conn_draft_build 1
 set _sfx_draft [::VMDPathFinder::_conn_surface_suffix]
 chk "the draft mesh gets its own filename" [expr {$_sfx_draft ne $_sfx_full}] 1
-chk "...and the full one is untagged" $_sfx_full ""
+chk "...and the full one is tagged _full" $_sfx_full "_full"
+chk "...and the draft one _draft" $_sfx_draft "_draft"
 set ::VMDPathFinder::state(mesher) csg
 if {[::VMDPathFinder::_csg_can_mesh]} {
-    chk "...and the mesher builds one mesh, draft or not" [::VMDPathFinder::_conn_surface_suffix] $_sfx_full
+    chk "...and the mesher builds one untagged mesh, draft or not" [::VMDPathFinder::_conn_surface_suffix] ""
+    set ::VMDPathFinder::_conn_draft_build 0
+    chk "...for the settle pass too" [::VMDPathFinder::_conn_surface_suffix] ""
 }
 set ::VMDPathFinder::_conn_draft_build 0
 set ::VMDPathFinder::state(mesher) $_sv_ms7

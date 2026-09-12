@@ -27367,6 +27367,17 @@ proc ::VMDPathFinder::_mem_blank_track {frame} {
     catch {mol rename $current_surface_mol "HOLE surface (frame $frame: no data)"}
 }
 
+proc ::VMDPathFinder::_mem_forget_assets {} {
+    # A geometry change (mesher, display mode, smoothing) invalidates every
+    # memory's surface, not only the active one's.
+    variable pore_memories
+    dict for {id rec} $pore_memories {
+        set r [dict get $rec results]
+        foreach f [dict keys $r] { dict set r $f asset {} }
+        dict set pore_memories $id [dict replace $rec results $r]
+    }
+}
+
 proc ::VMDPathFinder::_mem_render_other_memories {frame draft} {
     # Draw the frame for every memory OTHER than the active one. Playback and
     # scrubbing render the live `results` only, so with five pores held, four of
@@ -31671,6 +31682,7 @@ proc ::VMDPathFinder::_apply_display_change_now {} {
         # each frame rebuilds to the new look the next time it is shown.
         cache_clear plot
         foreach f [dict keys $results] { dict set results $f asset {} }
+        _mem_forget_assets
     }
     # Which frame to repaint: the selected result row, or - with no row selected
     # (the normal state after Run + Play) - the frame whose surface is already on
@@ -37787,8 +37799,9 @@ proc ::VMDPathFinder::_build_conn_region_meshes {run_dir cls regions dotden {src
             set _mesh_src $src_sph
             set _npts 0
             if {$_mesh_src ne "" && [file exists $_mesh_src]} { set _npts [_sph_point_count $_mesh_src] }
+            variable _conn_draft_build
             set _target [_conn_render_target_npts \
-                [expr {$dotden eq [_conn_draft_dotden] && $dotden ne [_conn_safe_dotden 0]}]]
+                [expr {[info exists _conn_draft_build] && $_conn_draft_build}]]
             if {$_mesh_src eq "" || ![file exists $_mesh_src]} {
                 # No caller has ever left src_sph blank (both pass their own
                 # sph_file), but this is the input the whole mesh depends on -
@@ -38001,6 +38014,10 @@ proc ::VMDPathFinder::_conn_surface_suffix {} {
     # would be a second surface that visibly replaces the first on settle.
     if {[info exists _conn_draft_build] && $_conn_draft_build && ![_csg_can_mesh]} {
         append sfx "_draft"
+    } elseif {![_csg_can_mesh]} {
+        # sos settle pass keeps the full cloud (_conn_render_target_npts); the
+        # untagged name holds meshes of the thinned one.
+        append sfx "_full"
     }
     if {[_conn_pore_gate_enabled]} { append sfx "_pore[_conn_margin_tag]" }
     return $sfx
