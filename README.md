@@ -33,7 +33,7 @@ trajectory.
 
 VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD workflow. Instead of treating structures, pathways, hydration, and visualization as separate tasks, it keeps them linked to the same molecule and simulation frame.
 
-* **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and chemical properties.
+* **Pores and tunnels in one place.** Analyze channel pores or routes from buried sites to the surface, then measure their geometry, bottlenecks, lining residues, and physicochemical properties.
 
 * **More than a single pore radius.** Choose spherical, Connolly, or capsule pore models for round, irregular, or slit-like channels. Track and annotate [Connolly lateral openings](docs/pore-mode.md#inspect-connolly-lateral-openings), or rank and follow tunnel routes across a trajectory.
 
@@ -47,23 +47,20 @@ VMDPathFinder brings pore and tunnel analysis into one trajectory-aware VMD work
 
 * **Compare several pores side by side.** Run an analysis, press **+**, run
   another, and both stay on screen in their own colours. Each run keeps its own
-  settings, its own results and its own folder, so nothing overwrites anything.
+  settings, results, and a separate run folder. Up to ten pore analyses can be
+  held in Memory.
 
-* **Slit-shaped pores look like slits.** The capsule surface is now the stack of
-  each slice's outline, so a narrow gate reads as a gate instead of a row of
-  overlapping balls.
+* **Display slit-shaped pores.** Capsule surfaces join the slices' stadium-shaped
+  outlines to show elongated cross-sections and narrow gates.
 
-* **Side openings are counted properly.** Two openings on different sides of the
-  channel are no longer merged into one, each one's narrowest point is measured
-  along the route a molecule would actually take, and openings that come and go
-  are drawn in grey rather than disappearing into the pore.
+* **Track individual side openings.** Connolly annotations estimate each
+  opening's neck radius and track its occurrence. Openings below the **Seen**
+  threshold remain visible in grey.
 
-* **See what goes through each opening.** **Ion & Water** has an *Openings* view
-  listing how many ions and waters passed through each one, how long they
-  stayed, and which ions they were.
+* **Inspect ions and water in each opening.** **Ion & Water > Openings** reports
+  occupancy, visit lengths, and ion species. These are not full permeation counts.
 
-* **Faster on trajectories.** Finding the side openings across a 100-frame
-  trajectory takes about four seconds instead of forty.
+See [Performance](docs/performance.md) for measured timings and comparisons.
 
 ## Performance
 
