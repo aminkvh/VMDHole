@@ -94,7 +94,7 @@ static int is_atom_line(const char *line) {
 
 /* -------------------------------------------------------------- dot list */
 
-typedef struct { double t, x, y, z; char *line; } Dot;
+typedef struct { double t, x, y, z, r; char *line; } Dot;
 typedef struct { double t, x, y, z, r; } Cen;
 
 static Dot *g_dots = NULL; int g_ndots = 0, g_dotcap = 0;
@@ -105,13 +105,15 @@ static char **g_keep = NULL; int g_nkeep = 0, g_keepcap = 0;
 static Cen *g_cen = NULL; int g_ncen = 0, g_cencap = 0;
 static double *g_esct = NULL; int g_nesc = 0, g_esccap = 0;
 
-static void push_dot(double t, double x, double y, double z, const char *line) {
+static double g_ion_cell = 0.0;   /* ionspheres mode: voxel size, 0 = classify output */
+static void push_dot(double t, double x, double y, double z, double r, const char *line) {
     if (g_ndots >= g_dotcap) {
         int old = g_dotcap; g_dotcap = g_dotcap ? g_dotcap * 2 : 4096;
         g_dots = xrealloc(g_dots, g_dotcap * sizeof(Dot));
         g_dotmark = xrealloc(g_dotmark, g_dotcap); memset(g_dotmark + old, 0, g_dotcap - old);
     }
     g_dots[g_ndots].t = t; g_dots[g_ndots].x = x; g_dots[g_ndots].y = y; g_dots[g_ndots].z = z;
+    g_dots[g_ndots].r = r;
     g_dots[g_ndots].line = xstrdup(line);
     g_ndots++;
 }
@@ -148,7 +150,7 @@ static void read_sph(const char *path, double ux, double uy, double uz, double o
         if (!a.xyz_ok) continue;
         double t = (a.x - ox) * ux + (a.y - oy) * uy + (a.z - oz) * uz;
         if (a.resseq_ok && a.resseq == -999) {
-            push_dot(t, a.x, a.y, a.z, a.line);
+            push_dot(t, a.x, a.y, a.z, a.occ_ok ? a.occ : 0.0, a.line);
             if (a.marked) mark_last(0, g_ndots - 1);
             continue;
         }
@@ -330,6 +332,65 @@ static int lobe_split_weak(const int *members, int mh, const int *celln,
     return result;
 }
 
+/* ionspheres: the sphere list the Ion & Water scan tests ions against. Same
+   rule as the plugin's _thin_spheres_to_voxels: one sphere per g_ion_cell
+   voxel, the largest wins, first seen keeps a tie; the centreline records
+   (keep) and the dots (pore + lateral) are thinned separately, and a lateral
+   dot whose axial position lies in an escaped range (+-1.5 A) is dropped. */
+typedef struct { long ix, iy, iz; double x, y, z, r, t; int lat, used; } IonCell;
+static void ion_thin_put(IonCell *tab, size_t cap, double x, double y, double z, double r,
+                         double t, int lat) {
+    long ix = (long)floor(x / g_ion_cell), iy = (long)floor(y / g_ion_cell), iz = (long)floor(z / g_ion_cell);
+    size_t h = ((size_t)(ix * 73856093L) ^ (size_t)(iy * 19349663L) ^ (size_t)(iz * 83492791L)) & (cap - 1);
+    for (;;) {
+        IonCell *c = &tab[h];
+        if (!c->used) { c->used = 1; c->ix = ix; c->iy = iy; c->iz = iz; c->x = x; c->y = y; c->z = z; c->r = r; c->t = t; c->lat = lat; return; }
+        if (c->ix == ix && c->iy == iy && c->iz == iz) {
+            if (r > c->r) { c->x = x; c->y = y; c->z = z; c->r = r; c->t = t; c->lat = lat; }
+            return;
+        }
+        h = (h + 1) & (cap - 1);
+    }
+}
+static size_t ion_cap_for(int n) { size_t c = 1024; while (c < (size_t)n * 2 + 16) c <<= 1; return c; }
+static void ion_spheres_output(const int *pore_dot, const LatPt *lat, int nlat,
+                               const double *rlo, const double *rhi, int nranges) {
+    (void)pore_dot;
+    size_t capk = ion_cap_for(g_nkeep);
+    IonCell *tk = xmalloc(capk * sizeof(IonCell)); memset(tk, 0, capk * sizeof(IonCell));
+    for (int i = 0; i < g_nkeep; i++) {
+        double x, y, z, r; int len = (int)strlen(g_keep[i]);
+        if (!hio_num(g_keep[i], len, 30, 37, &x) || !hio_num(g_keep[i], len, 38, 45, &y) ||
+            !hio_num(g_keep[i], len, 46, 53, &z) || !hio_num(g_keep[i], len, 54, 59, &r)) continue;
+        if (r <= 0.005) continue;
+        ion_thin_put(tk, capk, x, y, z, r, 0.0, 0);
+    }
+    char *is_lat = xmalloc(g_ndots ? g_ndots : 1); memset(is_lat, 0, g_ndots ? g_ndots : 1);
+    for (int i = 0; i < nlat; i++) is_lat[lat[i].idx] = 1;
+    size_t capd = ion_cap_for(g_ndots);
+    IonCell *td = xmalloc(capd * sizeof(IonCell)); memset(td, 0, capd * sizeof(IonCell));
+    for (int i = 0; i < g_ndots; i++) {
+        if (g_dots[i].r <= 0.005) continue;
+        ion_thin_put(td, capd, g_dots[i].x, g_dots[i].y, g_dots[i].z, g_dots[i].r, g_dots[i].t, is_lat[i]);
+    }
+    int n = 0;
+    for (size_t h = 0; h < capk; h++) if (tk[h].used) n++;
+    for (size_t h = 0; h < capd; h++) {
+        if (!tk || !td[h].used) continue;
+        if (td[h].lat && nranges) {
+            int esc = 0;
+            for (int r = 0; r < nranges; r++) if (td[h].t >= rlo[r]-1.5 && td[h].t <= rhi[r]+1.5) { esc = 1; break; }
+            if (esc) { td[h].used = 0; continue; }
+        }
+        n++;
+    }
+    printf("IONSPH %d\n", n);
+    for (size_t h = 0; h < capk; h++) if (tk[h].used) printf("%.3f %.3f %.3f %.3f\n", tk[h].x, tk[h].y, tk[h].z, tk[h].r);
+    for (size_t h = 0; h < capd; h++) if (td[h].used) printf("%.3f %.3f %.3f %.3f\n", td[h].x, td[h].y, td[h].z, td[h].r);
+    fflush(stdout);
+    free(tk); free(td); free(is_lat);
+}
+
 static void do_classify(double ux, double uy, double uz, double margin,
                         double f1x, double f1y, double f1z, double f2x, double f2y, double f2z) {
     int *pore_dot = xmalloc(g_ndots * sizeof(int));      /* 1 = pore, 0 = lateral */
@@ -489,6 +550,10 @@ static void do_classify(double ux, double uy, double uz, double margin,
     }
 
     /* ---- output ---- */
+    if (g_ion_cell > 0) {
+        ion_spheres_output(pore_dot, lat, nlat, rlo, rhi, nranges);
+        goto cleanup;
+    }
     int npore = 0; for (int i = 0; i < g_ndots; i++) npore += pore_dot[i];
     printf("PORE %d\n", npore);
     for (int i = 0; i < g_ndots; i++) if (pore_dot[i]) printf("%s\n", g_dots[i].line);
@@ -514,6 +579,7 @@ static void do_classify(double ux, double uy, double uz, double margin,
     for (int i = 0; i < g_nkeep; i++) if (g_keepmark[i]) printf("%s\n", g_keep[i]);
     fflush(stdout);
 
+cleanup:
     free(pore_dot); free(lat); free(rlo); free(rhi);
     for (int i = 0; i < nlobes; i++) free(lobes[i].members);
     free(lobes);
@@ -695,8 +761,9 @@ static void do_split(const char *union_plot, char **names, char **label_paths, c
 static void usage(const char *a0) {
     fprintf(stderr,
         "usage: %s classify SPH CX CY CZ VX VY VZ MARGIN [F1X F1Y F1Z F2X F2Y F2Z]\n"
+        "       %s ionspheres SPH CX CY CZ VX VY VZ MARGIN CELL\n"
         "       %s split UNION_PLOT --region NAME LABELS_SPH OUT_PLOT [...]\n",
-        a0, a0);
+        a0, a0, a0);
 }
 
 #ifdef VMDPATHFINDER_MULTICALL
@@ -724,6 +791,26 @@ int main(int argc, char **argv)
         }
         read_sph(sph, ux, uy, uz, cx, cy, cz);
         if (g_ncen < 2 || g_ndots == 0) { printf("PORE 0\nKEEP 0\nLATERAL 0\nESCRANGE 0\nLOBE 0\n"); return 0; }
+        qsort(g_cen, g_ncen, sizeof(Cen), cmp_cen);
+        do_classify(ux, uy, uz, margin, f1x, f1y, f1z, f2x, f2y, f2z);
+        return 0;
+    }
+    if (!strcmp(argv[1], "ionspheres")) {
+        /* ionspheres SPH CX CY CZ VX VY VZ MARGIN CELL */
+        if (argc < 11) { usage(argv[0]); return 2; }
+        const char *sph = argv[2];
+        double cx = atof(argv[3]), cy = atof(argv[4]), cz = atof(argv[5]);
+        double vx = atof(argv[6]), vy = atof(argv[7]), vz = atof(argv[8]);
+        double margin = atof(argv[9]);
+        g_ion_cell = atof(argv[10]);
+        if (g_ion_cell <= 0.01) { fprintf(stderr, "bad cell\n"); return 2; }
+        double ulen = sqrt(vx*vx + vy*vy + vz*vz);
+        if (ulen <= 1e-9) { fprintf(stderr, "CVECT is a zero vector\n"); return 1; }
+        double ux = vx/ulen, uy = vy/ulen, uz = vz/ulen;
+        double f1x, f1y, f1z, f2x, f2y, f2z;
+        axis_basis(ux, uy, uz, &f1x, &f1y, &f1z, &f2x, &f2y, &f2z);
+        read_sph(sph, ux, uy, uz, cx, cy, cz);
+        if (g_ncen < 2 || g_ndots == 0) { printf("IONSPH 0\n"); return 0; }
         qsort(g_cen, g_ncen, sizeof(Cen), cmp_cen);
         do_classify(ux, uy, uz, margin, f1x, f1y, f1z, f2x, f2y, f2z);
         return 0;

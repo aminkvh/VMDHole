@@ -71,10 +71,15 @@ balloons the Openings list flags at 100% escaped.
 
 ## Design notes
 
-- Two subcommands (`classify`, `split`), one binary, matching how the two
-  callers use them (`_conn_classify_sph` needs classify+cluster together;
-  `_split_conn_mesh_by_region` needs split alone, called after the union
-  mesh exists).
+- Three subcommands (`classify`, `split`, `ionspheres`), one binary, matching
+  how the callers use them (`_conn_classify_sph` needs classify+cluster
+  together; `_split_conn_mesh_by_region` needs split alone, called after the
+  union mesh exists; the Ion & Water scan needs only the sphere list).
+- `ionspheres SPH CX CY CZ VX VY VZ MARGIN CELL` prints `IONSPH n` then n
+  lines `x y z r`: the classified cloud thinned to one sphere per CELL voxel
+  (the largest), lateral dots inside an escaped range dropped - the list
+  `_conn_ionflow_spheres_fast` used to build in Tcl (0.5 s a frame on a 170k-dot
+  cloud, 0.1 s here). The plugin caches it as `<sph>_ionsph_m<M>_c<C>.dat`.
 - `classify`'s output text reconstructs the exact same dict shape the Tcl
   procs return (`pore`/`lateral`/`keep`/`n_pore`/`n_lat`/`escaped_ranges`,
   plus a `lobes` key `_conn_frame_lobes` reads straight off), so every

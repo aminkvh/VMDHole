@@ -38261,6 +38261,36 @@ proc ::VMDPathFinder::_conn_t_is_escaped {t ranges pad} {
     return 0
 }
 
+proc ::VMDPathFinder::_conn_ionflow_spheres_native {in_sph cvect_s cpoint_s margin cell} {
+    # {x y z r} list from `conn_lobes ionspheres`, cached beside the .sph.
+    set exe [tool_path conn_lobes]
+    if {$exe eq "" || ![file exists $in_sph]} { return {} }
+    lassign $cvect_s ux uy uz
+    lassign $cpoint_s ox oy oz
+    set cache "[file rootname $in_sph]_ionsph_m[format %.2f $margin]_c[format %.2f $cell].dat"
+    set out ""
+    if {[file exists $cache] && [file mtime $cache] >= [file mtime $in_sph]} {
+        if {![catch {set fh [open $cache r]}]} { set out [read $fh]; close $fh }
+    }
+    if {$out eq ""} {
+        set cmd [list $exe {*}[tool_args conn_lobes] ionspheres $in_sph $ox $oy $oz $ux $uy $uz $margin $cell]
+        if {[catch {exec {*}$cmd} out]} { return {} }
+        if {![string match "IONSPH *" $out]} { return {} }
+        catch {
+            set fh [open $cache w]; puts -nonewline $fh $out; close $fh
+        }
+    }
+    set lines [split $out "\n"]
+    if {![string match "IONSPH *" [lindex $lines 0]]} { return {} }
+    set n [lindex [lindex $lines 0] 1]
+    if {![string is integer -strict $n] || $n < 1} { return {} }
+    set res {}
+    foreach l [lrange $lines 1 $n] {
+        if {[llength $l] == 4} { lappend res $l }
+    }
+    return $res
+}
+
 proc ::VMDPathFinder::_conn_ionflow_spheres_fast {in_sph cvect_s cpoint_s margin} {
     # Ion Flow's own fast path to the same "keep + pore + lateral(minus escaped)"
     # sphere set _conn_classify_cached + _thin_spheres_to_voxels builds (see the
@@ -38316,6 +38346,13 @@ proc ::VMDPathFinder::_conn_ionflow_spheres_fast {in_sph cvect_s cpoint_s margin
     # has no use for. Checking the cache and calling native directly (cheap to
     # fail: one tool_path lookup, no exec, when the binary is genuinely
     # absent) gets the reuse win without ever paying for that fallback here.
+    # The native tool does the classification, the voxel thinning and the
+    # escaped-range filter in one pass and prints only the ~25k spheres that
+    # survive, against the ~170k-line cloud the Tcl path below parses and
+    # thins (0.5 s a frame). The list is kept next to the .sph so a re-scan
+    # or a reloaded run does not pay even that.
+    set _nsph [_conn_ionflow_spheres_native $in_sph $cvect_s $cpoint_s $margin 1.0]
+    if {[llength $_nsph]} { return $_nsph }
     variable _conn_cls_memo
     set _ckey [_conn_classify_cache_key $in_sph $cvect_s $cpoint_s $margin ""]
     set _nat {}

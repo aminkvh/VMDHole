@@ -61,6 +61,26 @@ set lobes_tcl [::VMDPathFinder::_conn_frame_lobes $cls_tcl]
 rename ::VMDPathFinder::tool_path {}
 rename ::VMDPathFinder::_real_tool_path ::VMDPathFinder::tool_path
 
+# The Ion & Water scan's sphere list: native `ionspheres` (classify + voxel
+# thinning + escaped filter in one pass, cached beside the .sph) must give the
+# Tcl path's set.
+proc _sph_set {lst} {
+    set o {}
+    foreach s $lst { lassign $s x y z r; lappend o [format "%.3f %.3f %.3f %.3f" $x $y $z $r] }
+    return [lsort $o]
+}
+set sp_native [::VMDPathFinder::_conn_ionflow_spheres_fast $sph $cv $cp $margin]
+rename ::VMDPathFinder::tool_path ::VMDPathFinder::_real_tool_path
+proc ::VMDPathFinder::tool_path {name} { if {$name eq "conn_lobes"} { return "" }; ::VMDPathFinder::_real_tool_path $name }
+set sp_tcl [::VMDPathFinder::_conn_ionflow_spheres_fast $sph $cv $cp $margin]
+rename ::VMDPathFinder::tool_path {}
+rename ::VMDPathFinder::_real_tool_path ::VMDPathFinder::tool_path
+chk "ion-scan sphere list: native ran" [expr {[llength $sp_native] > 0}] 1
+chk "ion-scan sphere list: native matches Tcl" [expr {[_sph_set $sp_native] eq [_sph_set $sp_tcl]}] 1
+chk "ion-scan sphere list is cached beside the .sph" [llength [glob -nocomplain [file join $rd hole_out_ionsph_*.dat]]] 1
+set sp_cached [::VMDPathFinder::_conn_ionflow_spheres_fast $sph $cv $cp $margin]
+chk "...and the cache reads back the same set" [expr {[_sph_set $sp_cached] eq [_sph_set $sp_native]}] 1
+
 note "n_pore=[dict get $cls_native n_pore] n_lat=[dict get $cls_native n_lat] lobes=[llength $lobes_native]"
 chk "pore dot count matches Tcl" [dict get $cls_native n_pore] [dict get $cls_tcl n_pore]
 chk "lateral dot count matches Tcl" [dict get $cls_native n_lat] [dict get $cls_tcl n_lat]
