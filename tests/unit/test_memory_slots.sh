@@ -29,6 +29,7 @@ namespace eval ::VMDPathFinder {
     proc _mem_keep_frame {} {}
     proc _sync_cvect_handles {args} {}
     proc _mem_sync_shared_labels {} {}
+    proc _mem_drop_mean_surface {} {}
     variable state; variable default_state
     variable results [dict create]; variable result_frames {}
     variable pore_memories [dict create]; variable pore_memory_active ""
