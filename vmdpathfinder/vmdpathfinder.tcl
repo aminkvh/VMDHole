@@ -38555,12 +38555,19 @@ proc ::VMDPathFinder::_conn_lobes_parallel {frames} {
  [shell_quote $exe] -dispdev text -e [shell_quote $wsrc] > /dev/null 2>&1"
         lappend jobs [list "lobes_$w" [list |sh -c $cmd]]
     }
+    # Say how much work there is before the pool starts: a worker takes seconds
+    # and the counter below only moves once per worker, so "0 / 15" on its own
+    # reads as a hang.
+    set state(status) "Finding lateral openings in [llength $frames] frame(s) on $nw worker(s)..."
+    catch {update idletasks}
     run_shell_pool $jobs $nw "Finding lateral openings" "worker(s)"
     if {[_abort_requested]} { catch {file delete -force $tmp}; return "" }
 
     # Merge. A worker that produced nothing at all means the parallel path
     # failed for it; fall back rather than silently returning fewer frames than
     # the serial loop would have.
+    set state(status) "Collecting the openings found in each frame..."
+    catch {update idletasks}
     array set lob {}
     array set had {}
     set nseen 0
@@ -38660,7 +38667,10 @@ proc ::VMDPathFinder::_conn_site_table {} {
         } elseif {![llength $per_frame]} {
             set _res [dict create status empty]
         } else {
+            set state(status) "Matching the openings across frames..."
+            catch {update idletasks}
             set _res [dict merge [dict create status ok] [_conn_pool_lobe_sites $per_frame]]
+            set state(status) ""
         }
         if {![info exists conn_site_cache]} { set conn_site_cache [dict create] }
         dict set conn_site_cache $ckey $_res
@@ -38721,11 +38731,17 @@ proc ::VMDPathFinder::_conn_site_table {} {
         } elseif {![llength $per_frame]} {
             set _res [dict create status empty]
         } else {
+            set state(status) "Matching the openings across frames..."
+            catch {update idletasks}
             set _res [dict merge [dict create status ok] [_conn_pool_lobe_sites $per_frame]]
         }
         # Only a COMPLETE pass may be written: a partial one would be reloaded
         # as the whole answer, since the signature cannot tell them apart.
-        if {!$_aborted} { _save_conn_lobe_cache $per_frame $_had_cloud }
+        if {!$_aborted} {
+            set state(status) "Saving the openings..."
+            catch {update idletasks}
+            _save_conn_lobe_cache $per_frame $_had_cloud
+        }
     } _err]
     _end_calc
     set state(status) ""
