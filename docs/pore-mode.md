@@ -149,12 +149,16 @@ the pore colour. **At least N% of the sideways dots** is the size
 cut applied *before* that, so anything it removes is not in the dropped count
 either - lower it to see small openings.
 
-**Ion & Water > Openings** reports ion and water occupancy, mean visit length,
-and ion species for each opening. Counts are molecule-frame observations, not
-unique molecules: one ion present in five sampled frames contributes five.
-The **Crossings** column counts ion visits with at least 3 Å of radial movement,
-not verified lumen-to-bulk passages. Samples are assigned using each frame's
-opening sector and inner and outer radial limits.
+**Ion & Water > Openings** lists, per opening: **Seen** (frames in which the
+opening exists, % of analysed frames), **Ion frames** and **Water frames**
+(molecule-frame samples inside the opening, not unique molecules: one ion
+present in five frames counts five), **Ion visit** and **Water visit** (mean
+consecutive frames a molecule stays), **Moved ≥ 3 Å** (ion visits whose
+distance from the axis changed by 3 Å or more; not a verified lumen-to-bulk
+passage) and **Ions** (species with their counts). Every trajectory frame is
+scanned; a frame HOLE did not analyse uses the nearest analysed frame's
+openings. Water columns need a scan with **Species = Water**. Hover a column
+header for its definition.
 
 For a two-dimensional view, choose **Unrolled** and **Connolly reach**. This
 maps how far the Connolly surface extends from the centreline at each axial and

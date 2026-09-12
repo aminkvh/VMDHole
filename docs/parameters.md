@@ -199,7 +199,6 @@ barrier is a sampling-dependent lower bound.
 | Passage Show (Water only) | All crossing | All crossing, Passage up, Passage down, or All entered (adds the molecules that never crossed) |
 | Species | All detected | All = every ion type, never water; Water = one oxygen per molecule from the Hydration water selection |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |
-| Stride | 1 | Trajectory sampling stride for ion analysis |
 | Flip Z | off | Reverse plotted pore direction |
 | Permeation bulk planes | automatic | Two bulk boundaries along the per-frame pore axis |
 | Time between saved frames | blank | Required to convert counts to rates |

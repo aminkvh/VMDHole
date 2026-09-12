@@ -37070,6 +37070,12 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         if {[dict size $c2s]} { dict set permap $fr [list $c2s $cmin $dth $cmax] }
     }
     if {![dict size $permap]} { return {} }
+    # The scan samples every trajectory frame; HOLE may have analysed a subset.
+    # A sample on a frame without its own map uses the nearest analysed frame's
+    # openings - the same rule the scan itself applies to the pore wall. Without
+    # it every sample on an unanalysed frame dropped out, so on a strided run
+    # every visit was one frame long and nothing ever "moved".
+    set _afr [lsort -integer [dict keys $permap]]
 
     set out [dict create]
     foreach tr [dict get $ion_flow_raw traces] {
@@ -37084,8 +37090,9 @@ proc ::VMDPathFinder::_conn_opening_occupancy {args} {
         set prev_site ""; set prev_f ""; set run 0; set r_first ""; set r_last ""
         foreach t $zs th $azs f $fs rr $rs {
             set site ""
-            if {$th ne "" && $t ne "" && [dict exists $permap $f]} {
-                lassign [dict get $permap $f] c2s cmin dth cmax
+            if {$th ne "" && $t ne "" && $f ne ""} {
+                set _fa [expr {[dict exists $permap $f] ? $f : [_nearest_int_in_sorted_list $f $_afr]}]
+                lassign [dict get $permap $_fa] c2s cmin dth cmax
                 set site [_conn_sample_site $c2s $cmin $cmax \
                     [_conn_cell_key $t [expr {$th - $dth}] $zcell $nth] $rr]
             }
@@ -48219,13 +48226,24 @@ proc ::VMDPathFinder::_draw_ion_flow_openings {} {
         return
     }
     set nf [llength [dict get $table frames]]
-    set cols {70 150 235 320 405 490 575}
+    variable ion_flow_raw
+    set has_water [expr {[dict exists $ion_flow_raw has_water] && [dict get $ion_flow_raw has_water]}]
+    set nscan [expr {[dict exists $ion_flow_raw nframes] ? [dict get $ion_flow_raw nframes] : [traj_numframes]}]
+    # {tag header anchor x-fraction tooltip}; numbers right-aligned under their header.
+    set cols [list \
+        op   "Opening"      w 0.02 "Opening number, as in the Openings list." \
+        seen "Seen"         e 0.17 "Frames in which this opening exists, % of the $nf analysed frames." \
+        ionf "Ion frames"   e 0.30 "Ion-frame samples inside the opening over the $nscan scanned frames. One ion present for five frames counts five." \
+        watf "Water frames" e 0.44 "Water-frame samples inside the opening. Needs a scan with Species = Water." \
+        ionv "Ion visit"    e 0.56 "Mean consecutive frames an ion stays in the opening." \
+        watv "Water visit"  e 0.68 "Mean consecutive frames a water stays in the opening." \
+        mv   "Moved >= 3 A" e 0.82 "Ion visits whose distance from the axis changed by 3 A or more. Not a verified passage." \
+        sp   "Ions"         w 0.85 "Ion species seen in the opening, with their ion-frame counts."]
     set y 18
-    foreach {x t} [list 24 "Opening" [lindex $cols 0] "Seen" [lindex $cols 1] "Ion frames" \
-                        [lindex $cols 2] "Water frames" [lindex $cols 3] "Ion visit" \
-                        [lindex $cols 4] "Water visit" [lindex $cols 5] "Crossings" \
-                        [lindex $cols 6] "Species"] {
-        $cv create text $x $y -anchor w -font {Helvetica 9 bold} -text $t
+    foreach {tag hdr anc xf tip} $cols {
+        set x [expr {int($W*$xf)}]
+        $cv create text $x $y -anchor $anc -font {Helvetica 9 bold} -text $hdr -tags [list hdr hdr_$tag]
+        _cv_item_tip $cv hdr_$tag $tip
     }
     incr y 6
     $cv create line 20 $y [expr {$W-20}] $y -fill "#b0b0b0"
@@ -48235,7 +48253,7 @@ proc ::VMDPathFinder::_draw_ion_flow_openings {} {
     foreach st [dict get $table sites] {
         incr sid
         if {![_conn_site_persistent $table $sid]} continue
-        if {$y > $H-16} break
+        if {$y > $H-40} break
         set any 1
         set e [expr {[dict exists $occ $sid] ? [dict get $occ $sid] : {}}]
         set ions  [expr {[dict size $e] ? [dict get $e ions] : 0}]
@@ -48248,11 +48266,13 @@ proc ::VMDPathFinder::_draw_ion_flow_openings {} {
             dict for {_sp _n} [dict get $e species] { lappend sps "$_sp $_n" }
         }
         set seen [format "%.0f%%" [expr {100.0*[lindex $st 2]/($nf > 0 ? $nf : 1)}]]
-        foreach {x t} [list 24 "OP$sid" [lindex $cols 0] $seen [lindex $cols 1] $ions \
-                            [lindex $cols 2] $wat [lindex $cols 3] [format "%.1f" $dw] \
-                            [lindex $cols 4] [format "%.1f" $wdw] [lindex $cols 5] $cr \
-                            [lindex $cols 6] [join $sps ", "]] {
-            $cv create text $x $y -anchor w -font {Helvetica 9} -text $t
+        set vals [dict create op "OP$sid" seen $seen ionf $ions \
+            watf [expr {$has_water ? $wat : "\u2013"}] \
+            ionv [expr {$ions > 0 ? [format "%.1f" $dw] : "\u2013"}] \
+            watv [expr {$has_water && $wat > 0 ? [format "%.1f" $wdw] : "\u2013"}] \
+            mv $cr sp [join $sps ", "]]
+        foreach {tag hdr anc xf tip} $cols {
+            $cv create text [expr {int($W*$xf)}] $y -anchor $anc -font {Helvetica 9} -text [dict get $vals $tag]
         }
         incr y 16
     }
@@ -48262,10 +48282,21 @@ proc ::VMDPathFinder::_draw_ion_flow_openings {} {
         return
     }
     incr y 8
-    $cv create text 24 $y -anchor w -font {Helvetica 8} -fill gray40 -width [expr {$W-48}] \
-        -text "Counted over the $nf analysed frames. An ion or water counts for a frame when\
-it sits inside that opening in that frame. Visit = how many frames in a row it stays.\
-Crossings = visits that also moved 3 A or more away from the axis."
+    set note "$nscan trajectory frames scanned; a frame HOLE did not analyse uses the nearest analysed frame's openings. Hover a column header for its definition."
+    if {!$has_water} { append note " Water columns need a scan with Species = Water." }
+    $cv create text 24 $y -anchor nw -font {Helvetica 8} -fill gray40 -width [expr {$W-48}] -text $note
+}
+
+proc ::VMDPathFinder::_cv_item_tip {cv tag text} {
+    # Tooltip on a canvas item: the widget helpers bind whole widgets.
+    $cv bind $tag <Enter> [list ::VMDPathFinder::_cv_item_tip_schedule $cv $text]
+    $cv bind $tag <Leave> ::VMDPathFinder::_tooltip_cancel
+}
+
+proc ::VMDPathFinder::_cv_item_tip_schedule {cv text} {
+    variable _tooltip_after_id
+    _tooltip_cancel
+    set _tooltip_after_id [after 600 [list ::VMDPathFinder::_tooltip_show $cv $text]]
 }
 
 proc ::VMDPathFinder::_ionflow_xy {R z rcut zmin zspan ml mt pw ph swap flipz} {
