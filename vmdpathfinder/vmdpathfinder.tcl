@@ -18500,7 +18500,9 @@ proc ::VMDPathFinder::_legacy_sos {sph sos color dd with} {
 
 proc ::VMDPathFinder::surface_mesh_tag {{union 0}} {
     if {![_csg_can_mesh $union]} { return "" }
-    return "_csg[string map {/ _} [_csg_voxel_spec]]"
+    # "csg2": meshes written before the mesher dropped zero-area facets are
+    # named "_csg<voxel>" and must not be served (OptiX shades them flat).
+    return "_csg2_[string map {/ _} [_csg_voxel_spec]]"
 }
 
 proc ::VMDPathFinder::surface_plot_name {dir base form {union 0}} {

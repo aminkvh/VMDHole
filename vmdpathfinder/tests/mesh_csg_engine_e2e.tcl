@@ -68,7 +68,7 @@ set ::VMDPathFinder::state(pore_method) connolly
 chk "csg serves Connolly too" [::VMDPathFinder::_csg_active] 1
 chk "...in HOLE's own records, for the region split" [::VMDPathFinder::_csg_draw_form] 1
 chk "...on a uniform grid, no neck to refine" [::VMDPathFinder::_csg_voxel_spec] 1.00
-chk "...under a different name" [string match "*_csg1.00_draw.vmd_plot" [::VMDPathFinder::surface_plot_name $work hole_triangulated draw]] 1
+chk "...under a different name" [string match "*_csg2_1.00_draw.vmd_plot" [::VMDPathFinder::surface_plot_name $work hole_triangulated draw]] 1
 set ::VMDPathFinder::state(pore_method) capsule
 chk "csg serves capsule" [::VMDPathFinder::_csg_can_mesh] 1
 chk "...and hands the mesher the run's axis" [::VMDPathFinder::_csg_mesh_opts] {--axis 0 0 0 0 0 1 12.0}
@@ -83,7 +83,7 @@ set ::VMDPathFinder::state(csg_voxel) 1.0
 set a0 [::VMDPathFinder::create_plot_asset $rd $sph triangulated $mid $f 0]
 chk "settled asset is a vmd_plot" [dict get $a0 kind] vmd_plot
 set p0 [dict get $a0 path]
-chk "asset name carries the grid" [file tail $p0] hole_triangulated_csg1.00_0.50.vmd_plot
+chk "asset name carries the grid" [file tail $p0] hole_triangulated_csg2_1.00_0.50.vmd_plot
 set a1 [::VMDPathFinder::create_plot_asset $rd $sph triangulated $mid $f 1]
 set p1 [dict get $a1 path]
 chk "playback and settled are ONE mesh" [expr {$p1 eq $p0}] 1
@@ -95,6 +95,20 @@ set fh [open $p0 r]; set txt [read $fh]; close $fh
 chk "plot carries the HOLE colour groups" [regexp {graphics \S+ color (red|green|blue)} $txt] 1
 set ntri [regexp -all {trinorm} $txt]
 note "$ntri triangles"
+# A zero-area facet (a crossing on a grid node) makes VMD's OptiX renderer
+# shade the whole mesh flat, so the mesher must never write one.
+set ndegen 0
+foreach line [split $txt "\n"] {
+    if {![regexp {trinorm +\{([^}]*)\} +\{([^}]*)\} +\{([^}]*)\}} $line -> a b c]} { continue }
+    set a [string trim $a]; set b [string trim $b]; set c [string trim $c]
+    if {$a eq $b || $b eq $c || $a eq $c} { incr ndegen; continue }
+    lassign $a ax ay az; lassign $b bx by bz; lassign $c cx cy cz
+    foreach {p q} [list $a $b $b $c $a $c] {
+        lassign $p px py pz; lassign $q qx qy qz
+        if {($px-$qx)**2 + ($py-$qy)**2 + ($pz-$qz)**2 < 1e-6} { incr ndegen; break }
+    }
+}
+chk "no zero-area or repeated-corner facet in the mesh" $ndegen 0
 
 # --- fast draw: source our own mesh instead of parsing it --------------------
 set gm [::VMDPathFinder::ensure_surface_mol $mid]
@@ -369,7 +383,7 @@ set ::T_REPR iso; set ::T_MODE property; set ::T_PROP hydropathy
 chk "property tunnel takes it too (draw records, no polygon limit)" [::VMDPathFinder::_tunnel_wants_csg 1] 1
 set ::T_MODE auto
 chk "tunnel mesh name carries the grid" \
-    [file tail [::VMDPathFinder::_tunnel_plot $work 3]] tunnel_03_csg1.00_0.50_draw.vmd_plot
+    [file tail [::VMDPathFinder::_tunnel_plot $work 3]] tunnel_03_csg2_1.00_0.50_draw.vmd_plot
 set ::VMDPathFinder::state(mesher) sos
 chk "tunnel sos name is unchanged" [file tail [::VMDPathFinder::_tunnel_plot $work 3]] tunnel_03.vmd_plot
 set ::VMDPathFinder::state(mesher) csg

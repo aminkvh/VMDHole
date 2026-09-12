@@ -524,6 +524,25 @@ static long mesh_run(const char *outpath, const char *plotpath) {
             for (int t = 0; triTable[cube][t] != -1; t += 3) {
                 double *a = ev[triTable[cube][t]], *b = ev[triTable[cube][t+1]],
                        *cc = ev[triTable[cube][t+2]];
+                /* A crossing that lands on a grid node gives two edges the same
+                   point and a zero-area facet. It draws nothing, but one such
+                   facet in a batch makes VMD's OptiX renderer shade the whole
+                   mesh flat, so it is dropped here. */
+                {
+                    double e1[3] = {b[0]-a[0], b[1]-a[1], b[2]-a[2]};
+                    double e2[3] = {cc[0]-a[0], cc[1]-a[1], cc[2]-a[2]};
+                    double e3[3] = {cc[0]-b[0], cc[1]-b[1], cc[2]-b[2]};
+                    double l1 = e1[0]*e1[0]+e1[1]*e1[1]+e1[2]*e1[2];
+                    double l2 = e2[0]*e2[0]+e2[1]*e2[1]+e2[2]*e2[2];
+                    double l3 = e3[0]*e3[0]+e3[1]*e3[1]+e3[2]*e3[2];
+                    double nx = e1[1]*e2[2] - e1[2]*e2[1];
+                    double ny = e1[2]*e2[0] - e1[0]*e2[2];
+                    double nz = e1[0]*e2[1] - e1[1]*e2[0];
+                    /* corners closer than 1e-3 A print identically at the
+                       plot's precision, so they count as one corner */
+                    if (l1 < 1e-6 || l2 < 1e-6 || l3 < 1e-6) continue;
+                    if (nx*nx + ny*ny + nz*nz < 1e-10) continue;
+                }
                 /* ownership test at the centroid: clip term dominating means
                    this facet is a mouth cap HOLE never draws */
                 double gx2 = (a[0]+b[0]+cc[0])/3, gy2 = (a[1]+b[1]+cc[1])/3,
