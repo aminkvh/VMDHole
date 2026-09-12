@@ -27248,11 +27248,24 @@ proc ::VMDPathFinder::_mem_new {} {
     set result_frames {}
     set run_root ""
     set pore_memory_active $id
+    _mem_drop_mean_surface
     _mem_seed_axis
     _mem_point_surface_mol
     dict set pore_memories $id [_mem_capture]
     _mem_sync_cues
     return $id
+}
+
+proc ::VMDPathFinder::_mem_drop_mean_surface {} {
+    # The Mean Profile tube is built from ONE analysis's frames, so it stops
+    # describing anything the moment another memory becomes the active one.
+    # Left standing it also came back on its own: a later surface redraw
+    # re-solos the mean whenever show_mean_surface is still set.
+    variable mean_surface_mol
+    variable state
+    if {$mean_surface_mol < 0 || [catch {molinfo $mean_surface_mol get name}]} { return }
+    catch {remove_mean_surface}
+    catch {_update_surface_vis_buttons}
 }
 
 proc ::VMDPathFinder::_mem_activate {id} {
@@ -27264,6 +27277,7 @@ proc ::VMDPathFinder::_mem_activate {id} {
     if {$pore_memory_active eq $id} { return 1 }
     _mem_stash_active
     set pore_memory_active $id
+    _mem_drop_mean_surface
     _mem_apply [dict get $pore_memories $id]
     _mem_keep_frame
     _mem_point_surface_mol
@@ -27454,6 +27468,7 @@ proc ::VMDPathFinder::_mem_delete {id} {
     if {[dict size $pore_memories] < 2} { return 0 }
     dict unset pore_memories $id
     _mem_forget_tracks $id
+    _mem_drop_mean_surface
     if {$pore_memory_active eq $id} {
         set pore_memory_active [lindex [lsort -integer [dict keys $pore_memories]] 0]
         _mem_apply [dict get $pore_memories $pore_memory_active]

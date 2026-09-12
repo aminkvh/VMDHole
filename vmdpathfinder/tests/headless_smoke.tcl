@@ -6715,5 +6715,17 @@ chk "...while one inside is untouched" [expr {$_cz1 == -5 && $_cz2 == 5}] 1
 chk "the ring builder clips rather than dropping" \
     [expr {[string first {_capsule_clip_segment} [info body ::VMDPathFinder::_capsule_rings]] >= 0}] 1
 
+# --- The Mean Profile tube belongs to one analysis ---------------------------
+# It is built from one memory's frames, so a memory switch, a new memory or a
+# delete drops it. Left standing it also came back on its own, because a later
+# surface redraw re-solos the mean while show_mean_surface is still set.
+foreach _p {_mem_activate _mem_new _mem_delete} {
+    chk "$_p drops the mean surface" \
+        [expr {[string first {_mem_drop_mean_surface} [info body ::VMDPathFinder::$_p]] >= 0}] 1
+}
+chk "...by the same call that removes it everywhere else" \
+    [expr {[string first {remove_mean_surface} \
+        [info body ::VMDPathFinder::_mem_drop_mean_surface]] >= 0}] 1
+
 puts "SMOKE-RESULT pass=$pass fail=$fail"
 quit
