@@ -191,11 +191,11 @@ is required. Compare more than one bandwidth when the conclusion depends on a
 narrow gate, and always report the selected value. A floor-limited dry-bin
 barrier is a sampling-dependent lower bound.
 
-## Ion Flow, permeation, and passability
+## Ion & Water, permeation, and passability
 
 | Parameter | Default | Definition |
 |---|---:|---|
-| Ion Flow view | Occupancy % | Occupancy map, Passage tracks, Count vs frame, or Openings (Connolly occupancy and visit statistics) |
+| Ion & Water view | Occupancy % | Occupancy map, Passage tracks, Count vs frame, or Openings (Connolly occupancy and visit statistics) |
 | Passage Show (Water only) | All crossing | All crossing, Passage up, Passage down, or All entered (adds the molecules that never crossed) |
 | Species | All detected | All = every ion type, never water; Water = one oxygen per molecule from the Hydration water selection |
 | Shell | 3 Å | Radial region beyond the mean pore wall included in the map |

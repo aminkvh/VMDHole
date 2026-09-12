@@ -150,6 +150,9 @@ For complete worked examples, choose a path in the
 
 ## Scientific scope
 
+<details>
+<summary>What each mode measures, and what it does not claim</summary>
+
 **Pore mode** follows a specified channel axis. Spherical HOLE estimates the
 largest non-overlapping probe sphere at successive positions; Connolly and
 Capsule supply alternative cross-sectional models. Results depend on the atom
@@ -166,6 +169,8 @@ Water free energy, ion occupancy, passage, and permeation analyses depend on
 the sampling and preparation of the supplied trajectory. A geometric opening
 or conductance estimate is not evidence of biological permeation; support such
 claims with suitable simulation or experimental data.
+
+</details>
 
 ## Citation and notices
 

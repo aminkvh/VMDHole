@@ -46,7 +46,7 @@ stage, and output path there.
 |---|---|
 | Hydration Compute finds no water | Use a selection containing one oxygen per explicit water and verify frame/box preparation |
 | Water-derived properties are absent | Complete Hydration Compute first; **Per-frame ρ** requires per-frame hydration data |
-| Ion Flow shows no species | Verify VMD residue/element naming and that ions enter the analysed radial region |
+| Ion & Water shows no species | Verify VMD residue/element naming and that ions enter the analysed radial region |
 | Passage and permeation counts differ | Expected: passage includes near-pore entry; permeation requires a complete bulk-to-bulk crossing |
 | Permeation warning about sampling or PBC | Re-image the trajectory, use sufficiently frequent saved frames, and treat unsupported triclinic handling as unvalidated |
 
