@@ -24247,7 +24247,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "After a Connolly run, choose pore_lat to separate lateral extensions from the central pore, or pore_lobes to track individual openings. The region table reports Seen, neck clearance, extension, and axial/angular position. Use a row gear to color, annotate, or export one region; the header gear controls all regions and the size, Seen, and matching filters. Margin determines which surface regions count as lateral. Unrolled > Connolly reach maps the surface's radial extent. These openings are parts of the pore surface, not separately searched MOLE tunnels; cross-frame tracking requires a fixed CPOINT and CVECT.\n\n"
 
     $t insert end "Playback and Memory\n" h2
-    $t insert end "Smooth beside playback averages neighbouring analysed pore surfaces; 0 turns it off. It also sets VMD representation smoothing. Surface colours and lining use the smoothing window, while numerical profiles remain unchanged. In Spherical mode, Memory holds several pore analyses at once: + adds a slot, a numbered slot restores its settings and results, and Sync copies its colour, material, and dot density to the other slots.\n\n"
+    $t insert end "Smooth beside playback averages neighbouring analysed pore surfaces; 0 turns it off. It also sets VMD representation smoothing. Surface colours and lining use the smoothing window, while numerical profiles remain unchanged. In Pore mode, Memory holds up to ten analyses, including different pore methods: + adds a slot, a numbered slot restores its settings and results, and Sync copies its colour, material, and dot density to the other slots.\n\n"
 
     $t insert end "Pore analysis tabs\n" h2
     $t insert end "Pore Profile shows the current frame's radius and optional property Fill, Ellipse fit, or Unrolled map. Over Time shows radius or property by position and frame; use Compute for properties or ellipse data. Mean Profile shows the binned mean and spread, with selectable mean, standard-deviation, and min/max curves and an optional revolved 3D surface. It is not a measured conformation. Trends plots a selected per-frame metric. Histogram summarizes radii in spatial bins, not a probability distribution.\n\n"
@@ -24256,7 +24256,7 @@ proc ::VMDPathFinder::_about_fill_guide {t version} {
     $t insert end "For explicit-water trajectories, set the water-oxygen selection and Compute density and water free energy, G(z) = -kT ln(rho/rho_bulk). Depletion raises this estimate but does not by itself establish a hydrophobic gate. Bulk density is measured from the trajectory, with a reported fallback of 0.0334 A^-3 when needed. CHAP mode applies CHAP-compatible settings. Report the KDE bandwidth, reference density, and energy-floor settings; bandwidth can change barrier height, and sampling-limited dry-bin barriers are lower bounds.\n\n"
 
     $t insert end "Ion & Water\n" h2
-    $t insert end "Use Occupancy %, Passage, Count vs frame, or Openings to inspect ions or water. Species > All includes ions only; Water uses one oxygen per molecule from the Hydration water selection. Passage shows molecules entering the near-pore region and is not a complete permeation count. In Pore mode, Permeation counts complete bulk-to-bulk crossings. Rates need saved-frame spacing; conductance from transferred charge also needs an applied voltage. Tunnel mode measures movement along the selected route and does not offer pore bulk-to-bulk permeation.\n\n"
+    $t insert end "Use Occupancy %, Passage, or Count vs frame to inspect ions or water. Openings is Connolly-only and reports occupancy and visit lengths, not full permeation counts. Species > All includes ions only; Water uses one oxygen per molecule from the Hydration water selection. Passage shows molecules entering the near-pore region and is not a complete permeation count. In Pore mode, Permeation counts complete bulk-to-bulk crossings. Rates need saved-frame spacing; conductance from transferred charge also needs an applied voltage. Tunnel mode measures movement along the selected route and does not offer pore bulk-to-bulk permeation.\n\n"
 
     $t insert end "Conductance and passability\n" h2
     $t insert end "Geometric conductance treats the pore as resistive slices using the selected bulk conductivity, with optional access resistance. Choose a salt preset or custom conductivity in the metric gear; the default is 150 mM NaCl at 37 C. Spherical, Connolly, Capsule, and ellipse estimates use different cross-sections. Compare like methods and report the conductivity. Ellipse metrics are Spherical-only. Bare/hydrated passability is a radius comparison, not a model of dehydration, binding, or electrostatic barriers.\n\n"
@@ -27595,6 +27595,9 @@ proc ::VMDPathFinder::_mem_slot_clicked {id} {
     _mem_refresh_row
     catch {refresh_results_list}
     catch {apply_display_change}
+    # The lining belongs to the analysis, so it follows the switch.
+    catch {update_pore_lining_rep}
+    catch {update_pore_facing_rep}
     # P reads the track of the memory now active.
     catch {_update_surface_vis_buttons}
     set state(status) "Memory $id."
@@ -27613,6 +27616,8 @@ proc ::VMDPathFinder::_mem_add_clicked {} {
     set id [_mem_new]
     _mem_refresh_row
     catch {refresh_results_list}
+    catch {update_pore_lining_rep}
+    catch {update_pore_facing_rep}
     set state(status) "Memory $id - set the parameters and press Run. The other analyses stay on screen."
 }
 
@@ -33496,18 +33501,24 @@ proc ::VMDPathFinder::update_pore_lining_rep {{verbose 0}} {
         if {$verbose} { set state(status) "Pore lining: no molecule loaded." }
         return
     }
+    # Nothing to show for THIS analysis means show nothing. Returning early
+    # left the previous memory's residues lit up after a switch or a new run,
+    # and they stayed there until something else happened to redraw them.
     set frame $state(selected_result_frame)
     if {$frame eq "" || ![dict exists $results $frame]} {
+        _show_pore_lining_rep 0 $molid
         if {$verbose} { set state(status) "Pore lining: select a HOLE result frame first." }
         return
     }
     set fdata [dict get $results $frame]
     if {![dict exists $fdata sph_file] || ![file exists [dict get $fdata sph_file]]} {
+        _show_pore_lining_rep 0 $molid
         if {$verbose} { set state(status) "Pore lining: no sphere data for this frame." }
         return
     }
     set centers [_pore_surface_spheres $frame 1]
     if {[llength $centers] < 2} {
+        _show_pore_lining_rep 0 $molid
         if {$verbose} { set state(status) "Pore lining: too few centerline spheres for this frame." }
         return
     }
@@ -33793,13 +33804,17 @@ proc ::VMDPathFinder::update_pore_facing_rep {{verbose 0}} {
         if {$verbose} { set state(status) "Pore facing: no molecule loaded." }
         return
     }
+    # Same rule as the lining: nothing to show for THIS analysis means nothing
+    # on screen, not the previous one's residues.
     set frame $state(selected_result_frame)
     if {$frame eq "" || ![dict exists $results $frame]} {
+        _show_pore_facing_rep 0 $molid
         if {$verbose} { set state(status) "Pore facing: select a HOLE result frame first." }
         return
     }
     set fdata [dict get $results $frame]
     if {![dict exists $fdata sph_file] || ![file exists [dict get $fdata sph_file]]} {
+        _show_pore_facing_rep 0 $molid
         if {$verbose} { set state(status) "Pore facing: no sphere data for this frame." }
         return
     }

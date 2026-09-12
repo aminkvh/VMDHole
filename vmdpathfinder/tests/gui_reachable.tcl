@@ -2223,6 +2223,30 @@ if {[file exists $PDB] && [file executable [::VMDPathFinder::tool_path mole_engi
     report "switching to Tunnel mode hides the pore-FACING rep too, not just lining" \
            [expr {[mol showrep $mid $_fake_facing_idx] == 0}] \
            "(showrep=[mol showrep $mid $_fake_facing_idx])"
+
+    # A memory with no results of its own must not keep the previous one's
+    # lining lit up: it stayed on screen until something else redrew it.
+    $w.sidebar.nb select $w.sidebar.nb.hole
+    update idletasks
+    mol representation Lines
+    mol selection "protein"
+    mol addrep $mid
+    set _fake_lin_idx [expr {[molinfo $mid get numreps] - 1}]
+    dict set ::VMDPathFinder::pore_facing_rep_idx $mid $_fake_lin_idx
+    mol showrep $mid $_fake_lin_idx 1
+    set _sv_spl $::VMDPathFinder::state(show_pore_lining)
+    set _sv_srf $::VMDPathFinder::state(selected_result_frame)
+    set ::VMDPathFinder::state(show_pore_lining) 1
+    set ::VMDPathFinder::state(selected_result_frame) ""
+    catch {::VMDPathFinder::update_pore_lining_rep}
+    report "a memory with no results of its own hides the lining" \
+           [expr {[mol showrep $mid $_fake_lin_idx] == 0}] \
+           "(showrep=[mol showrep $mid $_fake_lin_idx])"
+    set ::VMDPathFinder::state(show_pore_lining) $_sv_spl
+    set ::VMDPathFinder::state(selected_result_frame) $_sv_srf
+    report "a memory switch refreshes the lining" \
+        [expr {[string first {update_pore_lining_rep} \
+            [info body ::VMDPathFinder::_mem_slot_clicked]] >= 0}] ""
     $w.sidebar.nb select $w.sidebar.nb.hole
     update idletasks; update
     report "switching back to HOLE mode restores the pore-FACING rep (checkbox still on)" \
