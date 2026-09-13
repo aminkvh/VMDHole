@@ -443,6 +443,8 @@ namespace eval ::VMDPathFinder:: {
         bottleneck_cache          {form unset tags {keyed}}
         formal_charge_cache       {form unset tags {keyed}}
         _esp_cache                {form unset tags {keyed}}
+        _nproc_cache              {form unset tags {session}}
+        _fc_ident_cache           {form unset tags {keyed}}
         _esp_profile_cache        {form unset tags {keyed}}
         hydro_profile_cache       {form dict  tags {keyed}}
         _axis_straightness_cache  {form unset tags {keyed}}
@@ -17802,14 +17804,14 @@ proc ::VMDPathFinder::_dotden_arg {dd} {
     return $dd
 }
 
-proc ::VMDPathFinder::_sph_process_cmd {dd cflag sph_file sos_file} {
+proc ::VMDPathFinder::_sph_process_cmd {dd cflag sph_file sos_file {njobs 1}} {
     # The sph_process command, from the binary or the inlined engine. One
     # builder so every call site gets the fallback, instead of each growing its
     # own branch - which is how half of them would have missed it.
     variable state
     set dd [_dotden_arg $dd]
     if {[string trim $state(sph_process_exec)] ne ""} {
-        return "[_sph_omp_prefix 1][shell_quote $state(sph_process_exec)] -sos -dotden $dd\
+        return "[_sph_omp_prefix $njobs][shell_quote $state(sph_process_exec)] -sos -dotden $dd\
                 ${cflag}[shell_quote $sph_file] [shell_quote $sos_file]"
     }
     set color [expr {[string match "*-colour*" $cflag] ? 1 : 0}]
@@ -18563,11 +18565,15 @@ proc ::VMDPathFinder::surface_mesh {sph plot form {dotden ""} {color 1} {union 0
 # The same build as one shell command, for run_shell_pool.
 proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {union 0} {with {}}} {
     variable state
+    # Pool jobs share the cores: one OpenMP thread each, or fifteen meshers
+    # spawn eight threads apiece and the pool runs 2.6x slower than pinned.
+    set _nj [resolve_job_count]
+    set _pin [expr {$_nj > 1 ? "OMP_NUM_THREADS=1 " : ""}]
     if {[_csg_can_mesh $union]} {
         set flag [dict get {mol {} draw --draw dots --dots} $form]
         set wflag ""
         if {[llength $with]} { set wflag "--with"; foreach w $with { append wflag " [shell_quote $w]" } }
-        return "[shell_quote [tool_path mesh_csg]] [tool_args mesh_csg] [shell_quote $sph]\
+        return "$_pin[shell_quote [tool_path mesh_csg]] [tool_args mesh_csg] [shell_quote $sph]\
             [shell_quote $plot] [_csg_voxel_spec] $flag [_csg_mesh_opts $sph] $wflag > /dev/null 2>&1"
     }
     set sos [file rootname $plot].sos
@@ -18576,7 +18582,7 @@ proc ::VMDPathFinder::surface_mesh_cmd {sph plot form {dotden ""} {color 1} {uni
     set tri [expr {$form eq "dots" && [fast_available points]
         ? "[shell_quote $state(sos_triangle_exec)] -s --points < [shell_quote $sos] > [shell_quote $plot]"
         : [_sos_triangle_cmd $sos $plot]}]
-    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos] > /dev/null 2>&1"
+    set chain "rm -f [shell_quote $sos]; [_sph_process_cmd $dd $cflag $sph $sos $_nj] > /dev/null 2>&1"
     if {[llength $with]} {
         # window clouds are shared between neighbouring frames' jobs: written
         # to a private name and renamed into place, so two workers cannot
@@ -41588,6 +41594,18 @@ proc ::VMDPathFinder::detect_cpu_topology {} {
     return [list $_phys $_logi]
 }
 
+proc ::VMDPathFinder::_nproc {} {
+    # `exec nproc` forks VMD (~8 ms with a trajectory loaded); asked once.
+    variable _nproc_cache
+    if {![info exists _nproc_cache]} {
+        set _nproc_cache ""
+        if {![catch {exec nproc} d] && [string is integer -strict [string trim $d]]} {
+            set _nproc_cache [string trim $d]
+        }
+    }
+    return $_nproc_cache
+}
+
 proc ::VMDPathFinder::resolve_job_count {} {
     # Number of concurrent HOLE worker processes. "auto" = (usable logical CPUs) - 1.
     # Deliberately NOT physical-core-limited: a slow run showing only 1-2 CPUs busy is an
@@ -41602,8 +41620,8 @@ proc ::VMDPathFinder::resolve_job_count {} {
     set n [string trim $state(parallel_jobs)]
     if {$n eq "auto" || $n eq ""} {
         set cores 4
-        if {![catch {exec nproc} detected] && [string is integer -strict [string trim $detected]]} {
-            set cores [string trim $detected]
+        if {[_nproc] ne ""} {
+            set cores [_nproc]
         } else {
             lassign [detect_cpu_topology] phys logi
             if {$logi > 0} {
@@ -41684,9 +41702,7 @@ proc ::VMDPathFinder::_hole_omp_prefix {njobs} {
         return "OMP_NUM_THREADS=1 OMP_STACKSIZE=256M "
     }
     set cores 4
-    if {![catch {exec nproc} d] && [string is integer -strict [string trim $d]]} {
-        set cores [string trim $d]
-    }
+    if {[_nproc] ne ""} { set cores [_nproc] }
     if {![string is integer -strict $njobs] || $njobs < 1} { set njobs 1 }
     set plateau 8
     set t [expr {$cores / $njobs}]
@@ -42248,17 +42264,49 @@ proc ::VMDPathFinder::run_shell_pool {jobs njobs label {unit "frame(s)"}} {
                     continue
                 }
             }
+            # A `|sh -c CMD` or `|sh FILE` job goes to a persistent worker shell
+            # (the same _pw_* workers the frame pool uses): forking VMD costs
+            # ~8 ms a job with a trajectory loaded, forking the worker's sh
+            # does not. Anything else opens as before.
+            set _pwch ""; set _script ""
+            if {[_pw_usable] && [lindex $open_arg 0] eq "|sh"} {
+                if {[lindex $open_arg 1] eq "-c" && [llength $open_arg] == 3} {
+                    variable _pool_seq
+                    if {![info exists _pool_seq]} { set _pool_seq 0 }
+                    set _script [file join [_scratch_base] "vmdpathfinder_pool_[pid]_[incr _pool_seq].sh"]
+                    if {[catch {set _sfh [open $_script w]; puts $_sfh [lindex $open_arg 2]; close $_sfh}]} {
+                        set _script ""
+                    }
+                } elseif {[llength $open_arg] == 2 && [file exists [lindex $open_arg 1]]} {
+                    set _script [lindex $open_arg 1]
+                }
+                if {$_script ne ""} { set _pwch [_pw_acquire $njobs] }
+            }
+            if {$_pwch ne ""} {
+                _pw_submit $_pwch $tag $_script
+                lappend running [list $tag $_pwch 1 $_script]
+                continue
+            }
             if {[catch {open $open_arg r} ch]} {
                 incr done
                 incr failed
                 continue
             }
             fconfigure $ch -blocking 0
-            lappend running [list $tag $ch]
+            lappend running [list $tag $ch 0 ""]
         }
         set still {}
         foreach rj $running {
-            lassign $rj tag ch
+            lassign $rj tag ch _pw _script
+            if {$_pw} {
+                set _rc [_pw_poll $ch]
+                if {$_rc eq ""} { lappend still $rj; continue }
+                if {$_rc != 0} { incr failed }
+                if {[string match "*vmdpathfinder_pool_*" $_script]} { catch {file delete $_script} }
+                incr done
+                set state(status) "$label: completed $done / $total $unit..."
+                continue
+            }
             catch {read $ch}
             if {[eof $ch]} {
                 # close raises if the child exited non-zero (stderr is already
@@ -42283,7 +42331,7 @@ proc ::VMDPathFinder::run_shell_pool {jobs njobs label {unit "frame(s)"}} {
         }
         set running $still
         update
-        after 40
+        after 10
     }
     return $failed
 }
@@ -42876,9 +42924,20 @@ proc ::VMDPathFinder::run_analysis {} {
                             set _ib [binary format i* [$sel get index]]
                             if {![info exists _fc_idx] || $_ib ne $_fc_idx} {
                                 set _fc_idx $_ib
-                                set _fc_pair [_hole_coord_identity $sel \
-                                    [file join $tmp_dir _ident.pdb]]
-                                catch {file delete [file join $tmp_dir _ident.pdb]}
+                                # Names, residues and chains do not change between
+                                # runs on the same atoms, and this costs ~47 ms a
+                                # run on 27k atoms - kept across runs, keyed on the
+                                # molecule, the atom-name fix and the index list.
+                                variable _fc_ident_cache
+                                set _fc_key "[string trim $state(molid)]|[_should_fix_atom_names]|$_ib"
+                                if {[info exists _fc_ident_cache] && [lindex $_fc_ident_cache 0] eq $_fc_key} {
+                                    set _fc_pair [lindex $_fc_ident_cache 1]
+                                } else {
+                                    set _fc_pair [_hole_coord_identity $sel \
+                                        [file join $tmp_dir _ident.pdb]]
+                                    catch {file delete [file join $tmp_dir _ident.pdb]}
+                                    set _fc_ident_cache [list $_fc_key $_fc_pair]
+                                }
                             }
                             if {[llength $_fc_pair] == 2} {
                                 lassign $_fc_pair _fc_n _fc_id
@@ -43129,7 +43188,7 @@ proc ::VMDPathFinder::run_analysis {} {
                     # Sleep only when this didn't just do prep work (pool full or
                     # tail-draining); otherwise loop straight back to prep the
                     # next frame so PDB writing keeps overlapping HOLE runs.
-                    if {$launched == 0 && [llength $running] > 0} { after 40 }
+                    if {$launched == 0 && [llength $running] > 0} { after 10 }
                 }
             } _stream_err]} {
                 # Reap any still-running jobs so this don't leak channels/temps.
